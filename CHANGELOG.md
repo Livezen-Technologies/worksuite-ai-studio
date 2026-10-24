@@ -2,6 +2,22 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.5.0] — 2026-10-24 — Sinhala AI Engine: build & release zone (backend from PR #1)
+
+Implements the AI Studio side of the **WorkSuite Sinhala AI Engine SRS v1.0**
+(`docs/sinhala-ai-engine/SRS.md`; mapping in `docs/sinhala-ai-engine/IMPLEMENTATION.md`).
+
+- **Dataset governance** (TRNPIPE 001/003/006): rights & provenance fields, quarantine until approved,
+  grouped deterministic train/dev/test freeze with manifest + split hashes, withdrawal.
+- **Training lineage** (TRNPIPE 002): kits export train + dev only (locked test split stays on the server),
+  write `lineage.json`, and record dataset/config hashes and seed on the job.
+- **Evaluation reports & release gates** (§17): `EngineGateService` with SRS thresholds per task,
+  ≤2-point regression and stratum rules, dual approval (release owner + language lead).
+- **Signed model packages** (§10.1, §14.5, ADM 001–004, SEC 007): lifecycle state machine, artifact/licence
+  checks, Ed25519 detached signatures, atomic activation and rollback.
+- New API group `/api/engine/*`, permissions `engine.view|manage|sign`,
+  migration `2026-10-24-000013_CreateEngineReleaseZone`.
+
 ## [1.4.0] — 2026-10-24 — WorkSuite AI Studio redesign
 
 The whole admin UI is rebuilt as **WorkSuite AI Studio** on Tailwind CSS v4 (Tailwind Plus v4 application UI

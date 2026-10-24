@@ -143,13 +143,14 @@ class DatasetService
         ]);
     }
 
-    /** Stream the dataset as Alpaca JSONL. Yields one line per item. */
-    public function exportJsonl(int $datasetId): \Generator
+    /** Stream the dataset as Alpaca JSONL, optionally limited to frozen splits. Yields one line per item. */
+    public function exportJsonl(int $datasetId, ?array $splits = null): \Generator
     {
         $page = 0;
         while (true) {
-            $rows = $this->items->where('dataset_id', $datasetId)
-                ->orderBy('id', 'ASC')->findAll(500, $page * 500);
+            $q = $this->items->where('dataset_id', $datasetId);
+            if ($splits !== null) $q = $q->whereIn('split', $splits); // locked test split never leaves (TRNPIPE 003)
+            $rows = $q->orderBy('id', 'ASC')->findAll(500, $page * 500);
             if (! $rows) break;
             foreach ($rows as $r) {
                 yield json_encode([

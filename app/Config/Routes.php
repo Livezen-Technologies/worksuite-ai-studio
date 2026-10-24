@@ -149,6 +149,21 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->delete('training/(:num)', 'TrainingController::delete/$1');
     $routes->post('training/(:num)/kit', 'TrainingController::generateKit/$1');
     $routes->get('training/(:num)/kit', 'TrainingController::downloadKit/$1');
+
+    // --- WorkSuite Sinhala AI Engine: build & release zone (v1.5, docs/sinhala-ai-engine) ---
+    $routes->get('engine/overview', 'EngineController::overview');
+    $routes->put('engine/datasets/(:num)/rights', 'EngineController::datasetRights/$1');
+    $routes->post('engine/datasets/(:num)/freeze', 'EngineController::datasetFreeze/$1');
+    $routes->post('engine/datasets/(:num)/withdraw', 'EngineController::datasetWithdraw/$1');
+    $routes->put('engine/training/(:num)/lineage', 'EngineController::trainingLineage/$1');
+    $routes->get('engine/evaluations', 'EngineController::evaluations');
+    $routes->post('engine/evaluations', 'EngineController::createEvaluation');
+    $routes->post('engine/evaluations/(:num)/approve', 'EngineController::approveEvaluation/$1');
+    $routes->get('engine/packages', 'EngineController::packages');
+    $routes->post('engine/packages', 'EngineController::createPackage');
+    $routes->post('engine/packages/rollback', 'EngineController::rollback');
+    $routes->post('engine/packages/(:num)/transition', 'EngineController::transition/$1');
+    $routes->get('engine/packages/(:num)/manifest', 'EngineController::manifest/$1');
 });
 
 /*
