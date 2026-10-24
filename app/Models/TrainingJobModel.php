@@ -12,6 +12,9 @@ class TrainingJobModel extends Model
     protected $useTimestamps = true;
     protected $allowedFields = [
         'name', 'dataset_id', 'base_model', 'method', 'hyperparams', 'status', 'notes', 'logs', 'created_by',
+        // Sinhala AI Engine lineage (FR TRNPIPE 002)
+        'task', 'dataset_manifest_hash', 'dataset_split_hash', 'base_digest', 'config_hash', 'code_commit',
+        'container_digest', 'seed', 'hardware', 'output_digest',
     ];
 
     /** Jobs joined with their dataset name/count. */

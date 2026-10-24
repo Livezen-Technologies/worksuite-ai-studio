@@ -67,12 +67,41 @@ class TrainingService
             throw new \RuntimeException('Cannot create kit directory.');
         }
 
-        // 1. dataset.jsonl
+        // 1. dataset.jsonl (+ dev.jsonl when the dataset is frozen; the test split is never exported)
+        $frozen = ! empty($dataset['manifest_hash']);
+        if (($dataset['rights_status'] ?? 'approved') === 'withdrawn') {
+            throw new \RuntimeException('This dataset has been withdrawn and cannot be used for new training runs.');
+        }
+        $files = ['train.py', 'dataset.jsonl', 'README.md'];
         $fh = fopen($dir . '/dataset.jsonl', 'wb');
-        foreach ((new DatasetService())->exportJsonl((int) $job['dataset_id']) as $line) {
+        foreach ((new DatasetService())->exportJsonl((int) $job['dataset_id'], $frozen ? ['train'] : null) as $line) {
             fwrite($fh, $line);
         }
         fclose($fh);
+        if ($frozen) {
+            $fh = fopen($dir . '/dev.jsonl', 'wb');
+            foreach ((new DatasetService())->exportJsonl((int) $job['dataset_id'], ['dev']) as $line) {
+                fwrite($fh, $line);
+            }
+            fclose($fh);
+            $files[] = 'dev.jsonl';
+        }
+
+        // Lineage (FR TRNPIPE 002): dataset manifest/splits, config hash and seed.
+        $seed    = (int) $hp['seed'];
+        $lineage = [
+            'dataset_manifest_hash' => $dataset['manifest_hash'] ?? null,
+            'dataset_split_hash'    => $dataset['split_hash'] ?? null,
+            'config_hash'           => hash('sha256', json_encode([$job['base_model'], $job['method'], $hp, $seed])),
+            'seed'                  => $seed,
+        ];
+        file_put_contents($dir . '/lineage.json', json_encode($lineage + [
+            'job_id' => (int) $jobId, 'base_model' => $job['base_model'], 'method' => $job['method'],
+            'hyperparams' => $hp, 'dataset_id' => (int) $job['dataset_id'], 'dataset_version' => $dataset['version'] ?? null,
+            'generated_at' => gmdate('c'),
+            'record_after_run' => ['base_digest', 'code_commit', 'container_digest', 'hardware', 'output_digest'],
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        $files[] = 'lineage.json';
 
         // 2. train.py + README.md
         file_put_contents($dir . '/train.py', $this->trainScript($job, $hp));
@@ -85,12 +114,12 @@ class TrainingService
         if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
             throw new \RuntimeException('Cannot create the kit zip.');
         }
-        foreach (['train.py', 'dataset.jsonl', 'README.md'] as $f) {
+        foreach ($files as $f) {
             $zip->addFile($dir . '/' . $f, $f);
         }
         $zip->close();
 
-        $this->jobs->update($jobId, ['status' => 'kit_ready']);
+        $this->jobs->update($jobId, ['status' => 'kit_ready'] + $lineage);
         return $zipPath;
     }
 
