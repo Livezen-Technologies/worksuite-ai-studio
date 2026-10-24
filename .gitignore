@@ -1,0 +1,8 @@
+.env
+/vendor/
+/writable/*
+!/writable/.gitkeep
+composer.phar
+._*
+.DS_Store
+node_modules/

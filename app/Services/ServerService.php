@@ -1,0 +1,106 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\ServerModel;
+use App\Models\ServerHealthModel;
+
+/**
+ * ServerService — node registry + health/heartbeat orchestration.
+ *
+ * Wraps OllamaService probes, derives a 0–100 health score, persists the
+ * current status onto the server row, and appends a server_health time-series
+ * record on every check.
+ */
+class ServerService
+{
+    protected ServerModel $servers;
+    protected ServerHealthModel $health;
+
+    public function __construct()
+    {
+        $this->servers = new ServerModel();
+        $this->health  = new ServerHealthModel();
+    }
+
+    /** Build an OllamaService bound to a server row. */
+    public function clientFor(array $server): OllamaService
+    {
+        return new OllamaService($server['api_url'], $server['auth_token'] ?? null);
+    }
+
+    /**
+     * Probe a node, persist status + score, append a health record.
+     * Returns the probe result merged with the derived status/score.
+     */
+    public function check(array $server): array
+    {
+        $provider = new ProviderService();
+        $probe    = $provider->isExternal($server['kind'] ?? 'ollama')
+            ? $provider->probe($server)
+            : $this->clientFor($server)->probe();
+        $score = $this->score($probe);
+        $status = $this->statusFromScore($probe['ok'], $score);
+        $now   = date('Y-m-d H:i:s');
+
+        $update = [
+            'status'            => $status,
+            'health_score'      => $score,
+            'last_heartbeat_at' => $now,
+        ];
+        // Opportunistically capture the version when we learn it.
+        if (! empty($probe['version'])) {
+            $update['ollama_version'] = $probe['version'];
+        }
+        $this->servers->update($server['id'], $update);
+
+        $this->health->insert([
+            'server_id'      => $server['id'],
+            'status'         => $status,
+            'health_score'   => $score,
+            'latency_ms'     => $probe['latency_ms'],
+            'models_total'   => $probe['models_total'],
+            'models_running' => $probe['models_running'],
+            'error'          => $probe['error'] ? substr($probe['error'], 0, 255) : null,
+            'checked_at'     => $now,
+        ]);
+
+        return array_merge($probe, ['status' => $status, 'health_score' => $score]);
+    }
+
+    /** Check a server by id. Returns null if the server is gone. */
+    public function checkById(int $id): ?array
+    {
+        $server = $this->servers->find($id);
+        if (! $server) {
+            return null;
+        }
+        return $this->check($server);
+    }
+
+    /**
+     * Derive a 0–100 health score from a probe:
+     *  - unreachable => 0
+     *  - reachable   => base 100, penalised for latency.
+     */
+    protected function score(array $probe): int
+    {
+        if (! $probe['ok']) {
+            return 0;
+        }
+        $latency = (int) $probe['latency_ms'];
+        $penalty = 0;
+        if ($latency > 250)  $penalty += 10;
+        if ($latency > 750)  $penalty += 15;
+        if ($latency > 1500) $penalty += 25;
+        return max(40, 100 - $penalty);
+    }
+
+    protected function statusFromScore(bool $ok, int $score): string
+    {
+        if (! $ok) {
+            return 'offline';
+        }
+        return $score >= 70 ? 'online' : 'degraded';
+    }
+}

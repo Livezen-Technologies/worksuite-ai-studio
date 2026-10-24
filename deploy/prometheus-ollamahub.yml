@@ -1,0 +1,23 @@
+# Minimal Prometheus config for OllamaHub. Scrapes the local node_exporter so the
+# Monitoring page shows real CPU/RAM/disk. Add a job per remote Ollama node (its
+# node_exporter, and an nvidia GPU exporter on GPU nodes) as you register them.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['127.0.0.1:9090']
+
+  - job_name: node
+    static_configs:
+      - targets: ['127.0.0.1:9100']   # node_exporter on this control-plane node
+        labels:
+          instance: '40.160.57.17'
+
+  # Example for a future GPU node (uncomment + set its IP):
+  # - job_name: node-gpu1
+  #   static_configs:
+  #     - targets: ['10.0.0.5:9100', '10.0.0.5:9835']  # node_exporter + nvidia_gpu_exporter
+  #       labels:
+  #         instance: '10.0.0.5'

@@ -1,0 +1,344 @@
+# Changelog — OllamaHub
+
+All notable changes to the OllamaHub control plane are documented here.
+
+## [1.3.0] — 2026-06-29 — SinLama AI (Sinhala LLM platform)
+
+Integrates the SinLama blueprint into the existing platform (new sidebar section **SinLama**).
+
+### S1 — Model Studio (`/studio`)
+- Build custom models via Ollama's structured `/api/create`: pick a **base model + Sinhala
+  persona system prompt + parameters** (optionally quantize), or **import a trained GGUF** /
+  attach a **LoRA adapter** (uploaded straight into the node's blob store via
+  `/api/blobs/sha256:…`). Streams create progress; auto-syncs the model list so the new model
+  appears in Chat + gateway immediately. 5 SinLama presets ship in code (Assistant persona,
+  Translator si⇄en, Support agent, Writer, Code — Sinhala system prompts + tuned params).
+- `OllamaService`: `createModel()`, `copy()`, `blobExists()`, `pushBlob()` (streamed from disk).
+- New `ModelStudioController` (`/api/studio/{presets,upload,create,copy}`).
+
+### S2 — Dataset Manager (`/datasets`)
+- Alpaca-style instruction datasets: upload **JSON / JSONL / CSV** (field aliases
+  question/answer, prompt/response recognised), automatic duplicate skip, **dedupe** &
+  **clean** passes, token estimates (~1 tok / 3 bytes — Sinhala-aware), searchable row
+  preview, per-row delete, **export Alpaca JSONL**.
+- Tables `datasets` + `dataset_items` (migration `…000011_CreateSinlamaTables`),
+  `DatasetService`, `DatasetsController`.
+
+### S3 — Training Manager (`/training`)
+- LoRA/QLoRA job records with hyperparameters (epochs/LR/rank/alpha/batch/grad-accum/
+  max-seq/GGUF quant). **Generate kit** → zip of `train.py` (Unsloth + PEFT + TRL, Alpaca
+  format, GGUF export), `dataset.jsonl`, `README.md` with RunPod/Colab steps — because this
+  server is CPU-only, training runs on an external GPU; the resulting GGUF is imported via
+  Model Studio (job statuses: draft → kit_ready → running → completed → imported).
+- Table `training_jobs`, `TrainingService`, `TrainingController`.
+
+### S4 — Sinhala gateway endpoints + prompt pack
+- Gateway: **`POST /api/v1/translate`** ({model, text, target?: si|en} — auto-detects and
+  flips languages; Singlish treated as Sinhala) and **`POST /api/v1/summarize`**
+  ({model, text, language?, sentences?}). Both use the `chat` scope and work with local
+  and external-provider models.
+- Migration `…000012_SeedSinhalaPrompts` seeds 6 Sinhala prompts (category **Sinhala**) into
+  the Prompt Library: SinLama persona, translate si/en, Singlish→Sinhala script, grammar
+  correction, summariser.
+
+## [1.2.1] — 2026-06-29 — Browse & install models from a catalogue
+
+### Added
+- **Model catalogue in the Install dialog** (Models page). The old free-text "Pull model" box is
+  now a searchable, category-filtered catalogue (`MODEL_CATALOG` in `api/models.ts`) of ~28 popular
+  Ollama-library models grouped **General / Reasoning / Code / Vision / Embedding**, each showing an
+  approximate size, a one-line description, and a **vision** tag where applicable. Click to select,
+  then Install; already-installed models are marked (handles the `:latest` alias). A custom field
+  still accepts any other `ollama.com/library` tag. The node picker lists only Ollama nodes
+  (external providers can't pull library models). Frontend-only — uses the existing pull-stream
+  endpoint. Button relabelled "Install model" / "Browse & install".
+
+## [1.2.0] — 2026-06-29 — External LLM providers (OpenAI / Claude / Gemini)
+
+### Added
+- **Connect commercial LLM APIs as model sources.** A registered "server" now carries a `kind`
+  (`ollama` | `openai` | `anthropic` | `gemini`). External providers store their API key in
+  `auth_token` and an optional base URL in `api_url`; their models flow into the existing `models`
+  table, so they appear in the **Chat playground** picker and the **`/api/v1` gateway** alongside
+  self-hosted Ollama models — no separate plumbing.
+- **`ProviderService`** — one streaming client across all kinds. Adapters:
+  - OpenAI → `POST {base}/chat/completions` (SSE, `stream_options.include_usage`).
+  - Anthropic → `POST {base}/messages` (SSE, `x-api-key` + `anthropic-version: 2023-06-01`,
+    extracts the system turn, `max_tokens` 4096).
+  - Gemini → `POST {base}/models/{m}:streamGenerateContent?alt=sse` (`systemInstruction`, key in query).
+  Translates the Ollama message shape (incl. base64 `images[]` for vision) per provider, normalises
+  usage to `{prompt_tokens, completion_tokens, total_ms}`, and surfaces provider error bodies.
+- **Model discovery** — `ProviderService::listModels()` fetches each provider's catalogue
+  (OpenAI `/models` filtered to chat models, Anthropic `/models`, Gemini `:generateContent`-capable),
+  with curated fallbacks (e.g. `claude-opus-4-8`, `gpt-4o`, `gemini-2.0-flash`). `ModelService::syncServer()`
+  and `ServerService::check()` are provider-aware; adding a provider auto-syncs its models.
+- **Servers UI** — the add/edit modal has a **Type** selector (Ollama node / OpenAI / Anthropic /
+  Gemini); choosing a provider swaps the node specs for an **API key** + optional **base URL**, and
+  the table tags provider rows. API keys are write-only (blank on edit keeps the existing key).
+
+### Migration
+- `2026-06-29-000010_AddProviderKind` — adds the `servers.kind` ENUM (default `ollama`; existing
+  nodes unaffected).
+
+## [1.1.0] — 2026-06-29 — Vision chat + more models
+
+### Added
+- **Vision / image analysis in Chat** — the chat now accepts image attachments so vision models
+  can analyze screenshots. `ChatController::chat()` takes `images[]` (data-URI prefix stripped),
+  defaults the prompt for image-only messages, and attaches them to the latest user turn in
+  Ollama's vision format. React composer gains an attach button (shows an **eye** icon for vision
+  models via `isVisionModel()`), multi-image previews with remove, and thumbnails in the chat
+  bubble. 8 MB / 4-image client cap.
+
+### Models (on 40.160.57.17)
+- Pulled **qwen2.5:3b** (general), **moondream** (fast vision), **llava:7b** (vision) — alongside
+  the existing llama3.2:1b.
+
+### Verified
+- End-to-end on the live node: attached a generated screenshot and both **moondream** (~28 s) and
+  **llava:7b** (~69 s, CPU) returned an analysis through the platform chat stream. Local attach UI
+  (preview chip + remove + send) confirmed in the browser.
+
+
+## [1.0.0] — 2026-06-29 — Phase 10: Reverse-proxy/LB + deploy hardening
+
+### Added
+- **ErrorBoundary** wrapping every page so a single component error shows a recoverable
+  panel instead of white-screening the SPA.
+- **Load-balancing config** — new `gateway` settings group (strategy: round_robin | random |
+  least_busy; failover; include-degraded; sticky; max_retries; health interval). `ApiGatewayService`
+  now orders candidate nodes by the configured strategy (round-robin rotation, seeded shuffle, or
+  least-busy by recent api_logs) and honours the failover toggle. Surfaced as a **Settings →
+  Load Balancing** tab.
+- **Deployment artifacts** under `deploy/` — `install-server.sh` (Ubuntu 24.04 provisioning:
+  nginx, php8.3-fpm, MySQL, Redis, Ollama, Prometheus + node_exporter, migrate/seed, systemd
+  queue worker, schedule cron), `nginx-ollamahub.conf` (SPA fallback + long stream timeouts),
+  `ollamahub-queue.service`, `prometheus-ollamahub.yml`, `rsync-deploy.sh`, `env.production.example`.
+
+### Fixed
+- **Chat session `touch()`** updated only `updated_at` (not in `allowedFields`), so CI4 stripped
+  it to empty → "There is no data to update" at the end of a real stream. Now uses the query
+  builder to bump the timestamp. (Surfaced only against a live node during deployment.)
+
+### Deployed
+- **LIVE on http://40.160.57.17/** — provisioned the full stack (nginx, php8.3-fpm, MySQL 8,
+  Redis, **Ollama 0.30.11 CPU-only**, Prometheus + node_exporter), migrated/seeded, started the
+  systemd queue worker + schedule cron. Registered the local node (**online, health 100**), pulled
+  **llama3.2:1b**, and verified a **real streaming chat** (62 tokens / 4 s) with persisted history,
+  plus live Prometheus metrics (cluster + per-node CPU/RAM/disk).
+
+### Status
+- **Feature-complete (all 10 phases) and deployed.** TODO: point a domain at the server +
+  Let's Encrypt SSL (`certbot --nginx`), then flip `app.baseURL`/`forceGlobalSecureRequests`.
+
+## [0.9.0] — 2026-06-29 — Phase 9: Queue Manager, Scheduler, Analytics
+
+### Added
+- **Schema** — `queues` (DB-backed job queue, Redis-ready) and `cron_jobs` (scheduled maintenance).
+- **QueueService** — enqueue / atomic claim (concurrency-safe) / process with retry+backoff;
+  handlers for `sync_models`, `health_check`, `pull_model`, `generate_report`, `cleanup_logs`, `noop`.
+- **SchedulerService** — seeds 6 default jobs (health check, sync models, cleanup logs, clear cache,
+  daily report, backup), preset schedules (every_minute…weekly), due detection, run-now.
+- **AnalyticsService** — daily requests, token usage, model popularity, response-time, gateway
+  outcome breakdown, totals; plus `report()` rollup into `usage_statistics`.
+- **Commands** — `spark queue:work` (worker) and `spark schedule:run` (cron entrypoint).
+- **APIs** — `/api/queue` (list+stats, enqueue, work, cancel, retry), `/api/cron` (list/toggle/
+  set-schedule/run), `/api/analytics`. Gated by `queues.*` / `analytics.view`.
+- **React** — Queue page (Jobs tab: stat cards + table + enqueue + run-worker + cancel/retry;
+  Scheduler tab: jobs with inline schedule edit, enable toggle, run-now) and Analytics page
+  (5 recharts + totals, time-range selector).
+
+### Verified
+- Enqueue→work processed 3 jobs (incl. real health-check/sync); `spark queue:work` + cron seed/run/
+  toggle; `generate_report` rolled up usage stats; analytics charts render real DB data.
+
+## [0.8.0] — 2026-06-29 — Phase 8: Prompt Library, Knowledge Base, AI Agents
+
+### Added
+- **Schema** — `prompt_templates`, `knowledge_bases`, `knowledge_documents`, `knowledge_chunks`
+  (with `embedding` LONGTEXT), `agents`.
+- **KnowledgeService** — document ingest → paragraph-aware chunking (with overlap) → best-effort
+  embedding via a node's Ollama `/api/embed`; retrieval by **cosine similarity** when embeddings
+  exist, **tokenised keyword** fallback (ranked by word matches) otherwise. (OllamaService got `embeddings()`.)
+- **APIs** — `/api/prompts` CRUD (auto-extracts `{{variables}}`), `/api/knowledge` (bases CRUD,
+  add text/file documents, delete, **search**, reindex), `/api/agents` CRUD. File ingest supports
+  text types (txt/md/csv/html/json). Gated by `prompts.*` / `knowledge.*` / `agents.*`.
+- **React** — Prompt Library (category cards, variable tags, copy), Knowledge Base (collections +
+  detail modal: documents, add-text, **live retrieval test**, re-embed), AI Agents (avatar, model,
+  temperature, KB, tools, API-access — full builder).
+
+### Fixed
+- TINYINT/string gotchas in the new pages: `bytes()` crashed on a string `size_bytes`
+  (`.toFixed` on a string) — coerce with `Number()`; `embedded`/`api_access` `"0"`/`"1"` strings
+  compared with `Number(x) === 1`.
+
+### Verified
+- Prompt variable extraction, KB ingest→chunk→**keyword retrieval in the UI** (score 0.4 on the
+  refund-policy doc), agent builder with KB/model/tools. Vector search activates once a node with
+  an embedding model is online.
+
+## [0.7.0] — 2026-06-29 — Phase 7: Users, Roles, Audit, Notifications, Settings
+
+### Added
+- **Schema** — `audit_logs`, `notifications`, `settings` (grouped key/value).
+- **AuditFilter** (after-filter on `api/*`) — transparently records every mutating request
+  (POST/PUT/PATCH/DELETE) with acting user (from JWT), action label, method, path, status, IP.
+- **SettingsService** — grouped config (general/ai/smtp/storage/notifications) over defaults,
+  with secret masking on read and masked-placeholder-preserving save.
+- **NotificationService** — in-app notifications + best-effort dispatch to Slack/Discord/
+  Telegram/generic webhook (real POSTs) and SMTP email.
+- **APIs** — `/api/users` CRUD (guards self-delete + last-super-admin), `/api/roles` (+ permission
+  catalog, custom-role create, `syncPermissions`, system-role protection), `/api/audit` feed,
+  `/api/notifications` (feed/read/broadcast/test), `/api/settings/{group}` get/save. Gated by the
+  matching `*.view`/`*.manage` permissions.
+- **React** — Users (CRUD + role/status), **Roles** (cards + grouped permission-matrix modal with
+  toggle-all, custom-role builder, super-admin lock), Audit (filterable feed), Notifications
+  (in-app feed + broadcast + channel test), Settings (5 tabs, secret masking).
+
+### Verified
+- Users/roles CRUD, custom role "Auditor" creation, settings persistence + SMTP secret masking,
+  notification broadcast→feed + channel dispatch report, and the **audit log auto-capturing**
+  every mutation this session (create users/roles, update settings, broadcast) with attribution.
+  Permission matrix correctly reflects each role's real grants in the UI.
+
+## [0.6.0] — 2026-06-29 — Phase 6: API Gateway + API Logs
+
+### Added
+- **Schema** — `api_keys` (key/secret-hash, scopes, allowed models/IPs, daily/monthly token
+  limits, per-minute rate, status/expiry) and `api_logs` (per-request: endpoint/model/node,
+  tokens, latency, status, IP, error).
+- **ApiKeyFilter** — authenticates `/api/v1/*` via `X-Api-Key`/`X-Api-Secret` (or
+  `Bearer key:secret`), enforcing status/expiry, IP allowlist, and a per-minute rate limit
+  (framework throttler). Validated key stashed in `$_SERVER['ohub_api_key']`.
+- **ApiGatewayService** — round-robin node selection across online replicas hosting a model
+  (cache-rotated) with caller-side **failover**, request logging, daily/monthly **token-quota**
+  checks, and available-models listing.
+- **Gateway `/api/v1`** — `chat`, `generate`, `embeddings`, `models`. Enforces per-endpoint
+  **scopes** + **allowed-models**, routes with failover, and logs every call (success + error)
+  with token accounting. (OllamaService gained `embeddings()`.)
+- **Dashboard** — `/api/apikeys` CRUD with **secret shown once** + rotate, and `/api/apilogs`
+  filtered/paginated feed (by key/model/status/range). Gated by `apikeys.*` / `logs.view`.
+- **React** — API Keys page (table, create/edit modal, scopes/limits/allowlists, one-time
+  secret reveal with copy, rotate, disable) and API Logs page (filterable, auto-refreshing
+  table with status tags).
+
+### Verified
+- End-to-end: key create (secret once, no hash leak), gateway 401 (missing/bad creds),
+  **scope 403**, **allowed-model 403**, **rate-limit 429** (5/min), 503 + failover when no node
+  hosts the model, and every call written to `api_logs` (visible in the UI feed).
+
+## [0.5.0] — 2026-06-29 — Phase 5: Monitoring + Dashboard
+
+### Added
+- **Schema** — `system_metrics`, `gpu_metrics`, `usage_statistics` rollup tables (populated by
+  the metrics scraper; reserved for Prometheus-fed history + analytics).
+- **MonitoringService** — DB-derived dashboard `stats()` (servers/online, models/active,
+  requests, tokens, avg latency, users/active, error rate) and `charts()` (requests-per-hour,
+  tokens-per-day prompt/completion, model usage, server health). Live per-node `nodeMetrics()`
+  (CPU/RAM/disk/GPU) via **Prometheus instant queries** — all null-safe, flagged
+  `available:false` and `prometheus:false` when unreachable.
+- **API** — `/api/dashboard[/stats|/charts]`, `/api/metrics`, `/api/health`,
+  `/api/metrics/refresh` (re-probe all nodes). Gated by `dashboard.view` / `monitoring.view`.
+- **React** — live **Dashboard** (8 real stat cards + 4 recharts: requests/hour line,
+  tokens/day stacked bar, model-usage bar, server-health bars; 30s auto-refresh) and a
+  **Monitoring** page (per-node CPU/RAM/disk/GPU dashboard gauges, Prometheus-status banner,
+  graceful "n/a" + exporter notice, re-check button, 15s refresh).
+
+### Verified
+- Dashboard shows **real DB data** end-to-end (seeded chat turns → 2 requests, 232 tokens,
+  1.48s avg; charts populated). Monitoring degrades gracefully with Prometheus offline. Metrics
+  fill in once Prometheus + node_exporter are provisioned on the server.
+
+## [0.4.0] — 2026-06-28 — Phase 4: Chat Playground (streaming)
+
+### Added
+- **Schema** — `chat_sessions` (user/title/model/server/system_prompt) and `chat_messages`
+  (role/content/model/token stats), cascade-deleted with their session.
+- **OllamaService** — streaming `chat()` and `generate()` convenience wrappers over `stream()`.
+- **Chat API** — `/api/chat/sessions` CRUD (rename/delete), and a streaming `POST /api/chat`
+  that persists the user turn, folds in the model's saved system prompt + options
+  (`ModelConfigModel::ollamaOptions()`), proxies Ollama `/api/chat` as NDJSON (meta → delta →
+  done lines), and persists the assistant turn with token/duration stats. Plus one-shot
+  `POST /api/generate`. All gated by `chat.use`; sessions are per-user (ownership-checked).
+- **React Chat Playground** — conversation sidebar (new/load/rename/delete), streaming thread
+  with **markdown + syntax-highlighted code** (`Markdown` component via react-markdown +
+  react-syntax-highlighter), model picker (model · node · status), token/latency footer,
+  Stop, Regenerate, and Export-to-JSON.
+
+### Verified
+- Full UI round-trip: send → fetch/NDJSON stream → meta (auto session create) → assistant
+  bubble updates → session persists in sidebar; graceful ⚠️ rendering of the offline-node
+  error (token streaming uses the identical delta path). Session ownership + `chat.use` RBAC
+  enforced (viewer → 403).
+
+## [0.3.0] — 2026-06-28 — Phase 3: Model Manager + Model Config
+
+### Added
+- **OllamaService streaming** — `pull()` (NDJSON progress via curl `WRITEFUNCTION`, or
+  non-streaming), `load()`/`unload()` (keep_alive -1/0), and a reusable `stream()` helper.
+- **ModelService** — reconciles the `models` table with each node's `/api/tags`
+  (upsert + prune vanished models); `syncServer`/`syncAll`.
+- **Schema** — `models` (per-node installed model: family/params/quant/size/digest/status/default)
+  and `model_configs` (per-model generation params, keyed by model name).
+- **Model Manager API** under `/api/models` — list (node-joined), sync, **streaming pull**,
+  delete, load/unload, set-default, and get/save per-model config. `ModelConfigModel::ollamaOptions()`
+  builds the Ollama `options`/`system`/`keep_alive` payload for the Phase 4 chat proxy.
+- **React** — Models page (table: params, size, node status, default tag, per-row config/load/
+  unload/default/delete), **Pull Model dialog** with live NDJSON progress bar + popular-model
+  quick-picks (reads the stream via fetch + ReadableStream since EventSource can't send the
+  Bearer token), and a full **Model Config modal** (temperature slider, top_p/k, penalties,
+  context, max tokens, keep-alive, seed/threads/GPU layers, stop sequences, system prompt).
+
+### Verified
+- Config round-trip (save via API → DB → reload in modal), set-default, node-joined list,
+  graceful 502/NDJSON-error on the offline node, and **RBAC with a real `viewer` account**
+  (GET config 200, save config 403).
+
+### Notes
+- Used `ModelModel::builder()->update()` for the bulk default-reset to avoid the
+  `Model::set()/update()` collision.
+
+## [0.2.0] — 2026-06-28 — Phase 2: Server Manager + Ollama core
+
+### Added
+- **OllamaService** (`app/Services/OllamaService.php`) — HTTP client for a node's Ollama API
+  (`version`, `tags`, `ps`, `show`, `delete`) plus a `probe()` that returns reachability,
+  latency, and model counts in one call.
+- **ServerService** — registers nodes, runs health probes, derives a 0–100 health score
+  (latency-penalised), persists status onto the server row, and appends a `server_health`
+  time-series record per check.
+- **Schema** — `servers` (specs, api_url, token, status, health_score, heartbeat) and
+  `server_health` (time-series probes).
+- **Server Manager API** under `/api/servers` — CRUD, `/{id}/health`, `/{id}/models`, and
+  `/{id}/(restart|shutdown|update)` (501 until the node control agent in Phase 10).
+  Permission-gated via new `BaseApiController::can()/requirePermission()` (queries the role's
+  permission set; admins bypass). Node auth tokens never leak to the API surface.
+- **React** — Servers list (antd Table, add/edit modal, health-check + delete actions,
+  status badges, relative "last seen") and Server Details (overview, hardware specs, health-history
+  line chart via recharts, installed-models list with graceful offline state).
+- `lib/datetime.ts` (naive-UTC-safe formatting) and `StatusBadge`/`HealthScore` components.
+
+### Fixed
+- TINYINT-as-string gotcha: MySQL returns `is_local` as `"0"` (truthy in JS) — coerce with
+  `Number(x) === 1` before boolean display.
+
+## [0.1.0] — 2026-06-28 — Phase 1: Scaffold + Auth
+
+### Added
+- **CI4 4.7 backend** (`/Applications/MAMP/htdocs/ollamahub`) with a clean standard
+  layout (`Controllers/Api`, `Services`, `Models`, `Database/Migrations|Seeds`, `Filters`).
+- **JWT auth** — `JwtService` (HMAC-SHA256, access + refresh), `JwtAuthFilter` (Bearer +
+  coarse role gating), `BaseApiController` with the `{status,message,data}` envelope.
+- **Auth API** — `POST /api/auth/login`, `POST /api/auth/refresh`, `GET /api/auth/profile`,
+  `POST /api/auth/logout`, plus `GET /api/ping` liveness probe.
+- **RBAC schema + seed** — `users`, `roles`, `permissions`, `role_permissions`; six default
+  roles (super_admin, admin, developer, support, customer, viewer) with a full permission
+  matrix; Super Admin user `admin@ollamahub.local`.
+- **React 18 + Vite + TS SPA** (`react-app/`, served at `/app/`) — JWT axios client with
+  silent refresh-on-401, Zustand auth store, antd + Tailwind UI kit, dark sidebar admin
+  layout with permission-gated nav, Login page, Dashboard shell, route placeholders for all
+  modules.
+
+### Notes
+- Target server `40.160.57.17` assessed: bare Ubuntu 24.04, 8-core Xeon, 31 GiB RAM,
+  **no compute GPU** — will run Ollama CPU-only as node 1 (confirmed with user).

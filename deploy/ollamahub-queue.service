@@ -1,0 +1,17 @@
+# systemd unit: OllamaHub background queue worker.
+# Processes jobs in a loop (sleeps when idle). Install to
+# /etc/systemd/system/ollamahub-queue.service then: systemctl enable --now ollamahub-queue
+[Unit]
+Description=OllamaHub queue worker
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/ollamahub
+ExecStart=/bin/sh -c 'while true; do php8.3 spark queue:work --limit 25; sleep 5; done'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
