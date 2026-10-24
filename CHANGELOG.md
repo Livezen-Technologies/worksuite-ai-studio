@@ -2,7 +2,12 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
-## [Unreleased] — 1.4.0 — WorkSuite AI Studio redesign (in progress)
+## [1.4.0] — 2026-10-24 — WorkSuite AI Studio redesign
+
+The whole admin UI is rebuilt as **WorkSuite AI Studio** on Tailwind CSS v4 (Tailwind Plus v4 application UI
+patterns), in the WorkSuite design language, with full light/dark/system themes and phone, tablet and desktop
+layouts. The original React source was not on the server, so the frontend is recreated in `frontend/` against the
+unchanged API; every screen keeps the features of 1.3, recovered from the shipped bundle. No backend changes.
 
 The admin UI is being rebuilt as **WorkSuite AI Studio** on Tailwind CSS v4 (Tailwind Plus v4 application UI
 patterns), in the WorkSuite design language. The original React source was not on the server, so the frontend is
@@ -23,6 +28,34 @@ recreated from scratch in `frontend/` against the unchanged API.
 - API client: `{status, message, data}` envelope, field errors from 422s, one-shot access-token refresh on 401,
   NDJSON streaming and authenticated downloads.
 - New sign-in screen. Sessions from 1.3 are not carried over: everyone signs in once after the update.
+
+### Screens
+- **Dashboard:** the 8 KPI cards plus GPU, gateway error rate and active users; 24 h requests, 7-day tokens, model
+  usage, node health (worst first), recent gateway activity; live every 15 s.
+- **Monitoring:** health summary from `/health`, per-node CPU/RAM/disk/GPU with in-session trend lines, health score,
+  heartbeat, re-check with per-node latency; choosable auto-refresh.
+- **Analytics:** 7 / 30 / 90 / 365-day ranges, requests, tokens, latency, model popularity, gateway outcomes donut.
+- **Servers:** Ollama nodes and OpenAI / Anthropic / Gemini providers, health checks, node controls, a detail dialog
+  with hardware, health history and installed models (`/servers/:id` links still work).
+- **Models:** sync, catalogue install with streamed pull progress, load/unload, default, delete, full model config.
+- **Queue:** jobs with counters, filters, enqueue with priority/payload, retry/cancel, job detail; scheduled tasks
+  with schedule picker, enable switch and Run now.
+- **Model Studio, Datasets, Training (SinLama):** presets, GGUF / LoRA uploads with progress, streamed build log,
+  model cloning; dataset import, preview, dedupe, clean, export; training jobs with all hyperparameters and kits.
+- **Chat:** sessions with rename/delete/export, streamed replies with a safe Markdown renderer and code copy, stop
+  and regenerate, image attachments for vision models, start from an agent or a saved prompt.
+- **Prompt Library, Knowledge Base, AI Agents:** search and filters, variable fill-in, file upload to knowledge
+  bases, retrieval test with top-k, agent tools/knowledge/API access and one-click chat.
+- **API Keys:** scopes, rate and token quotas, allowed models/IPs, expiry; a copy-once secret reveal with a curl
+  example; gateway endpoint reference. **API Logs** and **Audit Logs:** filters and a detail view per entry.
+- **Users, Roles, Settings:** search and filters, suspend/reactivate, a grouped permission matrix, six settings
+  groups with unsaved-change tracking and write-only secrets.
+- **Notifications:** All/Unread, mark one or all read, broadcast and channel test for admins.
+
+### Notes
+- Everyone signs in once after the update (1.3 sessions are not carried over).
+- Not possible without backend changes: per-API-key analytics, before/after diffs in the audit log, per-chat
+  parameters and knowledge-base retrieval in chat.
 
 ## [1.3.0] — 2026-06-29 — SinLama AI (Sinhala LLM platform)
 

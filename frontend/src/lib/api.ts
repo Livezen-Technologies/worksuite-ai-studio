@@ -58,6 +58,13 @@ async function refreshAccess(): Promise<boolean> {
   return refreshing;
 }
 
+/** Refresh the access token now (for XHR uploads, which cannot go through authFetch). */
+export async function renewSession(): Promise<boolean> {
+  const ok = await refreshAccess();
+  if (!ok) onSessionExpired();
+  return ok;
+}
+
 export type Query = Record<string, string | number | boolean | null | undefined>;
 
 export interface RequestOptions {

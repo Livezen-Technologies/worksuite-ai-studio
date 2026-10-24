@@ -24,7 +24,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5190,
+    port: 5191,
     proxy: { '^/api/': { target: process.env.AISTUDIO_API ?? 'https://aistudio.livezentech.com', changeOrigin: true } },
   },
   test: { environment: 'jsdom' },

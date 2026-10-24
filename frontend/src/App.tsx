@@ -1,5 +1,5 @@
 import { Component, lazy, Suspense, type ReactNode } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { ExclamationTriangleIcon, LockClosedIcon } from '@heroicons/react/24/outline';
 import { useAuth } from './lib/auth';
 import { AppShell } from './layout/AppShell';
@@ -35,6 +35,12 @@ const perms: Record<keyof typeof pages, string> = {
   '/knowledge': 'knowledge.view', '/agents': 'agents.view', '/api-keys': 'apikeys.view', '/api-logs': 'logs.view', '/analytics': 'analytics.view',
   '/users': 'users.view', '/roles': 'roles.view', '/audit': 'audit.view', '/notifications': 'notifications.view', '/settings': 'settings.view',
 };
+
+/** OllamaHub 1.x had /servers/:id; the detail is now a dialog on /servers?server=:id. */
+function ServerDeepLink() {
+  const { id } = useParams();
+  return <Navigate to={`/servers?server=${encodeURIComponent(id ?? '')}`} replace />;
+}
 
 function PageLoading() {
   return <div className="flex min-h-[40vh] items-center justify-center text-slate-400"><Spinner className="size-6" /></div>;
@@ -87,6 +93,7 @@ export function App() {
       <Route path="/apilogs" element={<Navigate to="/api-logs" replace />} />
       <Route path="/dashboard" element={<Navigate to="/" replace />} />
       <Route element={<RequireAuth><AppShell /></RequireAuth>}>
+        <Route path="/servers/:id" element={<ServerDeepLink />} />
         {(Object.keys(pages) as (keyof typeof pages)[]).map((path) => {
           const Page = pages[path];
           return <Route key={path} path={path === '/' ? undefined : `${path}/*`} index={path === '/'} element={<Guard perm={perms[path]}><Page /></Guard>} />;
