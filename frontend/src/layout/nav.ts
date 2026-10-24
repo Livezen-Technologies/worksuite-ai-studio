@@ -1,0 +1,51 @@
+import type { ComponentType, SVGProps } from 'react';
+import {
+  BeakerIcon, BellIcon, BookOpenIcon, ChartBarIcon, ChatBubbleLeftRightIcon, Cog6ToothIcon, CpuChipIcon,
+  CircleStackIcon, ClipboardDocumentListIcon, CommandLineIcon, DocumentTextIcon, HomeIcon, KeyIcon,
+  QueueListIcon, ServerStackIcon, ShieldCheckIcon, SignalIcon, SparklesIcon, TableCellsIcon, UsersIcon, AcademicCapIcon,
+} from '@heroicons/react/24/outline';
+
+export interface NavItem { label: string; to: string; icon: ComponentType<SVGProps<SVGSVGElement>>; perm: string; description: string }
+export interface NavSection { heading: string; items: NavItem[] }
+
+/** The same sections, routes and permissions as OllamaHub 1.3, so bookmarks and roles carry over. */
+export const NAV: NavSection[] = [
+  { heading: 'Overview', items: [
+    { label: 'Dashboard', to: '/', icon: HomeIcon, perm: 'dashboard.view', description: 'Fleet health, usage and activity at a glance' },
+  ] },
+  { heading: 'Infrastructure', items: [
+    { label: 'Servers', to: '/servers', icon: ServerStackIcon, perm: 'servers.view', description: 'Ollama nodes and providers' },
+    { label: 'Models', to: '/models', icon: CpuChipIcon, perm: 'models.view', description: 'Pull, load and configure models' },
+    { label: 'Monitoring', to: '/monitoring', icon: SignalIcon, perm: 'monitoring.view', description: 'Live CPU, memory, GPU and health' },
+    { label: 'Queue', to: '/queue', icon: QueueListIcon, perm: 'queues.view', description: 'Background jobs and schedules' },
+  ] },
+  { heading: 'SinLama', items: [
+    { label: 'Model Studio', to: '/studio', icon: SparklesIcon, perm: 'models.view', description: 'Build custom models from a base' },
+    { label: 'Datasets', to: '/datasets', icon: TableCellsIcon, perm: 'models.view', description: 'Instruction datasets for fine-tuning' },
+    { label: 'Training', to: '/training', icon: AcademicCapIcon, perm: 'models.view', description: 'LoRA / QLoRA training jobs and kits' },
+  ] },
+  { heading: 'AI Workspace', items: [
+    { label: 'Chat Playground', to: '/chat', icon: ChatBubbleLeftRightIcon, perm: 'chat.use', description: 'Talk to any model' },
+    { label: 'Prompt Library', to: '/prompts', icon: DocumentTextIcon, perm: 'prompts.view', description: 'Reusable prompts and templates' },
+    { label: 'Knowledge Base', to: '/knowledge', icon: BookOpenIcon, perm: 'knowledge.view', description: 'Documents for retrieval' },
+    { label: 'AI Agents', to: '/agents', icon: BeakerIcon, perm: 'agents.view', description: 'Configured assistants' },
+  ] },
+  { heading: 'Gateway', items: [
+    { label: 'API Keys', to: '/api-keys', icon: KeyIcon, perm: 'apikeys.view', description: 'Keys for the /api/v1 gateway' },
+    { label: 'API Logs', to: '/api-logs', icon: CommandLineIcon, perm: 'logs.view', description: 'Every gateway request' },
+    { label: 'Analytics', to: '/analytics', icon: ChartBarIcon, perm: 'analytics.view', description: 'Tokens, latency and usage trends' },
+  ] },
+  { heading: 'Administration', items: [
+    { label: 'Users', to: '/users', icon: UsersIcon, perm: 'users.view', description: 'People who can sign in' },
+    { label: 'Roles', to: '/roles', icon: ShieldCheckIcon, perm: 'roles.view', description: 'Roles and permissions' },
+    { label: 'Audit Logs', to: '/audit', icon: ClipboardDocumentListIcon, perm: 'audit.view', description: 'Who changed what' },
+    { label: 'Notifications', to: '/notifications', icon: BellIcon, perm: 'notifications.view', description: 'Alerts and broadcasts' },
+    { label: 'Settings', to: '/settings', icon: Cog6ToothIcon, perm: 'settings.view', description: 'Platform configuration' },
+  ] },
+];
+
+export const ALL_ITEMS = NAV.flatMap((s) => s.items.map((i) => ({ ...i, section: s.heading })));
+export function findItem(pathname: string) {
+  return ALL_ITEMS.filter((i) => (i.to === '/' ? pathname === '/' : pathname === i.to || pathname.startsWith(i.to + '/'))).sort((a, b) => b.to.length - a.to.length)[0];
+}
+export { CircleStackIcon as LogoIcon };

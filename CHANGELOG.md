@@ -2,6 +2,28 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [Unreleased] — 1.4.0 — WorkSuite AI Studio redesign (in progress)
+
+The admin UI is being rebuilt as **WorkSuite AI Studio** on Tailwind CSS v4 (Tailwind Plus v4 application UI
+patterns), in the WorkSuite design language. The original React source was not on the server, so the frontend is
+recreated from scratch in `frontend/` against the unchanged API.
+
+### Foundation
+- `frontend/`: Vite 6 + React 19 + TypeScript, Tailwind CSS v4, Headless UI, Heroicons, TanStack Query, Recharts 3 —
+  the same stack as WorkSuite. Builds into `public/app/` and serves from `/` exactly as the live nginx expects.
+- WorkSuite tokens (slate neutrals, blue-600 accent, `brand-*` utilities), class-based dark mode with Light / Dark /
+  System, applied before first paint; reduced-motion respected.
+- Shared component kit: buttons, form controls with field errors, cards, stat cards, meters, badges with one
+  status→colour map, data table with built-in skeleton / error-with-retry / empty states, pagination, tabs, segmented
+  control, modals, form modals, confirm dialogs, row action menus, toasts.
+- App shell: WorkSuite-style sidebar with the same six sections, routes and permissions as 1.3 (drawer on phones),
+  sticky header with ⌘K page search, notifications popover with unread count, theme menu and user menu,
+  breadcrumbs, skip link, per-page error boundary and permission guard; old `/apikeys`, `/apilogs`, `/dashboard`
+  URLs redirect.
+- API client: `{status, message, data}` envelope, field errors from 422s, one-shot access-token refresh on 401,
+  NDJSON streaming and authenticated downloads.
+- New sign-in screen. Sessions from 1.3 are not carried over: everyone signs in once after the update.
+
 ## [1.3.0] — 2026-06-29 — SinLama AI (Sinhala LLM platform)
 
 Integrates the SinLama blueprint into the existing platform (new sidebar section **SinLama**).
