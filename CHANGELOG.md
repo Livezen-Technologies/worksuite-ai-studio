@@ -9,10 +9,6 @@ patterns), in the WorkSuite design language, with full light/dark/system themes 
 layouts. The original React source was not on the server, so the frontend is recreated in `frontend/` against the
 unchanged API; every screen keeps the features of 1.3, recovered from the shipped bundle. No backend changes.
 
-The admin UI is being rebuilt as **WorkSuite AI Studio** on Tailwind CSS v4 (Tailwind Plus v4 application UI
-patterns), in the WorkSuite design language. The original React source was not on the server, so the frontend is
-recreated from scratch in `frontend/` against the unchanged API.
-
 ### Foundation
 - `frontend/`: Vite 6 + React 19 + TypeScript, Tailwind CSS v4, Headless UI, Heroicons, TanStack Query, Recharts 3 —
   the same stack as WorkSuite. Builds into `public/app/` and serves from `/` exactly as the live nginx expects.
