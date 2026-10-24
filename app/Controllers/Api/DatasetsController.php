@@ -85,8 +85,20 @@ class DatasetsController extends BaseApiController
         $total = (clone $b)->countAllResults(false);
         $rows  = $b->orderBy('id', 'ASC')->findAll($per, ($page - 1) * $per);
 
+        // Engine Splits tab (FR TRNPIPE 003): per-split counts and group_key coverage.
+        $db     = \Config\Database::connect();
+        $splits = array_column($db->table('dataset_items')->select('split, COUNT(*) AS n')->where('dataset_id', (int) $id)
+            ->groupBy('split')->get()->getResultArray(), 'n', 'split');
+        $all     = array_sum(array_map('intval', $splits));
+        $grouped = $db->table('dataset_items')->where('dataset_id', (int) $id)->where('group_key IS NOT NULL')->where("group_key <> ''")->countAllResults();
+
         return $this->ok([
             'dataset' => $ds,
+            'split_counts'   => [
+                'train' => (int) ($splits['train'] ?? 0), 'dev' => (int) ($splits['dev'] ?? 0),
+                'test'  => (int) ($splits['test'] ?? 0),  'unassigned' => (int) ($splits[''] ?? 0),
+            ],
+            'group_coverage' => ['with' => $grouped, 'without' => $all - $grouped],
             'items'   => $rows,
             'total'   => $total,
             'page'    => $page,

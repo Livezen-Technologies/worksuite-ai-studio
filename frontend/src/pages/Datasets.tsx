@@ -6,20 +6,23 @@ import {
 } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Alert, Badge, Button, Card, CardHeader, ConfirmDialog, DataTable, EmptyState, ErrorState, FormModal,
-  IconButton, Input, PageHeader, Pagination, SearchInput, Select, Skeleton, StatCard, Textarea, Toolbar,
+  IconButton, Input, PageHeader, Pagination, SearchInput, Select, Skeleton, StatCard, Tabs, Textarea, Toolbar,
   useDisclosure, useToast, type Column,
 } from '../components/ui';
 import { ApiError, del, download, get, post } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ago, bytes, compact, dateTime, num } from '../lib/format';
 import { uploadWithProgress } from './SinLama/upload';
+import DatasetGovernance from './SinLama/DatasetGovernance';
+import DatasetSplits from './SinLama/DatasetSplits';
+import { RightsChip, type GovernedDataset } from './SinLama/engineDataset';
 
 interface Dataset {
   id: number; name: string; language: string; description: string | null;
   item_count: number | string; token_estimate: number | string; created_at: string; updated_at?: string;
 }
 interface Item { id: number; instruction: string; input: string | null; output: string; tokens: number | string }
-interface Detail { dataset: Dataset; items: Item[]; total: number; page: number; per: number }
+interface Detail { dataset: Dataset & GovernedDataset; items: Item[]; total: number; page: number; per: number }
 
 const LANGS = [
   { value: 'si', label: 'Sinhala' },
@@ -221,6 +224,7 @@ function DatasetDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [rowToDelete, setRowToDelete] = useState<Item | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const [tab, setTab] = useState<'rows' | 'governance' | 'splits'>('rows');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const detail = useQuery({
@@ -297,7 +301,7 @@ function DatasetDetail({ id, onBack }: { id: number; onBack: () => void }) {
       <PageHeader
         title={ds ? ds.name : <Skeleton className="h-8 w-48" />}
         description={ds?.description ?? undefined}
-        meta={ds && <span className="text-sm text-slate-500 dark:text-slate-400">{langLabel(ds.language)} · created {dateTime(ds.created_at)}</span>}
+        meta={ds && <span className="text-sm text-slate-500 dark:text-slate-400">{langLabel(ds.language)} · created {dateTime(ds.created_at)} <RightsChip status={ds.rights_status} /></span>}
         actions={
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" icon={ArrowLeftIcon} onClick={onBack}>All datasets</Button>
@@ -316,6 +320,16 @@ function DatasetDetail({ id, onBack }: { id: number; onBack: () => void }) {
         <StatCard name="Avg tokens / row" value={ds && Number(ds.item_count) ? num(Math.round(Number(ds.token_estimate) / Number(ds.item_count))) : '—'} loading={!ds} />
       </div>
 
+      <Tabs
+        className="mb-6"
+        value={tab}
+        onChange={(k) => setTab(k as typeof tab)}
+        tabs={[{ key: 'rows', label: 'Rows' }, { key: 'governance', label: 'Governance' }, { key: 'splits', label: 'Splits' }]}
+      />
+      {tab === 'governance' && ds && <DatasetGovernance key={ds.id} dataset={ds} />}
+      {tab === 'splits' && ds && <DatasetSplits key={ds.id} dataset={ds} />}
+
+      {tab === 'rows' && <>
       {canManage && (
         <Card className="mb-6">
           <CardHeader title="Tidy up" description="Run these before generating a training kit." />
@@ -372,6 +386,7 @@ function DatasetDetail({ id, onBack }: { id: number; onBack: () => void }) {
           </div>
         </Card>
       )}
+      </>}
 
       <ConfirmDialog
         open={confirm === 'dedupe' || confirm === 'clean'}

@@ -2,6 +2,41 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.5.0] — 2026-10-24 — Sinhala AI Engine: release core (Phase 0 + 1)
+
+### Phase 1 — release core
+- **Sinhala Engine** sidebar section with Engine Overview (S01), Evaluations with the gate checklist and dual
+  approval (S07), Approvals queue (S08), Package registry (S09), Package detail with lifecycle, artifacts, signed
+  manifest and history (S10), and Bindings per task × device profile with activation and rollback (S11).
+- Datasets gain **Governance** (rights, consent, approve / withdraw — S02) and **Splits** (grouped freeze, hashes,
+  coverage — S03) tabs; Training jobs gain **Lineage** (S05) and show the server's refusal when a kit is blocked.
+- API: `GET /engine/evaluations/{id}`, `GET /engine/packages/{id}` (with `allowed_next` and the `missing` evidence),
+  `POST`/`DELETE /engine/packages/{id}/artifacts` (server-side sha256), `GET /engine/approvals`,
+  `GET`/`PUT /engine/bindings`, `POST /engine/bindings/rollback`; `split_counts` and `group_coverage` on datasets.
+- Migration `2026-10-24-000014_CreateEngineBindings` (task × profile bindings, backfilled from active packages;
+  engine.* permissions granted to admin roles).
+- Behaviour changes: training kits need a frozen, non-withdrawn dataset (409); `engine.sign` no longer falls back
+  to `models.manage`; activation verifies the package signature; a candidate can be registered before its
+  artifacts are uploaded.
+- Verified locally end to end (35 checks: rights → freeze → kit → evaluation → dual approval → upload → lifecycle →
+  signed manifest → activate → rollback → permissions) on a fresh database.
+
+### Phase 0 — backend from PR #1
+
+Implements the AI Studio side of the **WorkSuite Sinhala AI Engine SRS v1.0**
+(`docs/sinhala-ai-engine/SRS.md`; mapping in `docs/sinhala-ai-engine/IMPLEMENTATION.md`).
+
+- **Dataset governance** (TRNPIPE 001/003/006): rights & provenance fields, quarantine until approved,
+  grouped deterministic train/dev/test freeze with manifest + split hashes, withdrawal.
+- **Training lineage** (TRNPIPE 002): kits export train + dev only (locked test split stays on the server),
+  write `lineage.json`, and record dataset/config hashes and seed on the job.
+- **Evaluation reports & release gates** (§17): `EngineGateService` with SRS thresholds per task,
+  ≤2-point regression and stratum rules, dual approval (release owner + language lead).
+- **Signed model packages** (§10.1, §14.5, ADM 001–004, SEC 007): lifecycle state machine, artifact/licence
+  checks, Ed25519 detached signatures, atomic activation and rollback.
+- New API group `/api/engine/*`, permissions `engine.view|manage|sign`,
+  migration `2026-10-24-000013_CreateEngineReleaseZone`.
+
 ## [1.4.0] — 2026-10-24 — WorkSuite AI Studio redesign
 
 The whole admin UI is rebuilt as **WorkSuite AI Studio** on Tailwind CSS v4 (Tailwind Plus v4 application UI

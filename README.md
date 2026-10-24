@@ -9,3 +9,11 @@ Self-hosted AI control plane, live at https://aistudio.livezentech.com (server 4
   `env.production.example`). Copy `env` or `deploy/env.production.example` to `.env`; never commit `.env`.
 
 Imported from the production server on 2026-10-24 (version in `VERSION`).
+
+## WorkSuite Sinhala AI Engine
+
+AI Studio is the **build & training zone** for the offline WorkSuite Sinhala AI Engine: dataset rights and frozen
+splits, training lineage, evaluation release gates and Ed25519-signed model packages (`/api/engine/*`).
+Spec: [`docs/sinhala-ai-engine/SRS.md`](docs/sinhala-ai-engine/SRS.md) · what's built here:
+[`docs/sinhala-ai-engine/IMPLEMENTATION.md`](docs/sinhala-ai-engine/IMPLEMENTATION.md).
+After deploying run `php spark migrate`.
