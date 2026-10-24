@@ -164,6 +164,14 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->post('engine/packages/rollback', 'EngineController::rollback');
     $routes->post('engine/packages/(:num)/transition', 'EngineController::transition/$1');
     $routes->get('engine/packages/(:num)/manifest', 'EngineController::manifest/$1');
+    $routes->get('engine/evaluations/(:num)', 'EngineController::evaluation/$1');
+    $routes->get('engine/packages/(:num)', 'EngineController::package/$1');
+    $routes->post('engine/packages/(:num)/artifacts', 'EngineController::uploadArtifact/$1');
+    $routes->delete('engine/packages/(:num)/artifacts', 'EngineController::deleteArtifact/$1');
+    $routes->get('engine/approvals', 'EngineController::approvals');
+    $routes->get('engine/bindings', 'EngineController::bindings');
+    $routes->put('engine/bindings', 'EngineController::bind');
+    $routes->post('engine/bindings/rollback', 'EngineController::bindingRollback');
 });
 
 /*

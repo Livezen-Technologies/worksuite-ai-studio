@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --force",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:local": "AISTUDIO_API=http://127.0.0.1:8930 vite"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.10",

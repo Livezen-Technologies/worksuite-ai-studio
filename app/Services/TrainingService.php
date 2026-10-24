@@ -67,11 +67,15 @@ class TrainingService
             throw new \RuntimeException('Cannot create kit directory.');
         }
 
-        // 1. dataset.jsonl (+ dev.jsonl when the dataset is frozen; the test split is never exported)
-        $frozen = ! empty($dataset['manifest_hash']);
+        // 1. dataset.jsonl (+ dev.jsonl; the test split is never exported)
+        // Engine guard rail (FR TRNPIPE 003/006): DomainException → 409 in the controller.
         if (($dataset['rights_status'] ?? 'approved') === 'withdrawn') {
-            throw new \RuntimeException('This dataset has been withdrawn and cannot be used for new training runs.');
+            throw new \DomainException('This dataset has been withdrawn and cannot be used for new training runs.');
         }
+        if (empty($dataset['manifest_hash'])) {
+            throw new \DomainException('Freeze the dataset (immutable manifest + splits) before generating a training kit.');
+        }
+        $frozen = true;
         $files = ['train.py', 'dataset.jsonl', 'README.md'];
         $fh = fopen($dir . '/dataset.jsonl', 'wb');
         foreach ((new DatasetService())->exportJsonl((int) $job['dataset_id'], $frozen ? ['train'] : null) as $line) {

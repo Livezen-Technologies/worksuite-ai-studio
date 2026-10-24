@@ -2,7 +2,7 @@ import type { ComponentType, SVGProps } from 'react';
 import {
   BeakerIcon, BellIcon, BookOpenIcon, ChartBarIcon, ChatBubbleLeftRightIcon, Cog6ToothIcon, CpuChipIcon,
   CircleStackIcon, ClipboardDocumentListIcon, CommandLineIcon, DocumentTextIcon, HomeIcon, KeyIcon,
-  QueueListIcon, ServerStackIcon, ShieldCheckIcon, SignalIcon, SparklesIcon, TableCellsIcon, UsersIcon, AcademicCapIcon,
+  QueueListIcon, ServerStackIcon, CheckBadgeIcon, CubeIcon, ArrowsRightLeftIcon, PresentationChartLineIcon, ShieldCheckIcon, SignalIcon, SparklesIcon, TableCellsIcon, UsersIcon, AcademicCapIcon,
 } from '@heroicons/react/24/outline';
 
 export interface NavItem { label: string; to: string; icon: ComponentType<SVGProps<SVGSVGElement>>; perm: string; description: string }
@@ -23,6 +23,13 @@ export const NAV: NavSection[] = [
     { label: 'Model Studio', to: '/studio', icon: SparklesIcon, perm: 'models.view', description: 'Build custom models from a base' },
     { label: 'Datasets', to: '/datasets', icon: TableCellsIcon, perm: 'models.view', description: 'Instruction datasets for fine-tuning' },
     { label: 'Training', to: '/training', icon: AcademicCapIcon, perm: 'models.view', description: 'LoRA / QLoRA training jobs and kits' },
+  ] },
+  { heading: 'Sinhala Engine', items: [
+    { label: 'Engine Overview', to: '/engine', icon: PresentationChartLineIcon, perm: 'engine.view', description: 'Active packs, pipeline and gates' },
+    { label: 'Evaluations', to: '/engine/evaluations', icon: CheckBadgeIcon, perm: 'engine.view', description: 'Evaluation reports and release gates' },
+    { label: 'Approvals', to: '/engine/approvals', icon: ShieldCheckIcon, perm: 'engine.view', description: 'Items waiting for your approval' },
+    { label: 'Packages', to: '/engine/packages', icon: CubeIcon, perm: 'engine.view', description: 'Signed model packages and lifecycle' },
+    { label: 'Bindings', to: '/engine/bindings', icon: ArrowsRightLeftIcon, perm: 'engine.view', description: 'Active pack per task and device profile' },
   ] },
   { heading: 'AI Workspace', items: [
     { label: 'Chat Playground', to: '/chat', icon: ChatBubbleLeftRightIcon, perm: 'chat.use', description: 'Talk to any model' },

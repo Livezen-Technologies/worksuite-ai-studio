@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AcademicCapIcon, ArchiveBoxArrowDownIcon, ArrowDownTrayIcon, CpuChipIcon, PencilSquareIcon, PlusIcon, TrashIcon,
+  AcademicCapIcon, ArchiveBoxArrowDownIcon, BeakerIcon, ArrowDownTrayIcon, CpuChipIcon, PencilSquareIcon, PlusIcon, TrashIcon,
 } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Alert, Badge, Button, Card, ConfirmDialog, DataTable, EmptyState, FormModal, FormSection, Input,
@@ -10,13 +10,14 @@ import {
 import { ApiError, del, download, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ago, dateTime, num } from '../lib/format';
+import TrainingLineage, { type LineageJob } from './SinLama/TrainingLineage';
 
 type Status = 'draft' | 'kit_ready' | 'running' | 'completed' | 'failed' | 'imported';
 interface Hyper {
   epochs: number; learning_rate: number; lora_rank: number; lora_alpha: number; lora_dropout: number;
   batch_size: number; grad_accum: number; max_seq_len: number; warmup_steps: number; seed: number; quant_export: string;
 }
-interface Job {
+interface Job extends LineageJob {
   id: number; name: string; dataset_id: number | null; dataset_name: string | null; dataset_items: number | null;
   base_model: string; method: 'lora' | 'qlora'; hyperparams: string | Partial<Hyper> | null; status: Status;
   notes: string | null; logs: string | null; created_at: string; updated_at: string | null;
@@ -53,6 +54,9 @@ export default function Training() {
   const [editing, setEditing] = useState<Job | null>(null);
   const [toDelete, setToDelete] = useState<Job | null>(null);
   const [kitJob, setKitJob] = useState<Job | null>(null);
+  const [lineageJob, setLineageJob] = useState<Job | null>(null);
+  /** The server's kit refusal (e.g. dataset not frozen / withdrawn), shown verbatim. */
+  const [kitRefusal, setKitRefusal] = useState<{ job: Job; message: string } | null>(null);
 
   const list = useQuery({ queryKey: ['training'], queryFn: () => get<ListResponse>('/training') });
   const jobs = list.data?.jobs ?? [];
@@ -62,8 +66,8 @@ export default function Training() {
   const refresh = () => qc.invalidateQueries({ queryKey: ['training'] });
   const kit = useMutation({
     mutationFn: (id: number) => post<Job>(`/training/${id}/kit`),
-    onSuccess: () => { toast.success('Training kit generated', 'Download it and run it on a GPU.'); refresh(); },
-    onError: (e) => toast.error(e),
+    onSuccess: (_, id) => { setKitRefusal((r) => (r?.job.id === id ? null : r)); toast.success('Training kit generated', 'Download it and run it on a GPU.'); refresh(); },
+    onError: (e, id) => { const j = jobs.find((x) => x.id === id); if (j) setKitRefusal({ job: j, message: e instanceof Error ? e.message : String(e) }); toast.error(e); },
     onSettled: () => setKitJob(null),
   });
   const setStatus = useMutation({
@@ -135,6 +139,7 @@ export default function Training() {
           )}
           <ActionMenu actions={[
             { label: 'Download kit', icon: ArrowDownTrayIcon, disabled: !HAS_KIT.includes(j.status), onClick: () => downloadKit(j) },
+            { label: 'Lineage', icon: BeakerIcon, onClick: () => setLineageJob(j) },
             { label: 'Edit', icon: PencilSquareIcon, hidden: !canManage, onClick: () => { setEditing(j); form.onOpen(); } },
             ...STATUSES.filter((s) => s.value !== j.status).map((s) => ({
               label: `Mark ${s.label.toLowerCase()}`, hidden: !canManage, onClick: () => setStatus.mutate({ id: j.id, status: s.value }),
@@ -158,6 +163,10 @@ export default function Training() {
         A kit is a zip with <code>train.py</code> (Unsloth + PEFT + TRL), <code>dataset.jsonl</code> and a README with RunPod / Colab steps.
         Run it on a GPU, then import the resulting GGUF in Model Studio. Status flow: draft → kit ready → running → completed → imported.
       </Alert>
+
+      {kitRefusal && (
+        <Alert tone="danger" title={`Kit not generated for “${kitRefusal.job.name}”`} className="mb-6">{kitRefusal.message}</Alert>
+      )}
 
       <Card>
         <Tabs
@@ -196,6 +205,12 @@ export default function Training() {
           defaults={list.data.defaults}
         />
       )}
+      <TrainingLineage
+        open={lineageJob !== null}
+        onClose={() => setLineageJob(null)}
+        job={lineageJob && (jobs.find((x) => x.id === lineageJob.id) ?? lineageJob)}
+        kitRefusal={kitRefusal && lineageJob && kitRefusal.job.id === lineageJob.id ? kitRefusal.message : null}
+      />
       <ConfirmDialog
         open={toDelete !== null}
         onClose={() => setToDelete(null)}

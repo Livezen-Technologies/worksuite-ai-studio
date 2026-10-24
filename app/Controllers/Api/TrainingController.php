@@ -93,6 +93,8 @@ class TrainingController extends BaseApiController
         if ($r = $this->requirePermission('models.manage')) return $r;
         try {
             (new TrainingService())->generateKit((int) $id);
+        } catch (\DomainException $e) {
+            return $this->failure($e->getMessage(), 409); // dataset withdrawn / not frozen
         } catch (\Throwable $e) {
             return $this->failure($e->getMessage(), 422);
         }

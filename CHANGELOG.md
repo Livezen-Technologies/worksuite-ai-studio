@@ -2,7 +2,26 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
-## [1.5.0] — 2026-10-24 — Sinhala AI Engine: build & release zone (backend from PR #1)
+## [1.5.0] — 2026-10-24 — Sinhala AI Engine: release core (Phase 0 + 1)
+
+### Phase 1 — release core
+- **Sinhala Engine** sidebar section with Engine Overview (S01), Evaluations with the gate checklist and dual
+  approval (S07), Approvals queue (S08), Package registry (S09), Package detail with lifecycle, artifacts, signed
+  manifest and history (S10), and Bindings per task × device profile with activation and rollback (S11).
+- Datasets gain **Governance** (rights, consent, approve / withdraw — S02) and **Splits** (grouped freeze, hashes,
+  coverage — S03) tabs; Training jobs gain **Lineage** (S05) and show the server's refusal when a kit is blocked.
+- API: `GET /engine/evaluations/{id}`, `GET /engine/packages/{id}` (with `allowed_next` and the `missing` evidence),
+  `POST`/`DELETE /engine/packages/{id}/artifacts` (server-side sha256), `GET /engine/approvals`,
+  `GET`/`PUT /engine/bindings`, `POST /engine/bindings/rollback`; `split_counts` and `group_coverage` on datasets.
+- Migration `2026-10-24-000014_CreateEngineBindings` (task × profile bindings, backfilled from active packages;
+  engine.* permissions granted to admin roles).
+- Behaviour changes: training kits need a frozen, non-withdrawn dataset (409); `engine.sign` no longer falls back
+  to `models.manage`; activation verifies the package signature; a candidate can be registered before its
+  artifacts are uploaded.
+- Verified locally end to end (35 checks: rights → freeze → kit → evaluation → dual approval → upload → lifecycle →
+  signed manifest → activate → rollback → permissions) on a fresh database.
+
+### Phase 0 — backend from PR #1
 
 Implements the AI Studio side of the **WorkSuite Sinhala AI Engine SRS v1.0**
 (`docs/sinhala-ai-engine/SRS.md`; mapping in `docs/sinhala-ai-engine/IMPLEMENTATION.md`).

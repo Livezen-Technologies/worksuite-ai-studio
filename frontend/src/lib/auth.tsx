@@ -57,7 +57,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (p: string) => {
       if (!user) return false;
       if (user.role === 'super_admin' || user.role === 'admin') return true;
-      return (user.permissions ?? []).includes(p);
+      const perms = user.permissions ?? [];
+      if (perms.includes(p)) return true;
+      // The engine API falls back to models.* for roles created before engine.* existed (EngineController::guard).
+      if (p === 'engine.view') return perms.includes('models.view');
+      if (p === 'engine.manage') return perms.includes('models.manage');
+      return false;
     },
     [user],
   );

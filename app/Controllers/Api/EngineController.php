@@ -23,6 +23,14 @@ use RuntimeException;
  *   POST   /api/engine/packages/{id}/transition       {to, reason}                           §10.1
  *   POST   /api/engine/packages/rollback              {task}                                 ADM 004
  *   GET    /api/engine/packages/{id}/manifest         signed manifest + signature download   §14.5
+ *   GET    /api/engine/evaluations/{id}               one report, decoded, names + packages
+ *   GET    /api/engine/packages/{id}                  one package + allowed_next/missing/bindings
+ *   POST   /api/engine/packages/{id}/artifacts        multipart file (+path); server hashes it SEC 007
+ *   DELETE /api/engine/packages/{id}/artifacts?path=  remove one artifact (candidate/quarantined)
+ *   GET    /api/engine/approvals                      what awaits approval / signing / activation
+ *   GET    /api/engine/bindings                       task × profile active/previous grid    ADM 003
+ *   PUT    /api/engine/bindings                       {task, profile, package_id}            ADM 003
+ *   POST   /api/engine/bindings/rollback              {task, profile}                        ADM 004
  */
 class EngineController extends BaseApiController
 {
@@ -30,8 +38,11 @@ class EngineController extends BaseApiController
 
     private function guard(string $perm)
     {
-        // Admins pass via can(); otherwise fall back to the existing models.* permission.
+        // Admins pass via can(). view/manage fall back to the existing models.* permission so roles made before
+        // engine.* existed keep working; engine.sign (signing, activation, rollback, revocation) never falls back —
+        // it must be granted on purpose (SRS SEC 002).
         if ($this->can($perm)) return null;
+        if ($perm === 'engine.sign') return $this->requirePermission('engine.sign');
         return $this->requirePermission($perm === 'engine.view' ? 'models.view' : 'models.manage');
     }
 
@@ -196,7 +207,9 @@ class EngineController extends BaseApiController
         if (trim((string) ($in['runtime_range'] ?? '')) === '') return $this->failure('runtime_range must pin exact compatible runtime bounds.', 422);
         if (trim((string) ($in['license_id'] ?? '')) === '') return $this->failure('license_id is required.', 422);
         $artifacts = is_array($in['artifacts'] ?? null) ? array_values($in['artifacts']) : [];
-        if ($errs = $svc->validateArtifacts($artifacts)) return $this->failure(implode(' ', $errs), 422);
+        // A candidate may be registered empty and filled by upload (the server hashes each file); a declared list from
+        // a GPU worker is still validated now. Verification refuses an empty list either way (EnginePackageService::check).
+        if ($artifacts !== [] && ($errs = $svc->validateArtifacts($artifacts))) return $this->failure(implode(' ', $errs), 422);
 
         $evalId = null;
         if (! empty($in['evaluation_uuid'])) {
@@ -277,7 +290,210 @@ class EngineController extends BaseApiController
         ]);
     }
 
+    // ------------------------------------------------------------ phase 1: detail, artifacts, approvals, bindings
+
+    public function evaluation($id = null)
+    {
+        if ($r = $this->guard('engine.view')) return $r;
+        $ev = $this->db()->table('engine_evaluations')->where('id', (int) $id)->get()->getRowArray();
+        if (! $ev) return $this->failure('Evaluation not found.', 404);
+        foreach (['metrics', 'baseline_metrics', 'subgroups', 'gate_result'] as $j) $ev[$j] = json_decode((string) $ev[$j], true);
+        $names = $this->userNames([$ev['release_approver'], $ev['language_approver'], $ev['created_by']]);
+        $ev['release_approver_name']  = $names[(int) $ev['release_approver']] ?? null;
+        $ev['language_approver_name'] = $names[(int) $ev['language_approver']] ?? null;
+        $ev['created_by_name']        = $names[(int) $ev['created_by']] ?? null;
+        $job = $ev['training_job_id'] ? $this->db()->table('training_jobs')->select('id, name')->where('id', $ev['training_job_id'])->get()->getRowArray() : null;
+        $ev['training_job'] = $job ? ['id' => (int) $job['id'], 'name' => $job['name']] : null;
+        $ev['packages'] = $this->db()->table('engine_packages')->select('id, package_id, version, state')
+            ->where('evaluation_id', (int) $id)->orderBy('id', 'DESC')->get()->getResultArray();
+        return $this->ok($ev);
+    }
+
+    public function package($id = null)
+    {
+        if ($r = $this->guard('engine.view')) return $r;
+        $pkg = (new EnginePackageService())->find((int) $id);
+        if (! $pkg) return $this->failure('Package not found.', 404);
+        return $this->ok($this->packageDetail($pkg));
+    }
+
+    public function uploadArtifact($id = null)
+    {
+        if ($r = $this->guard('engine.manage')) return $r;
+        $svc = new EnginePackageService();
+        $pkg = $svc->find((int) $id);
+        if (! $pkg) return $this->failure('Package not found.', 404);
+        $file = $this->request->getFile('file');
+        if (! $file || ! $file->isValid()) return $this->failure('No file received (check the upload size limit).', 422);
+        $path = trim((string) ($this->request->getPost('path') ?? ''));
+        if ($path === '') $path = $file->getClientName();
+        try {
+            $svc->putArtifact($pkg, $file->getTempName(), $path);
+        } catch (RuntimeException $e) {
+            return $this->failure($e->getMessage(), 409);
+        }
+        return $this->ok($this->packageDetail($svc->find((int) $id)), 'Artifact stored and hashed by the server.');
+    }
+
+    public function deleteArtifact($id = null)
+    {
+        if ($r = $this->guard('engine.manage')) return $r;
+        $svc = new EnginePackageService();
+        $pkg = $svc->find((int) $id);
+        if (! $pkg) return $this->failure('Package not found.', 404);
+        $path = (string) ($this->request->getGet('path') ?? '');
+        if ($path === '') return $this->failure('path is required.', 422);
+        try {
+            $svc->removeArtifact($pkg, $path);
+        } catch (RuntimeException $e) {
+            return $this->failure($e->getMessage(), 409);
+        }
+        return $this->ok($this->packageDetail($svc->find((int) $id)), 'Artifact removed.');
+    }
+
+    public function approvals()
+    {
+        if ($r = $this->guard('engine.view')) return $r;
+        $me      = $this->userId();
+        $canSign = $this->allowed('engine.sign');
+        $svc     = new EnginePackageService();
+
+        $evals = [];
+        $rows  = $this->db()->table('engine_evaluations')
+            ->select('id, uuid, task, candidate_digest, suite_digest, decision, release_approver, language_approver, created_by, created_at')
+            ->whereIn('decision', ['pass', 'pending'])
+            ->groupStart()->where('release_approver', null)->orWhere('language_approver', null)->groupEnd()
+            ->orderBy('id', 'DESC')->get()->getResultArray();
+        foreach ($rows as $ev) {
+            $needs = [];
+            if (! $ev['release_approver']) $needs[] = 'release';
+            if (! $ev['language_approver']) $needs[] = 'language';
+            // Same rule as approveEvaluation(): only passing reports, and not both roles from one person.
+            $mine = array_filter($needs, fn ($role) => (int) $ev[$role === 'release' ? 'language_approver' : 'release_approver'] !== $me);
+            $ev['needs']       = $needs;
+            $ev['can_approve'] = $canSign && $ev['decision'] === 'pass' && $mine !== [];
+            $evals[] = $ev;
+        }
+
+        $pkgs = [];
+        foreach ($this->db()->table('engine_packages')->whereIn('state', ['approved', 'staged'])->orderBy('id', 'DESC')->get()->getResultArray() as $p) {
+            $needs = $p['state'] === 'approved' ? 'sign' : 'activate';
+            $s = $this->pkgSummary($p);
+            $s['needs']   = $needs;
+            $s['can_act'] = $canSign && ($needs === 'activate' || $svc->check($p, 'staged') === []);
+            $pkgs[] = $s;
+        }
+        return $this->ok(['evaluations' => $evals, 'packages' => $pkgs]);
+    }
+
+    public function bindings()
+    {
+        if ($r = $this->guard('engine.view')) return $r;
+        return $this->ok($this->bindingsPayload());
+    }
+
+    public function bind()
+    {
+        if ($r = $this->guard('engine.sign')) return $r;
+        $in = $this->input();
+        try {
+            (new EnginePackageService())->activate((string) ($in['task'] ?? ''), (string) ($in['profile'] ?? ''), (int) ($in['package_id'] ?? 0), $this->userId());
+        } catch (RuntimeException $e) {
+            return $this->failure($e->getMessage(), 409);
+        }
+        return $this->ok($this->bindingsPayload(), 'Package activated.');
+    }
+
+    public function bindingRollback()
+    {
+        if ($r = $this->guard('engine.sign')) return $r;
+        $in = $this->input();
+        try {
+            (new EnginePackageService())->rollbackBinding((string) ($in['task'] ?? ''), (string) ($in['profile'] ?? ''), $this->userId());
+        } catch (RuntimeException $e) {
+            return $this->failure($e->getMessage(), 409);
+        }
+        return $this->ok($this->bindingsPayload(), 'Rolled back to the previous package.');
+    }
+
     // ------------------------------------------------------------ helpers
+
+    /** Same decision guard() makes, as a boolean (for can_* flags). */
+    private function allowed(string $perm): bool
+    {
+        if ($this->can($perm)) return true;
+        if ($perm === 'engine.sign') return false; // no fallback, as in guard()
+        return $this->can($perm === 'engine.view' ? 'models.view' : 'models.manage');
+    }
+
+    private function userNames(array $ids): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+        if (! $ids) return [];
+        return array_column($this->db()->table('users')->select('id, name')->whereIn('id', $ids)->get()->getResultArray(), 'name', 'id');
+    }
+
+    private function pkgSummary(?array $p): ?array
+    {
+        if (! $p) return null;
+        return [
+            'id' => (int) $p['id'], 'package_id' => $p['package_id'], 'version' => $p['version'], 'task' => $p['task'],
+            'state' => $p['state'], 'manifest_sha256' => $p['manifest_sha256'], 'license_id' => $p['license_id'], 'updated_at' => $p['updated_at'],
+        ];
+    }
+
+    private function packageDetail(array $pkg): array
+    {
+        $svc = new EnginePackageService();
+        $pkg['artifacts'] = array_map(fn ($a) => $a + ['server_verified' => false], json_decode((string) $pkg['artifacts'], true) ?: []);
+
+        $history = json_decode((string) $pkg['state_history'], true) ?: [];
+        $names   = $this->userNames(array_map(fn ($h) => $h['by'] ?? $h['actor'] ?? 0, $history));
+        $pkg['state_history'] = array_map(function ($h) use ($names) {
+            $by = (int) ($h['by'] ?? $h['actor'] ?? 0) ?: null;
+            return ['from' => $h['from'] ?? null, 'to' => $h['to'] ?? null, 'at' => $h['at'] ?? null, 'by' => $by,
+                    'by_name' => $by ? ($names[$by] ?? null) : null, 'reason' => $h['reason'] ?? null];
+        }, $history);
+
+        $ev = $pkg['evaluation_id'] ? $this->db()->table('engine_evaluations')->select('id, decision, task')->where('id', $pkg['evaluation_id'])->get()->getRowArray() : null;
+        $pkg['evaluation'] = $ev ? ['id' => (int) $ev['id'], 'decision' => $ev['decision'], 'task' => $ev['task']] : null;
+
+        $next = EnginePackageService::TRANSITIONS[$pkg['state']] ?? [];
+        if ($pkg['state'] !== 'revoked') $next[] = 'revoked';
+        $missing = [];
+        foreach ($next as $to) {
+            // 'staged' signs and 'revoked' needs only a reason; check() names everything else.
+            if ($m = $svc->check(array_merge($pkg, ['artifacts' => json_encode($pkg['artifacts']), 'state_history' => null]), $to)) $missing[$to] = $m;
+        }
+        $pkg['allowed_next'] = $next;
+        $pkg['missing']      = (object) $missing;
+
+        $pkg['bindings'] = [];
+        foreach ($this->db()->table('engine_bindings')->groupStart()->where('active_package_id', $pkg['id'])->orWhere('previous_package_id', $pkg['id'])->groupEnd()->get()->getResultArray() as $b) {
+            $pkg['bindings'][] = ['task' => $b['task'], 'profile' => $b['profile'], 'role' => (int) $b['active_package_id'] === (int) $pkg['id'] ? 'active' : 'previous'];
+        }
+        return $pkg;
+    }
+
+    private function bindingsPayload(): array
+    {
+        $rows = $this->db()->table('engine_bindings')->orderBy('task')->orderBy('profile')->get()->getResultArray();
+        $ids  = array_filter(array_merge(array_column($rows, 'active_package_id'), array_column($rows, 'previous_package_id')));
+        $pkgs = $ids ? array_column($this->db()->table('engine_packages')->whereIn('id', array_unique($ids))->get()->getResultArray(), null, 'id') : [];
+        $names = $this->userNames(array_column($rows, 'updated_by'));
+        return [
+            'profiles' => EnginePackageService::PROFILES,
+            'tasks'    => EngineGateService::tasks(),
+            'rows'     => array_map(fn ($b) => [
+                'task'            => $b['task'],
+                'profile'         => $b['profile'],
+                'active'          => $this->pkgSummary($pkgs[$b['active_package_id']] ?? null),
+                'previous'        => $this->pkgSummary($pkgs[$b['previous_package_id']] ?? null),
+                'updated_by_name' => $names[(int) $b['updated_by']] ?? null,
+                'updated_at'      => $b['updated_at'],
+            ], $rows),
+        ];
+    }
 
     private function wrap(callable $fn, string $msg)
     {

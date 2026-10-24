@@ -45,11 +45,22 @@ Generate one: `php -r 'echo base64_encode(sodium_crypto_sign_secretkey(sodium_cr
 5. Score on the locked suite, `POST /api/engine/evaluations` (gate computed), two approvals.
 6. `POST /api/engine/packages` → transition `quarantined` → `verified` → `evaluated` → `approved` → `staged` (signed) → `active`.
 
+## Delivered in v1.5.0 — Phase 1 (release core)
+
+See [`PHASE1.md`](PHASE1.md) for the full contract.
+
+| Item | Implementation |
+| --- | --- |
+| Screens S01, S02, S03, S05, S07, S08, S09, S10, S11 | `frontend/src/pages/engine/*`, Governance + Splits tabs in Datasets, Lineage in Training; sidebar section **Sinhala Engine**. |
+| Artifact upload + server re-hash (ADM 002, SEC 007) | `POST/DELETE /api/engine/packages/{id}/artifacts`; files under `writable/engine-artifacts/{package_id}/`, sha256 + size computed by the server, `server_verified: true`. Candidates may be registered empty; verification refuses an empty list. |
+| Approvals queue (S08) | `GET /api/engine/approvals` with `needs` and `can_approve` / `can_act` per item. |
+| Bindings per task × profile (ADM 003/004) | `engine_bindings` (migration 000014, backfills `standard` from active packages); `GET/PUT /api/engine/bindings`, `POST /api/engine/bindings/rollback`; activation verifies the signature against the current publisher key; a displaced package that is bound nowhere is retired. |
+| Missing evidence before acting | `GET /api/engine/packages/{id}` returns `allowed_next` + `missing`, computed by the same `check()` that `transition()` enforces (which now reports every missing item at once). |
+| Kit guard | `POST /api/training/{id}/kit` → 409 when the dataset is withdrawn or not frozen. |
+| `engine.sign` | No longer falls back to `models.manage`; it must be granted (admins have it; migration 000014 grants engine.* to admin and super_admin). |
+
 ## Not in this repo / still open
 
 - On-device engine, `/v1` gateway, SDKs, adapters (FR CORE, ASR, TTS, CAP, TRN, FNT, WR, MT, INT) — desktop/office repos.
-- Artifact upload & hash re-verification on the server (currently digests are declared by the GPU worker).
 - Signed revocation list export for offline devices (§10.1) and fleet manifest export (FR ADM 007).
-- Frontend screens: the React source is not in this repo (`public/app` is a build). The API above is ready for an
-  **Engine Releases** page (overview, evaluations, packages) when the source is restored.
 - ASR/TTS training recipes (§16.4, §16.5) — current kit covers text LoRA/QLoRA only.

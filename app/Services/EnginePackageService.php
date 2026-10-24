@@ -38,6 +38,9 @@ class EnginePackageService
 
     public const RUNTIMES = ['ollama', 'faster-whisper', 'tts-runtime', 'rules'];
 
+    /** Device profiles a package can be bound to (engine_bindings.profile). */
+    public const PROFILES = ['minimum', 'standard', 'apple', 'accelerated'];
+
     protected $db;
 
     public function __construct()
@@ -77,90 +80,245 @@ class EnginePackageService
     // ---------------------------------------------------------------- lifecycle
 
     /**
-     * Move a package to the next state, enforcing the evidence each step needs.
-     * Returns the updated row; throws RuntimeException with a user-facing reason.
+     * The evidence a move to $to still lacks, as user-facing strings. Has no
+     * side effects: transition() refuses with exactly these reasons, and the
+     * package detail reports them as `missing` before anyone presses a button.
      */
-    public function transition(array $pkg, string $to, int $actor, ?string $reason = null): array
+    public function check(array $pkg, string $to): array
     {
         $from = $pkg['state'];
-        if ($to !== 'revoked' && ! in_array($to, self::TRANSITIONS[$from] ?? [], true)) {
-            throw new RuntimeException("Cannot move a package from {$from} to {$to}.");
+        if ($to === 'revoked') {
+            return $from === 'revoked' ? ['Package is already revoked.'] : [];
         }
-        if ($to === 'revoked' && $from === 'revoked') {
-            throw new RuntimeException('Package is already revoked.');
+        if (! in_array($to, self::TRANSITIONS[$from] ?? [], true)) {
+            return ["Cannot move a package from {$from} to {$to}."];
         }
 
-        $upd = ['state' => $to];
-
+        $missing = [];
         switch ($to) {
             case 'verified':
-                if ($errs = $this->validateArtifacts(json_decode($pkg['artifacts'], true) ?: [])) {
-                    throw new RuntimeException(implode(' ', $errs));
-                }
+                $missing = $this->validateArtifacts(json_decode((string) $pkg['artifacts'], true) ?: []);
                 if (in_array(strtoupper($pkg['license_id']), array_map('strtoupper', self::BLOCKED_LICENSES), true)) {
-                    throw new RuntimeException('Licence ' . $pkg['license_id'] . ' is not approved for commercial distribution.');
+                    $missing[] = 'Licence ' . $pkg['license_id'] . ' is not approved for commercial distribution.';
                 }
                 if (empty($pkg['rights_approval_id'])) {
-                    throw new RuntimeException('A rights approval reference is required before verification.');
+                    $missing[] = 'A rights approval reference is required before verification.';
                 }
                 break;
 
             case 'evaluated':
-                $ev = $pkg['evaluation_id'] ? $this->db->table('engine_evaluations')->where('id', $pkg['evaluation_id'])->get()->getRowArray() : null;
-                if (! $ev) throw new RuntimeException('Attach an evaluation report first.');
-                if ($ev['task'] !== $pkg['task']) throw new RuntimeException('Evaluation task does not match package task.');
+                $ev = $this->evaluation($pkg);
+                if (! $ev) $missing[] = 'Attach an evaluation report first.';
+                elseif ($ev['task'] !== $pkg['task']) $missing[] = 'Evaluation task does not match package task.';
                 break;
 
             case 'approved':
-                $ev = $this->db->table('engine_evaluations')->where('id', $pkg['evaluation_id'])->get()->getRowArray();
-                if (! $ev || $ev['decision'] !== 'pass') throw new RuntimeException('The evaluation has not passed its release gate.');
-                if (! $ev['release_approver'] || ! $ev['language_approver']) {
-                    throw new RuntimeException('Release owner and language lead must both approve the evaluation (§17.4).');
+                $ev = $this->evaluation($pkg);
+                if (! $ev || $ev['decision'] !== 'pass') $missing[] = 'The evaluation has not passed its release gate.';
+                if (! $ev || ! $ev['release_approver'] || ! $ev['language_approver']) {
+                    $missing[] = 'Release owner and language lead must both approve the evaluation (§17.4).';
                 }
-                break;
-
-            case 'staged':
-                $signed = $this->sign($pkg);
-                $upd    = array_merge($upd, $signed);
                 break;
 
             case 'active':
-                // Atomic binding swap: the previously active package for the task is retired.
-                $this->db->transStart();
-                foreach ($this->db->table('engine_packages')->where(['task' => $pkg['task'], 'state' => 'active'])->get()->getResultArray() as $old) {
-                    $this->db->table('engine_packages')->where('id', $old['id'])->update([
-                        'state'         => 'retired',
-                        'state_history' => $this->history($old, 'active', 'retired', $actor, 'superseded by ' . $pkg['package_id']),
-                        'updated_at'    => date('Y-m-d H:i:s'),
-                    ]);
-                }
-                $this->db->table('engine_packages')->where('id', $pkg['id'])->update([
-                    'state' => 'active', 'state_history' => $this->history($pkg, $from, 'active', $actor, $reason), 'updated_at' => date('Y-m-d H:i:s'),
-                ]);
-                $this->db->transComplete();
-                return $this->db->table('engine_packages')->where('id', $pkg['id'])->get()->getRowArray();
+                if (empty($pkg['signature']) || empty($pkg['manifest'])) $missing[] = 'Package is not signed.';
+                break;
+        }
+        return $missing;
+    }
+
+    /**
+     * Move a package to the next state, enforcing the evidence each step needs.
+     * Returns the updated row; throws RuntimeException with a user-facing reason.
+     * → active binds the package to the task's `standard` profile (see activate()).
+     */
+    public function transition(array $pkg, string $to, int $actor, ?string $reason = null): array
+    {
+        if ($missing = $this->check($pkg, $to)) {
+            throw new RuntimeException(implode(' ', $missing));
+        }
+        if ($to === 'active') {
+            $this->activate($pkg['task'], 'standard', (int) $pkg['id'], $actor, $reason);
+            return $this->find((int) $pkg['id']);
         }
 
+        $from = $pkg['state'];
+        $upd  = ['state' => $to];
+        if ($to === 'staged') {
+            $upd = array_merge($upd, $this->sign($pkg));
+        }
         $upd['state_history'] = $this->history($pkg, $from, $to, $actor, $reason);
         $upd['updated_at']    = date('Y-m-d H:i:s');
         $this->db->table('engine_packages')->where('id', $pkg['id'])->update($upd);
-        return $this->db->table('engine_packages')->where('id', $pkg['id'])->get()->getRowArray();
+        return $this->find((int) $pkg['id']);
     }
 
-    /** Roll back: re-activate the most recent retired, non-revoked package for the task (FR ADM 004). */
+    /**
+     * Task-wide roll back on the `standard` profile (FR ADM 004): swap to the
+     * binding's previous package, or — for packages activated before bindings
+     * existed — re-activate the most recent retired, signed package for the task.
+     */
     public function rollback(string $task, int $actor): array
     {
+        $b = $this->binding($task, 'standard');
+        if ($b && $b['previous_package_id']) {
+            $this->rollbackBinding($task, 'standard', $actor);
+            return $this->find((int) $b['previous_package_id']);
+        }
         $prev = $this->db->table('engine_packages')->where(['task' => $task, 'state' => 'retired'])
             ->where('signature IS NOT NULL')->orderBy('updated_at', 'DESC')->get()->getRowArray();
         if (! $prev) throw new RuntimeException('No retained version is available for rollback.');
-        $prev['state'] = 'staged'; // re-enter through the activation path
-        return $this->transition($prev, 'active', $actor, 'rollback');
+        $this->activate($task, 'standard', (int) $prev['id'], $actor, 'rollback', true);
+        return $this->find((int) $prev['id']);
+    }
+
+    // ---------------------------------------------------------------- bindings (FR ADM 003 / 004)
+
+    public function binding(string $task, string $profile): ?array
+    {
+        return $this->db->table('engine_bindings')->where(['task' => $task, 'profile' => $profile])->get()->getRowArray() ?: null;
+    }
+
+    /**
+     * Bind a signed package as the active one for task × profile. The current
+     * active becomes previous; a package left active nowhere is retired. One
+     * transaction. $allowRetired is for roll back onto a retained version.
+     */
+    public function activate(string $task, string $profile, int $packageId, int $actor, ?string $reason = null, bool $allowRetired = false): void
+    {
+        if (! in_array($profile, self::PROFILES, true)) throw new RuntimeException('Unknown profile.');
+        $pkg = $this->find($packageId);
+        if (! $pkg) throw new RuntimeException('Package not found.');
+        if ($pkg['task'] !== $task) throw new RuntimeException("Package is for {$pkg['task']}, not {$task}.");
+        $okStates = $allowRetired ? ['staged', 'active', 'retired'] : ['staged', 'active'];
+        if (! in_array($pkg['state'], $okStates, true)) {
+            throw new RuntimeException("Only signed (staged or active) packages can be activated; this one is {$pkg['state']}.");
+        }
+        if (empty($pkg['signature']) || ! $this->verify($pkg)) throw new RuntimeException('Package signature does not verify.');
+
+        $cur = $this->binding($task, $profile);
+        if ($cur && (int) $cur['active_package_id'] === $packageId) {
+            throw new RuntimeException('That package is already active for this profile.');
+        }
+        $now = date('Y-m-d H:i:s');
+
+        $this->db->transStart();
+        $row = ['active_package_id' => $packageId, 'previous_package_id' => $cur['active_package_id'] ?? null, 'updated_by' => $actor ?: null, 'updated_at' => $now];
+        if ($cur) $this->db->table('engine_bindings')->where('id', $cur['id'])->update($row);
+        else $this->db->table('engine_bindings')->insert($row + ['task' => $task, 'profile' => $profile]);
+
+        if ($pkg['state'] !== 'active') {
+            $this->db->table('engine_packages')->where('id', $packageId)->update([
+                'state' => 'active', 'state_history' => $this->history($pkg, $pkg['state'], 'active', $actor, $reason ?? "bound to {$task}/{$profile}"), 'updated_at' => $now,
+            ]);
+        }
+        if (! empty($cur['active_package_id'])) $this->retireIfUnbound((int) $cur['active_package_id'], $actor, 'superseded by ' . $pkg['package_id']);
+        $this->db->transComplete();
+        if (! $this->db->transStatus()) throw new RuntimeException('Activation failed; nothing was changed.');
+    }
+
+    /** Swap active and previous for task × profile. */
+    public function rollbackBinding(string $task, string $profile, int $actor): void
+    {
+        $b = $this->binding($task, $profile);
+        if (! $b || ! $b['previous_package_id']) throw new RuntimeException('There is no previous package to roll back to.');
+        $prev = $this->find((int) $b['previous_package_id']);
+        if (! $prev || $prev['state'] === 'revoked') throw new RuntimeException('The previous package has been revoked.');
+        if (empty($prev['signature']) || ! $this->verify($prev)) throw new RuntimeException('The previous package is no longer signed.');
+        $now = date('Y-m-d H:i:s');
+
+        $this->db->transStart();
+        $this->db->table('engine_bindings')->where('id', $b['id'])->update([
+            'active_package_id' => $b['previous_package_id'], 'previous_package_id' => $b['active_package_id'], 'updated_by' => $actor ?: null, 'updated_at' => $now,
+        ]);
+        if ($prev['state'] !== 'active') {
+            $this->db->table('engine_packages')->where('id', $prev['id'])->update([
+                'state' => 'active', 'state_history' => $this->history($prev, $prev['state'], 'active', $actor, "rollback {$task}/{$profile}"), 'updated_at' => $now,
+            ]);
+        }
+        if ($b['active_package_id']) $this->retireIfUnbound((int) $b['active_package_id'], $actor, "rolled back {$task}/{$profile}");
+        $this->db->transComplete();
+        if (! $this->db->transStatus()) throw new RuntimeException('Roll back failed; nothing was changed.');
+    }
+
+    private function retireIfUnbound(int $id, int $actor, string $reason): void
+    {
+        if ($this->db->table('engine_bindings')->where('active_package_id', $id)->countAllResults()) return;
+        $old = $this->find($id);
+        if (! $old || $old['state'] !== 'active') return;
+        $this->db->table('engine_packages')->where('id', $id)->update([
+            'state' => 'retired', 'state_history' => $this->history($old, 'active', 'retired', $actor, $reason), 'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+    }
+
+    // ---------------------------------------------------------------- server-side artifacts
+
+    public function artifactDir(array $pkg): string
+    {
+        return WRITEPATH . 'engine-artifacts/' . $pkg['package_id'] . '/';
+    }
+
+    /**
+     * Store an uploaded file as an artifact. The upload is moved (never read
+     * into memory), hashed with hash_file, and the artifact list revalidated
+     * with the same safe-import rules before it replaces any same-path entry.
+     */
+    public function putArtifact(array $pkg, string $tmpFile, string $path): array
+    {
+        if (! in_array($pkg['state'], ['candidate', 'quarantined'], true)) {
+            throw new RuntimeException('Artifacts can only change while the package is candidate or quarantined.');
+        }
+        $path = trim(str_replace('\\', '/', $path));
+        $list = array_values(array_filter(json_decode((string) $pkg['artifacts'], true) ?: [], fn ($a) => strtolower((string) $a['path']) !== strtolower($path)));
+
+        $sha  = hash_file('sha256', $tmpFile);
+        $size = filesize($tmpFile);
+        $list[] = ['path' => $path, 'sha256' => $sha, 'size_bytes' => (int) $size, 'server_verified' => true];
+        if ($errs = $this->validateArtifacts($list)) throw new RuntimeException(implode(' ', $errs));
+
+        $dest = $this->artifactDir($pkg) . $path;
+        if (! is_dir(dirname($dest)) && ! mkdir(dirname($dest), 0750, true)) throw new RuntimeException('Could not create the artifact folder.');
+        if (! rename($tmpFile, $dest) && ! (copy($tmpFile, $dest) && unlink($tmpFile))) {
+            throw new RuntimeException('Could not store the artifact.');
+        }
+        return $this->saveArtifacts($pkg, $list);
+    }
+
+    public function removeArtifact(array $pkg, string $path): array
+    {
+        if (! in_array($pkg['state'], ['candidate', 'quarantined'], true)) {
+            throw new RuntimeException('Artifacts can only change while the package is candidate or quarantined.');
+        }
+        $list = json_decode((string) $pkg['artifacts'], true) ?: [];
+        $keep = array_values(array_filter($list, fn ($a) => (string) $a['path'] !== $path));
+        if (count($keep) === count($list)) throw new RuntimeException('No artifact with that path.');
+        if (! $this->validateArtifacts([['path' => $path, 'sha256' => str_repeat('0', 64), 'size_bytes' => 1]])) {
+            $file = $this->artifactDir($pkg) . $path;
+            if (is_file($file)) unlink($file);
+        }
+        return $this->saveArtifacts($pkg, $keep);
+    }
+
+    private function saveArtifacts(array $pkg, array $list): array
+    {
+        $this->db->table('engine_packages')->where('id', $pkg['id'])->update(['artifacts' => json_encode(array_values($list)), 'updated_at' => date('Y-m-d H:i:s')]);
+        return $this->find((int) $pkg['id']);
+    }
+
+    public function find(int $id): ?array
+    {
+        return $this->db->table('engine_packages')->where('id', $id)->get()->getRowArray() ?: null;
+    }
+
+    private function evaluation(array $pkg): ?array
+    {
+        return $pkg['evaluation_id'] ? ($this->db->table('engine_evaluations')->where('id', $pkg['evaluation_id'])->get()->getRowArray() ?: null) : null;
     }
 
     private function history(array $pkg, string $from, string $to, int $actor, ?string $reason): string
     {
         $h   = json_decode($pkg['state_history'] ?? '[]', true) ?: [];
-        $h[] = ['from' => $from, 'to' => $to, 'actor' => $actor, 'reason' => $reason, 'at' => gmdate('c')];
+        $h[] = ['from' => $from, 'to' => $to, 'actor' => $actor, 'by' => $actor, 'reason' => $reason, 'at' => gmdate('c')];
         return json_encode($h);
     }
 
