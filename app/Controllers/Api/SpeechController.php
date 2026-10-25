@@ -6,15 +6,16 @@ namespace App\Controllers\Api;
  * Speech to text — record or upload audio and get a Sinhala (or English) transcript.
  *
  *   GET  /api/speech/status        is the speech service up, and which model it runs
- *   POST /api/speech/transcribe    multipart `audio` (≤ 60 MB, WAV / MP3 / M4A / OGG / WebM / FLAC),
- *                                  `language` = si | en | auto  →  {text, segments[{start,end,text}], language, duration, …}
+ *   POST /api/speech/transcribe    multipart `audio` (≤ 500 MB: WAV / MP3 / M4A / OGG / WebM / FLAC, or MP4 / MOV / WebM video),
+ *                                  `language` = si | en | auto, `words` = 1 for per-word timings (captions),
+ *                                  `fast` = 1 for short live chunks  →  {text, segments[{start,end,text,words?}], language, duration, …}
  *
  * The work is done by the local aistudio-asr service (Whisper Sinhala on faster-whisper, 127.0.0.1:8096,
  * deploy/aistudio-asr.service). Audio is passed through and not stored.
  */
 class SpeechController extends BaseApiController
 {
-    private const MAX_BYTES = 60 * 1024 * 1024;
+    private const MAX_BYTES = 500 * 1024 * 1024; // video uploads for captions
 
     private function serviceUrl(): string
     {
@@ -47,15 +48,16 @@ class SpeechController extends BaseApiController
             return $this->failure('Choose or record an audio file first.', 422, ['audio' => 'No audio received.']);
         }
         if ($file->getSize() > self::MAX_BYTES) {
-            return $this->failure('Audio files can be up to 60 MB.', 413, ['audio' => 'File too large.']);
+            return $this->failure('Audio and video files can be up to 500 MB.', 413, ['audio' => 'File too large.']);
         }
         $lang = strtolower((string) ($this->request->getPost('language') ?? 'si'));
         if (! in_array($lang, ['si', 'en', 'auto'], true)) $lang = 'si';
+        $query = http_build_query(['language' => $lang, 'words' => $this->request->getPost('words') ? 1 : 0, 'fast' => $this->request->getPost('fast') ? 1 : 0]);
 
         // Stream the upload from disk: a 60 MB recording must not be read into PHP's memory (memory_limit 128M).
         $path = $file->getTempName();
         $fh   = fopen($path, 'rb');
-        $ch   = curl_init($this->serviceUrl() . '/transcribe?language=' . $lang);
+        $ch   = curl_init($this->serviceUrl() . '/transcribe?' . $query);
         curl_setopt_array($ch, [
             CURLOPT_POST           => true,
             CURLOPT_UPLOAD         => true,

@@ -2,6 +2,22 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.7.0] — 2026-10-25 — Live transcription, captions and subtitles
+
+- **Live transcription:** while you record, speech is cut at natural pauses (4–12 s) and each piece is transcribed
+  as you keep talking, so lines appear with their times during the recording. The whole recording is kept for
+  playback and captions.
+- **Recording animation:** live audio bars driven by the microphone, a LIVE badge, pulsing stop button and timer;
+  respects reduced motion.
+- **Captions & subtitles:** per-word timings from the model; captions follow subtitle conventions (characters per
+  line, lines per caption, longest time on screen, new caption at pauses and sentence ends, never overlapping);
+  a caption editor (times and text per line, add / remove, click a time to jump there); `.srt` and `.vtt` downloads.
+- **Video:** upload MP4, MOV or WebM video (up to 500 MB) and preview it with the subtitles over the picture; audio
+  previews show the current caption under the player.
+- Speech service: word timings (`words=1`), a fast greedy mode for live pieces (`fast=1`), uploads spooled to a
+  temporary file so MP4/MOV with a trailing index decode, silence skipped in every mode and punctuation-only lines
+  dropped. Caption rules covered by unit tests.
+
 ## [1.6.1] — 2026-10-25 — Stream speech uploads
 
 - `POST /api/speech/transcribe` streams the uploaded audio from disk to the speech service instead of reading it
