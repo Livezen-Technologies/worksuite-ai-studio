@@ -2,6 +2,14 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.5.3] — 2026-10-25 — Freeze and export from the command line
+
+- `php spark datasets:freeze <id> [--train 0.8] [--dev 0.1]` — the Splits tab's freeze (grouped, deterministic,
+  new manifest version) for scripted pipelines.
+- `php spark datasets:export <id> <dir>` — writes a frozen, rights-approved dataset's `train.jsonl` and `dev.jsonl`
+  plus `manifest.json` (version, manifest and split hashes) for a training runner. The test split is never exported
+  (TRNPIPE 003); unfrozen or unapproved datasets are refused.
+
 ## [1.5.2] — 2026-10-25 — Imports keep group keys
 
 - Dataset imports (upload and `spark datasets:import`) now keep an optional `group_key` (or `group`) field per row.
