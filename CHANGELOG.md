@@ -2,6 +2,10 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.9.0] — 2026-10-25 — Engine evaluations from the server benchmark
+- `spark engine:record-bench <results.json> [--package id]` records a benchmark run as Engine evaluations (ASR + one per text model), gated by the same release gates as any candidate; `--package` links the ASR result to its package.
+- The benchmark is throttled for a shared server: a pause between speech clips so live voice input keeps its turn, and 3 threads for text models.
+
 ## [1.8.4] — 2026-10-25 — Voice input no longer waits on silence
 - Speech service skips silent audio (a muted or blocked microphone) before any model work: answers in under 0.1 s instead of minutes under load.
 - A browser that gives up waiting no longer leaves a BrokenPipeError in the speech service log.
