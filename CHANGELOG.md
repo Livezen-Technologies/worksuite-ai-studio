@@ -2,6 +2,9 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.9.1] — 2026-10-25 — Two-column forms use their full width again
+- New training job, API keys, server and training-lineage forms were squeezed into one sixth of their column (labels overlapping, one word per line). A form section's child that does not choose its own width now spans the row.
+
 ## [1.9.0] — 2026-10-25 — Engine evaluations from the server benchmark
 - `spark engine:record-bench <results.json> [--package id]` records a benchmark run as Engine evaluations (ASR + one per text model), gated by the same release gates as any candidate; `--package` links the ASR result to its package.
 - The benchmark is throttled for a shared server: a pause between speech clips so live voice input keeps its turn, and 3 threads for text models.

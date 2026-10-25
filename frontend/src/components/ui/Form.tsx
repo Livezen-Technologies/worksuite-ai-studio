@@ -172,7 +172,8 @@ export function FormSection({ title, description, children, className }: { title
         <h2 className="text-base/7 font-semibold text-slate-900 dark:text-white">{title}</h2>
         {description && <p className="mt-1 text-sm/6 text-slate-600 dark:text-slate-400">{description}</p>}
       </div>
-      <div className="grid max-w-2xl grid-cols-1 gap-x-6 gap-y-6 sm:grid-cols-6 md:col-span-2">{children}</div>
+      {/* A child that does not pick its own width (no col-span class) spans the row; otherwise a nested grid gets 1/6. */}
+      <div className="grid max-w-2xl grid-cols-1 gap-x-6 gap-y-6 sm:grid-cols-6 md:col-span-2 [&>*:not([class*=col-span])]:col-span-full">{children}</div>
     </div>
   );
 }
