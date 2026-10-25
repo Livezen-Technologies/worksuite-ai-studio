@@ -2,6 +2,16 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.5.5] — 2026-10-25 — Polish and de-duplicate datasets
+
+- `php spark datasets:polish [ids…] [--cross] [--drop-empty] [--dry-run]` cleans datasets with set-based SQL (minutes
+  for millions of rows): strips control and invisible characters but keeps the zero-width joiner Sinhala needs
+  (ශ්‍රී, ක්‍ය), collapses spaces and blank lines, drops empty rows, answers identical to the question and outputs
+  over 8,000 characters, then removes duplicates inside each dataset. Hashes and token estimates are recomputed
+  exactly as an import computes them.
+- `--cross` keeps each row once across datasets — in an approved dataset before a quarantined one, then in the
+  larger one; `--drop-empty` deletes datasets left empty. Frozen datasets are never changed.
+
 ## [1.5.4] — 2026-10-25 — Stream large dataset imports
 
 - `spark datasets:import` streams `.jsonl` files line by line (`DatasetService::importJsonlFile`), inserting in
