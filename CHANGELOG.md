@@ -2,6 +2,13 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.5.1] — 2026-10-25 — Server-side dataset import
+
+- `php spark datasets:import <file>` imports a JSONL / JSON / CSV file that is already on the server into a new or
+  existing dataset (`--dataset ID`), through the same import as an upload (field aliases, duplicate skipping, token
+  estimates), and records source, permitted use and rights in the same step; `--approve` follows the Governance
+  tab's rule (refused unless source, use and rights are all given). For open corpora too large for the browser.
+
 ## [1.5.0] — 2026-10-24 — Sinhala AI Engine: release core (Phase 0 + 1)
 
 ### Phase 1 — release core
