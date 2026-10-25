@@ -2,6 +2,17 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.6.0] — 2026-10-25 — Speech to Text
+
+- New **Speech to Text** page (AI Workspace → Speech to Text, `/speech`): record from the microphone (live level
+  meter, timer, 10-minute cap) or upload / drag in an audio file (WAV, MP3, M4A, OGG, WebM, FLAC, up to 60 MB),
+  choose Sinhala, English or automatic detection, and get the transcript — editable, with time-coded lines, Copy,
+  `.txt` and `.srt` subtitle downloads, and **Send to chat**. Audio is transcribed on the server and not stored.
+- API: `GET /api/speech/status`, `POST /api/speech/transcribe` (multipart `audio`, `language`), permission `chat.use`.
+- Engine: the local **aistudio-asr** service (`deploy/asr/asr_service.py`, `deploy/aistudio-asr.service`) keeps
+  Whisper Sinhala (SinhaSpeech whisper-small run11, CTranslate2 int8 via faster-whisper) loaded on 127.0.0.1:8096
+  and decodes any browser or phone audio with ffmpeg; one transcription at a time.
+
 ## [1.5.7] — 2026-10-25 — Speech models on the Models page
 
 - The Models page gains a **Speech models** section listing the Sinhala Engine's speech-recognition and voice

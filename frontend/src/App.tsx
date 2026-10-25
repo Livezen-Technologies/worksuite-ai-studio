@@ -21,6 +21,7 @@ const pages = {
   '/engine/packages': lazy(() => import('./pages/engine/Packages')),
   '/engine/bindings': lazy(() => import('./pages/engine/Bindings')),
   '/chat': lazy(() => import('./pages/Chat')),
+  '/speech': lazy(() => import('./pages/Speech')),
   '/prompts': lazy(() => import('./pages/Prompts')),
   '/knowledge': lazy(() => import('./pages/Knowledge')),
   '/agents': lazy(() => import('./pages/Agents')),
@@ -37,7 +38,7 @@ const pages = {
 const perms: Record<keyof typeof pages, string> = {
   '/': 'dashboard.view', '/servers': 'servers.view', '/models': 'models.view', '/monitoring': 'monitoring.view', '/queue': 'queues.view',
   '/studio': 'models.view', '/datasets': 'models.view', '/training': 'models.view', '/engine': 'engine.view', '/engine/evaluations': 'engine.view', '/engine/approvals': 'engine.view', '/engine/packages': 'engine.view', '/engine/bindings': 'engine.view',
-  '/chat': 'chat.use', '/prompts': 'prompts.view',
+  '/chat': 'chat.use', '/speech': 'chat.use', '/prompts': 'prompts.view',
   '/knowledge': 'knowledge.view', '/agents': 'agents.view', '/api-keys': 'apikeys.view', '/api-logs': 'logs.view', '/analytics': 'analytics.view',
   '/users': 'users.view', '/roles': 'roles.view', '/audit': 'audit.view', '/notifications': 'notifications.view', '/settings': 'settings.view',
 };

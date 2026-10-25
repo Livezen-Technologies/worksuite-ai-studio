@@ -2,7 +2,7 @@ import type { ComponentType, SVGProps } from 'react';
 import {
   BeakerIcon, BellIcon, BookOpenIcon, ChartBarIcon, ChatBubbleLeftRightIcon, Cog6ToothIcon, CpuChipIcon,
   CircleStackIcon, ClipboardDocumentListIcon, CommandLineIcon, DocumentTextIcon, HomeIcon, KeyIcon,
-  QueueListIcon, ServerStackIcon, CheckBadgeIcon, CubeIcon, ArrowsRightLeftIcon, PresentationChartLineIcon, ShieldCheckIcon, SignalIcon, SparklesIcon, TableCellsIcon, UsersIcon, AcademicCapIcon,
+  QueueListIcon, ServerStackIcon, MicrophoneIcon, CheckBadgeIcon, CubeIcon, ArrowsRightLeftIcon, PresentationChartLineIcon, ShieldCheckIcon, SignalIcon, SparklesIcon, TableCellsIcon, UsersIcon, AcademicCapIcon,
 } from '@heroicons/react/24/outline';
 
 export interface NavItem { label: string; to: string; icon: ComponentType<SVGProps<SVGSVGElement>>; perm: string; description: string }
@@ -33,6 +33,7 @@ export const NAV: NavSection[] = [
   ] },
   { heading: 'AI Workspace', items: [
     { label: 'Chat Playground', to: '/chat', icon: ChatBubbleLeftRightIcon, perm: 'chat.use', description: 'Talk to any model' },
+    { label: 'Speech to Text', to: '/speech', icon: MicrophoneIcon, perm: 'chat.use', description: 'Record or upload Sinhala speech and get the text' },
     { label: 'Prompt Library', to: '/prompts', icon: DocumentTextIcon, perm: 'prompts.view', description: 'Reusable prompts and templates' },
     { label: 'Knowledge Base', to: '/knowledge', icon: BookOpenIcon, perm: 'knowledge.view', description: 'Documents for retrieval' },
     { label: 'AI Agents', to: '/agents', icon: BeakerIcon, perm: 'agents.view', description: 'Configured assistants' },

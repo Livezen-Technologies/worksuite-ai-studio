@@ -150,6 +150,10 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->post('training/(:num)/kit', 'TrainingController::generateKit/$1');
     $routes->get('training/(:num)/kit', 'TrainingController::downloadKit/$1');
 
+    // --- Speech to text (Whisper Sinhala via the local aistudio-asr service) ---
+    $routes->get('speech/status', 'SpeechController::status');
+    $routes->post('speech/transcribe', 'SpeechController::transcribe');
+
     // --- WorkSuite Sinhala AI Engine: build & release zone (v1.5, docs/sinhala-ai-engine) ---
     $routes->get('engine/overview', 'EngineController::overview');
     $routes->put('engine/datasets/(:num)/rights', 'EngineController::datasetRights/$1');
