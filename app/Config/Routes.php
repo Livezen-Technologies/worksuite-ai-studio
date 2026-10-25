@@ -188,4 +188,7 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\Gateway', 'filter'
     $routes->post('embeddings', 'GatewayController::embeddings');
     $routes->post('translate', 'GatewayController::translate');   // SinLama (v1.3)
     $routes->post('summarize', 'GatewayController::summarize');   // SinLama (v1.3)
+    $routes->get('catalog', 'DownloadsController::catalog');                      // downloads (v1.14)
+    $routes->get('packages/(:segment)/files', 'DownloadsController::file/$1');
+    $routes->get('datasets/(:num)/download', 'DownloadsController::dataset/$1');
 });

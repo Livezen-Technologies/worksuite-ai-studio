@@ -21,9 +21,22 @@ const SCOPES = [
   { value: 'generate', label: 'Generate' },
   { value: 'embeddings', label: 'Embeddings' },
   { value: 'models', label: 'List models' },
+  { value: 'download_models', label: 'Download models', hint: 'Engine packages: Whisper, vision and Sinhala chat model files' },
+  { value: 'download_datasets', label: 'Download datasets', hint: 'Rights-approved datasets as JSONL; never a locked test split' },
 ];
 
 const gatewayBase = () => `${window.location.origin}/api/v1`;
+const downloadExample = (key = 'ohub_your_key', secret = 'sk_your_secret') =>
+  `# what this key may download (packages with file URLs + sha256, approved datasets)
+curl -H "X-Api-Key: ${key}" -H "X-Api-Secret: ${secret}" ${gatewayBase()}/catalog
+
+# a model file (resumable)
+curl -C - -o model.bin -H "X-Api-Key: ${key}" -H "X-Api-Secret: ${secret}" \\
+  "${gatewayBase()}/packages/PACKAGE_ID/files?path=model.bin"
+
+# a dataset as JSONL (frozen sets: train and dev only)
+curl -o data.jsonl -H "X-Api-Key: ${key}" -H "X-Api-Secret: ${secret}" \\
+  "${gatewayBase()}/datasets/36/download?split=train"`;
 const curlFor = (key = 'ohub_your_key', secret = 'sk_your_secret') =>
   `curl ${gatewayBase()}/chat \\
   -H "X-Api-Key: ${key}" \\
@@ -251,11 +264,16 @@ export default function ApiKeys() {
                 <code className="min-w-0 flex-1 break-all font-mono text-sm text-slate-900 dark:text-slate-100">{gatewayBase()}</code>
                 <CopyButton text={gatewayBase()} />
               </div>
-              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Endpoints: GET /models, POST /chat, /generate, /embeddings, /translate, /summarize.</p>
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Endpoints: GET /models, POST /chat, /generate, /embeddings, /translate, /summarize. Downloads: GET /catalog, /packages/{'{id}'}/files?path=…, /datasets/{'{id}'}/download?split=train,dev.</p>
             </div>
             <div>
               <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">Example request <CopyButton text={curlFor()} /></div>
               <CodeBlock>{curlFor()}</CodeBlock>
+            </div>
+            <div>
+              <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">Download a model or dataset <CopyButton text={downloadExample()} /></div>
+              <CodeBlock>{downloadExample()}</CodeBlock>
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Needs the Download models or Download datasets scope. Model files resume with <code>-C -</code>; check each file against the sha256 in the catalog. Datasets carry their permitted use — the Sinhala sets include non-commercial licences.</p>
             </div>
           </div>
         </Card>

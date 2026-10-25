@@ -16,6 +16,9 @@ use App\Models\ApiLogModel;
  */
 class ApiKeysController extends BaseApiController
 {
+    /** Gateway scopes a key can carry. download_* open /api/v1/catalog and the file / dataset downloads. */
+    public const SCOPES = ['chat', 'generate', 'embeddings', 'models', 'download_models', 'download_datasets'];
+
     private function keys(): ApiKeyModel { return new ApiKeyModel(); }
 
     public function index()
@@ -93,8 +96,8 @@ class ApiKeysController extends BaseApiController
                 $out[$f] = $in[$f] === '' ? null : $in[$f];
             }
         }
-        if (is_array($out['scopes'] ?? null)) {
-            $out['scopes'] = implode(',', $out['scopes']);
+        if (is_array($out['scopes'] ?? null)) { // only known scopes are stored
+            $out['scopes'] = implode(',', array_values(array_intersect($out['scopes'], self::SCOPES)));
         }
         foreach (['allowed_models', 'allowed_ips'] as $f) {
             if (array_key_exists($f, $in)) {

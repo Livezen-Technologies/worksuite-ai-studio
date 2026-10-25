@@ -2,6 +2,14 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.14.0] — 2026-10-25 — Download models and datasets with an API key
+- Two API key scopes: **Download models** and **Download datasets** (API keys page). Unknown scopes are no longer stored.
+- `GET /api/v1/catalog` lists what the key may download: every non-revoked Engine package with its files, sha256, size, licence and state, and every rights-approved dataset with its category, rows, permitted use and rights reference.
+- `GET /api/v1/packages/{package_id}/files?path=…` streams a package file with Range support, so multi-GB downloads resume (`curl -C -`); `X-Content-SHA256` carries the expected hash.
+- `GET /api/v1/datasets/{id}/download?split=train,dev` streams JSONL with the licence terms in headers. A frozen dataset's locked test split is refused (403); quarantined datasets are not downloadable.
+- `spark engine:register-local` (run with sudo) also registers the five Sinhala chat models as GGUF text packages (helalm:4b, llama3-sinhala:8b, sinllama:8b, sinhalallm:1.7b, sinhala-llama-1b) with the licence each model card states, and hard-links every package's files into the download store (no extra disk).
+- The API keys page shows download examples.
+
 ## [1.13.0] — 2026-10-25 — The Local models set
 - Speech to text has a **Model** choice: Whisper Small · Sinhala (default), Tiny, Base, Small, Medium and Large v3 Turbo (multilingual, MIT). The speech service loads a size on first use and keeps at most one extra size in memory. API: `model=sinhala|tiny|base|small|medium|turbo`.
 - `spark engine:register-local` registers the set as Engine candidate packages with server-hashed artifacts: the five Whisper sizes, Real-ESRGAN x4plus (BSD-3-Clause, official v0.1.0 weights), RIFE 4.7–4.9 (MIT, ONNX) and MODNet (Apache-2.0, ONNX).
