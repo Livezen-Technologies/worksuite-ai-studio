@@ -2,6 +2,10 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.11.0] — 2026-10-25 — One naming convention for datasets
+- `spark datasets:organize --standardize` merges fragments of one source into its main dataset (Aya Collection, xP3x, Sinhala 1.5B corpus, Swa-Bhasha word pairs) — only when rights match and nothing is frozen or used by a training job — and renames every dataset as **"<Category> · <Source> — <content>"** (e.g. "Singlish · Swa-Bhasha — word pairs"). Rights stay in their own column, not in the name.
+- A standard name carries its category; the v2 mix is now "Instructions · WorkSuite Sinhala v2 — balanced training mix".
+
 ## [1.10.0] — 2026-10-25 — Datasets organised for training
 - Every dataset has a training category: Instructions, Q&A, Singlish, Translation, Text corpus, Speech, Evaluation only, Reference. Shown as a column on Datasets, with a category filter.
 - `spark datasets:organize [--mix] [--target 60000] [--dry-run]` sets the categories and builds **WorkSuite Sinhala v2 — balanced training mix**: fixed category shares (instructions 40%, Q&A 20%, Singlish 15%, translation 10%, corpus 15%), sources weighted by the square root of their size, small specialised sources taken whole up to 500 rows, a Sinhala-quality filter, de-duplicated and frozen 80/10/10 by group. Frozen datasets and quarantined, speech, evaluation and reference sets never enter the mix.

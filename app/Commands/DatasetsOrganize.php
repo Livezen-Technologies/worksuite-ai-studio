@@ -8,8 +8,9 @@ use CodeIgniter\CLI\BaseCommand;
 use CodeIgniter\CLI\CLI;
 
 /**
- * `spark datasets:organize [--mix] [--target 60000] [--dry-run]` — categorise every dataset for training and, with
- * --mix, build one balanced, frozen training mix from the approved trainable ones.
+ * `spark datasets:organize [--standardize] [--mix] [--target 60000] [--dry-run]` — categorise every dataset for training;
+ * with --standardize first merge fragments of one source and apply the standard names ("<Category> · <Source> —
+ * <content>"); with --mix build one balanced, frozen training mix from the approved trainable ones.
  *
  * Categories: instruction, qa, transliteration, translation, corpus (raw text, shown as continuation tasks), speech,
  * evaluation (held-out test sets, never trained on) and reference (kept but not for training).
@@ -26,7 +27,7 @@ class DatasetsOrganize extends BaseCommand
     protected $group       = 'OllamaHub';
     protected $name        = 'datasets:organize';
     protected $description = 'Categorise datasets for training and build a balanced, frozen training mix.';
-    protected $usage       = 'datasets:organize [--mix] [--target 60000] [--dry-run]';
+    protected $usage       = 'datasets:organize [--standardize] [--mix] [--target 60000] [--dry-run]';
 
     public const CATEGORIES = ['instruction', 'qa', 'transliteration', 'translation', 'corpus', 'speech', 'evaluation', 'reference'];
 
@@ -43,7 +44,56 @@ class DatasetsOrganize extends BaseCommand
         ['/corpus|continuation|SinhalaLM data\)$|Acts and Bills|historical|news categories|text \(/i', 'corpus'],
     ];
 
-    public const MIX_NAME = 'WorkSuite Sinhala v2 — balanced training mix';
+    public const MIX_NAME = 'Instructions · WorkSuite Sinhala v2 — balanced training mix';
+
+    /** Naming convention: "<Category> · <Source> — <content>". Rights live in their own column, never in the name. */
+    private const LABELS = ['instruction' => 'Instructions', 'qa' => 'Q&A', 'transliteration' => 'Singlish', 'translation' => 'Translation',
+                            'corpus' => 'Corpus', 'speech' => 'Speech', 'evaluation' => 'Evaluation', 'reference' => 'Reference'];
+
+    /**
+     * Fragments of one source merged into the main dataset (keep ← from). Only pairs with the same source, licence and
+     * rights status; a dataset used by a training job or frozen is never merged away.
+     */
+    private const MERGES = [
+        [11, 4],  // Aya Collection commercial subsets: the early sample into the full import
+        [13, 5],  // xP3x: sample into the full import
+        [14, 6],  // Sinhala 1.5B corpus: the first continuation sample into the 100k one
+        [17, 27], // Swa-Bhasha word pairs: the romanised pairs into the main word-pair set
+    ];
+
+    /** Standard names by dataset id ("<Category> · <Source> — <content>"); category is read back from the prefix. */
+    private const NAMES = [
+        2  => 'Evaluation · Sinhala QA — smoke test',
+        3  => 'Instructions · Aya Dataset — Sinhala',
+        7  => 'Singlish · WorkSuite — derived transliteration pairs',
+        8  => 'Q&A · Sinhala Dental — dental questions',
+        9  => 'Instructions · WorkSuite — assistant identity',
+        10 => 'Instructions · WorkSuite Sinhala v1 — training mix',
+        11 => 'Instructions · Aya Collection — commercial subsets',
+        12 => 'Reference · Aya Collection — restricted subsets, not for training',
+        13 => 'Instructions · xP3x — Sinhala',
+        14 => 'Corpus · Sinhala 1.5B corpus — continuation sample',
+        15 => 'Corpus · UoM — Sinhala news categories',
+        16 => 'Speech · OpenSLR 52 — Sinhala ASR',
+        17 => 'Singlish · Swa-Bhasha — word pairs',
+        18 => 'Instructions · Aya Collection — share-alike subsets',
+        19 => 'Translation · Sin2Eng2Singl — Sinhala, English, Singlish triplets',
+        20 => 'Singlish · UoM — code-mixed comments',
+        21 => 'Evaluation · RANLP 2025 — Singlish transliteration ambiguity',
+        22 => 'Corpus · SinhaLegal — Acts and Bills',
+        23 => 'Instructions · SinFoS — figures of speech',
+        24 => 'Corpus · SiPaKosa — historical and Buddhist texts',
+        25 => 'Singlish · Swa-Bhasha — sentences',
+        26 => 'Reference · SiDiaC v2.0 — historical Sinhala',
+        28 => 'Instructions · Minuri SFT — Dolly',
+        29 => 'Instructions · HelaLM — commercial rows',
+        30 => 'Instructions · Minuri SFT — ihalage Alpaca',
+        31 => 'Instructions · HelaLM — NSINA and XL-Sum rows (non-commercial)',
+        32 => 'Instructions · Minuri SFT — Alpaca Sinhala',
+        33 => 'Q&A · HelaAI SinhalaLM — question and answer pairs',
+        34 => 'Corpus · HelaAI SinhalaLM — Sinhala text',
+        35 => 'Speech · SinhaSpeech — ASR v1–v7',
+    ];
 
     public function run(array $params)
     {
@@ -51,14 +101,14 @@ class DatasetsOrganize extends BaseCommand
         $dry    = $this->flag($params, 'dry-run');
         $target = (int) ($this->opt($params, 'target') ?: 60000);
 
+        if ($this->flag($params, 'standardize')) {
+            $this->standardize($db, $dry);
+        }
+
         $all = $db->table('datasets')->select('id, name, task, category, item_count, rights_status, manifest_hash')->orderBy('id')->get()->getResultArray();
         CLI::write('Categories', 'yellow');
         foreach ($all as &$d) {
-            if ($d['name'] === self::MIX_NAME || str_starts_with($d['name'], 'WorkSuite Sinhala v1')) {
-                $cat = 'instruction';
-            } else {
-                $cat = $this->categorise($d['name']);
-            }
+            $cat = $this->categorise($d['name']);
             $task = match ($cat) { 'speech' => 'asr', 'transliteration' => 'transliteration', 'translation' => 'translation', default => 'text' };
             CLI::write(sprintf('  #%-3d %-15s %-10s %9s  %s', $d['id'], $cat, $d['rights_status'], number_format((int) $d['item_count']), $d['name']));
             if (! $dry && ($d['category'] !== $cat || $d['task'] !== $task)) {
@@ -134,6 +184,9 @@ class DatasetsOrganize extends BaseCommand
 
     private function categorise(string $name): string
     {
+        foreach (self::LABELS as $cat => $label) { // a standard name carries its category
+            if (str_starts_with($name, $label . ' · ')) return $cat;
+        }
         if (preg_match(self::RULES[0][0], $name)) {
             return preg_match('/test|evaluation/i', $name) ? 'evaluation' : 'reference';
         }
@@ -141,6 +194,41 @@ class DatasetsOrganize extends BaseCommand
             if (preg_match($re, $name)) return $cat;
         }
         return 'instruction';
+    }
+
+    /** Merge source fragments (MERGES), then give every listed dataset its standard name (NAMES). */
+    private function standardize($db, bool $dry): void
+    {
+        $svc = new DatasetService();
+        CLI::write('Merges', 'yellow');
+        foreach (self::MERGES as [$keep, $from]) {
+            $k = $db->table('datasets')->where('id', $keep)->get()->getRowArray();
+            $f = $db->table('datasets')->where('id', $from)->get()->getRowArray();
+            if (! $k || ! $f) { CLI::write("  #{$from} → #{$keep}: already merged."); continue; }
+            $blocked = match (true) {
+                $k['rights_status'] !== $f['rights_status']                                   => 'different rights status',
+                ! empty($f['manifest_hash']) || ! empty($k['manifest_hash'])                  => 'frozen',
+                $db->table('training_jobs')->where('dataset_id', $from)->countAllResults() > 0 => 'used by a training job',
+                default                                                                        => null,
+            };
+            if ($blocked) { CLI::write("  #{$from} → #{$keep}: skipped ({$blocked}).", 'yellow'); continue; }
+            if ($dry) { CLI::write(sprintf('  #%d %s (%s rows) → #%d %s', $from, $f['name'], number_format((int) $f['item_count']), $keep, $k['name'])); continue; }
+            $db->table('dataset_items')->where('dataset_id', $from)->update(['dataset_id' => $keep]);
+            $moved = $db->affectedRows();
+            $dups  = $svc->dedupe($keep);
+            $db->table('datasets')->where('id', $from)->delete();
+            CLI::write(sprintf('  #%d → #%d: %s rows moved, %s duplicates dropped, #%d removed.', $from, $keep, number_format($moved), number_format($dups), $from), 'green');
+        }
+        CLI::write('Names', 'yellow');
+        foreach (self::NAMES as $id => $name) {
+            $row = $db->table('datasets')->select('name')->where('id', $id)->get()->getRowArray();
+            if (! $row || $row['name'] === $name) continue;
+            CLI::write("  #{$id}  {$row['name']}  →  {$name}");
+            if (! $dry) $db->table('datasets')->where('id', $id)->update(['name' => $name, 'updated_at' => date('Y-m-d H:i:s')]);
+        }
+        if (! $dry) {
+            $db->table('datasets')->where('name', 'WorkSuite Sinhala v2 — balanced training mix')->update(['name' => self::MIX_NAME]);
+        }
     }
 
     private function flag(array $params, string $name): bool
