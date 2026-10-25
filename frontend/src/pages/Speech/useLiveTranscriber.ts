@@ -29,8 +29,8 @@ export function useLiveTranscriber({ transcribe, onSegments, maxSeconds = 600 }:
   const r = useRef<{
     stream?: MediaStream; ctx?: AudioContext; proc?: ScriptProcessorNode; rec?: MediaRecorder; chunks: Blob[];
     buf: Float32Array[]; bufLen: number; offset: number; quietMs: number; started: number; timer?: number;
-    queue: Promise<void>; stopping: boolean;
-  }>({ chunks: [], buf: [], bufLen: 0, offset: 0, quietMs: 0, started: 0, queue: Promise.resolve(), stopping: false });
+    queue: Promise<void>; stopping: boolean; gen: number; heard: boolean; peak: number;
+  }>({ chunks: [], buf: [], bufLen: 0, offset: 0, quietMs: 0, started: 0, queue: Promise.resolve(), stopping: false, gen: 0, heard: false, peak: 0 });
 
   const sendChunk = (final = false) => {
     const s = r.current;
@@ -42,10 +42,17 @@ export function useLiveTranscriber({ transcribe, onSegments, maxSeconds = 600 }:
     s.offset += s.bufLen / RATE;
     s.buf = []; s.bufLen = 0; s.quietMs = 0;
     const wav = encodeWav(pcm, RATE);
+    const gen = s.gen;
     setPending((n) => n + 1);
     s.queue = s.queue.then(async () => {
+      if (gen !== s.gen) { setPending((n) => Math.max(0, n - 1)); return; } // cancelled
       try {
-        const segs = await cb.current.transcribe(wav);
+        const segs = await Promise.race([
+          cb.current.transcribe(wav),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('The server took too long on a piece of audio; it was skipped.')), 60_000)),
+        ]);
+        if (gen !== s.gen) return;
+        if (segs.some((g) => /[\p{L}\p{N}]/u.test(g.text))) s.heard = true;
         cb.current.onSegments(
           segs.filter((g) => /[\p{L}\p{N}]/u.test(g.text)).map((g) => ({
             ...g, start: g.start + offset, end: g.end + offset, words: g.words?.map((w) => ({ ...w, start: w.start + offset, end: w.end + offset })),
@@ -54,7 +61,7 @@ export function useLiveTranscriber({ transcribe, onSegments, maxSeconds = 600 }:
       } catch (e) {
         setChunkError(e instanceof Error ? e.message : 'A piece of the recording could not be transcribed.');
       } finally {
-        setPending((n) => n - 1);
+        if (gen === s.gen) setPending((n) => Math.max(0, n - 1));
       }
     });
   };
@@ -74,6 +81,9 @@ export function useLiveTranscriber({ transcribe, onSegments, maxSeconds = 600 }:
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       const ctx = new AudioContext();
+      // Safari creates the context suspended when it isn't made inside the tap itself (we await the mic prompt first);
+      // a suspended context delivers silence, which transcribes to nothing.
+      if (ctx.state !== 'running') await ctx.resume().catch(() => {});
       const src = ctx.createMediaStreamSource(stream);
       const an = ctx.createAnalyser();
       an.fftSize = 1024; an.smoothingTimeConstant = 0.6;
@@ -81,11 +91,13 @@ export function useLiveTranscriber({ transcribe, onSegments, maxSeconds = 600 }:
       const proc = ctx.createScriptProcessor(4096, 1, 1);
       src.connect(proc); proc.connect(ctx.destination);
       const s = r.current;
-      Object.assign(s, { stream, ctx, proc, chunks: [], buf: [], bufLen: 0, offset: 0, quietMs: 0, started: Date.now(), queue: Promise.resolve(), stopping: false });
+      Object.assign(s, { stream, ctx, proc, chunks: [], buf: [], bufLen: 0, offset: 0, quietMs: 0, started: Date.now(), queue: Promise.resolve(), stopping: false, gen: s.gen + 1, heard: false, peak: 0 });
       proc.onaudioprocess = (e) => {
         const frame = resample(new Float32Array(e.inputBuffer.getChannelData(0)), ctx.sampleRate, RATE);
         s.buf.push(frame); s.bufLen += frame.length;
-        s.quietMs = rms(frame) < 0.012 ? s.quietMs + (frame.length / RATE) * 1000 : 0;
+        const level = rms(frame);
+        s.peak = Math.max(s.peak, level);
+        s.quietMs = level < 0.012 ? s.quietMs + (frame.length / RATE) * 1000 : 0;
         const secs = s.bufLen / RATE;
         if ((secs >= MIN_CHUNK && s.quietMs >= PAUSE_MS) || secs >= MAX_CHUNK) sendChunk();
       };
@@ -128,7 +140,21 @@ export function useLiveTranscriber({ transcribe, onSegments, maxSeconds = 600 }:
     });
   }, []);
 
-  return { start, stop, recording, seconds, pending, error, chunkError, analyser };
+  /** Drop whatever is still being transcribed (the "Finishing…" state) and reset. */
+  const cancel = useCallback(() => {
+    const s = r.current;
+    s.gen += 1;
+    s.queue = Promise.resolve();
+    setPending(0);
+    if (s.rec && s.rec.state !== 'inactive') { s.rec.onstop = null; s.rec.stop(); }
+    teardown();
+    setRecording(false);
+  }, []);
+
+  /** After stop: did the microphone carry sound, and did any of it become text? */
+  const outcome = () => ({ heard: r.current.heard, silent: r.current.peak < 0.01 });
+
+  return { start, stop, cancel, outcome, recording, seconds, pending, error, chunkError, analyser };
 }
 
 export const micErrorText = (e: MicError) =>

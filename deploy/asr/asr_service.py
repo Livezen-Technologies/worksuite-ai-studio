@@ -135,8 +135,11 @@ class Handler(BaseHTTPRequestHandler):
                     detected, prob, duration = info.language, info.language_probability, info.duration
         except Exception as e:  # undecodable or empty audio
             return self._send(422, {'error': f'Could not read this audio: {type(e).__name__}. Try WAV, MP3, M4A, OGG, WebM or FLAC.'})
+        text = ' '.join(s['text'] for s in segments).strip()
+        peak = float(np.abs(pcm).max()) if pcm.size else 0.0
+        print(f"transcribe lang={lang} fast={int(fast)} audio={pcm.size / RATE:.1f}s peak={peak:.3f} took={time.time() - t0:.1f}s chars={len(text)}", flush=True)
         self._send(200, {
-            'text': ' '.join(s['text'] for s in segments).strip(), 'segments': segments,
+            'text': text, 'segments': segments,
             'language': 'mix' if lang == 'mix' else detected, 'main_language': detected, 'language_probability': round(prob, 3),
             'duration': round(duration, 2), 'processing_seconds': round(time.time() - t0, 2), 'model': MODEL_NAME,
         })

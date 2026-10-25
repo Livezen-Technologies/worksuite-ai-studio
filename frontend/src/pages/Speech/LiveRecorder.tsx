@@ -17,11 +17,13 @@ export function LiveRecorder({
   const live = useLiveTranscriber({ transcribe, onSegments });
   const start = async () => { if (await live.start()) onStart(); };
   const stop = async () => { const f = await live.stop(); if (f) onFinished(f); };
+  const silent = !live.recording && live.pending === 0 && live.seconds > 2 && live.outcome().silent;
   const err = micErrorText(live.error);
   return (
     <div className="flex flex-col items-center gap-5 px-6 py-8 text-center">
       {err && <Alert tone="danger" className="w-full max-w-md text-left">{err}</Alert>}
       {live.chunkError && <Alert tone="warning" className="w-full max-w-md text-left">{live.chunkError}</Alert>}
+      {silent && <Alert tone="warning" className="w-full max-w-md text-left">No sound reached the microphone. Check that the right microphone is selected and allowed for this site.</Alert>}
       <div className={cx('relative w-full max-w-md rounded-xl px-4 py-3 transition-colors', live.recording ? 'bg-red-50 text-red-500 dark:bg-red-500/10 dark:text-red-400' : 'bg-slate-50 text-slate-300 dark:bg-white/5 dark:text-slate-600')}>
         <Visualizer analyser={live.analyser} active={live.recording} className="h-20 w-full" />
         {live.recording && (
@@ -48,7 +50,12 @@ export function LiveRecorder({
         <p className="text-sm text-slate-500 dark:text-slate-400">
           {live.recording ? 'Listening — text appears as you speak. Tap to stop.' : live.pending > 0 ? 'Finishing the last words…' : 'Tap to record. Text appears live, up to 10 minutes.'}
         </p>
-        {live.pending > 0 && <p className="mt-1 text-xs text-slate-400">{live.pending} piece{live.pending === 1 ? '' : 's'} being transcribed</p>}
+        {live.pending > 0 && (
+          <p className="mt-1 text-xs text-slate-400">
+            {live.pending} piece{live.pending === 1 ? '' : 's'} being transcribed ·{' '}
+            {!live.recording && <button type="button" onClick={live.cancel} className="font-semibold text-brand-600 hover:text-brand-500 dark:text-blue-400">Cancel</button>}
+          </p>
+        )}
       </div>
     </div>
   );

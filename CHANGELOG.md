@@ -2,6 +2,16 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.8.1] — 2026-10-25 — Voice input fixes (Safari, cancel, feedback)
+
+- **Safari:** the audio engine is resumed explicitly when recording starts. Safari created it paused (it was not
+  started inside the tap itself), so voice input recorded silence and typed nothing.
+- **"Finishing…" can be cancelled:** the button stays active and drops the pieces still being transcribed; on the
+  Speech page a Cancel link does the same. A piece that takes over 60 seconds is skipped with a message.
+- **Feedback:** after stopping, "No sound reached the microphone" or "No speech was recognised" instead of an empty
+  box.
+- Speech service logs one line per transcription (audio length, peak level, time, characters) for diagnosis.
+
 ## [1.8.0] — 2026-10-25 — Voice input in Chat, Sinhala + English speech
 
 - **Voice input in Chat:** a microphone button beside the message box. Speak and the words are typed in as you

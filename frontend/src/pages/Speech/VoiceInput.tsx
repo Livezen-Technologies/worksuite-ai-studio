@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MicrophoneIcon, StopIcon } from '@heroicons/react/24/solid';
+import { MicrophoneIcon, StopIcon, XMarkIcon } from '@heroicons/react/24/solid';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { ChevronUpIcon } from '@heroicons/react/20/solid';
 import { cx, useToast } from '../../components/ui';
@@ -36,16 +36,22 @@ export function VoiceInput({ onText, disabled, maxSeconds = 300 }: { onText: (te
     return (
       <div className="flex h-10 shrink-0 items-center gap-2 rounded-md bg-red-50 pr-1 pl-2 text-red-500 ring-1 ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/30" aria-live="polite">
         <Visualizer analyser={live.analyser} active={live.recording} className="hidden h-6 w-20 sm:block" />
-        <span className="text-xs font-semibold tabular-nums">{live.recording ? clock(live.seconds) : 'Finishing…'}</span>
+        <span className="text-xs font-semibold tabular-nums">{live.recording ? clock(live.seconds) : 'Finishing… tap to cancel'}</span>
         <button
           type="button"
-          onClick={() => void live.stop()}
-          disabled={!live.recording}
-          aria-label="Stop voice input"
+          onClick={async () => {
+            if (!live.recording) { live.cancel(); return; }
+            await live.stop();
+            const o = live.outcome();
+            if (!o.heard) toast.info(o.silent ? 'No sound reached the microphone' : 'No speech was recognised',
+              o.silent ? 'Check that the right microphone is selected and allowed for this site.' : 'Try speaking a little longer or closer to the microphone.');
+          }}
+          title={live.recording ? 'Stop' : 'Cancel the words still being transcribed'}
+          aria-label={live.recording ? 'Stop voice input' : 'Cancel voice input'}
           className="relative flex size-8 items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 disabled:opacity-60"
         >
           {live.recording && <span aria-hidden className="absolute inset-0 rounded-full bg-red-500 opacity-40 motion-safe:animate-ping" />}
-          <StopIcon aria-hidden className="relative size-4" />
+          {live.recording ? <StopIcon aria-hidden className="relative size-4" /> : <XMarkIcon aria-hidden className="relative size-4" />}
         </button>
       </div>
     );
