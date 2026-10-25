@@ -58,7 +58,7 @@ class SpeechController extends BaseApiController
         }
         $lang = strtolower((string) ($this->request->getPost('language') ?? 'si'));
         if (! in_array($lang, ['si', 'en', 'mix', 'auto'], true)) $lang = 'si';
-        $query = http_build_query(['language' => $lang, 'words' => $this->request->getPost('words') ? 1 : 0, 'fast' => $this->request->getPost('fast') ? 1 : 0]);
+        $query = http_build_query(['language' => $lang, 'words' => $this->request->getPost('words') ? 1 : 0, 'fast' => $this->request->getPost('fast') ? 1 : 0, 'numerals' => $this->request->getPost('numerals') === '0' ? 0 : 1]);
 
         // Stream the upload from disk: a 60 MB recording must not be read into PHP's memory (memory_limit 128M).
         $path = $file->getTempName();

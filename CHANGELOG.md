@@ -2,6 +2,11 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.12.0] — 2026-10-25 — Spoken numbers become digits
+- Speech to text writes spoken Sinhala numbers as digits: "දහයක්" → "10ක්", "පනස් හය" → 56, "දෙදහස් පන්සියයක්" → "2500ක්", and joins "10 ක්" → "10ක්". The article එක / එකක් stays a word. Send `numerals=0` to keep numbers as words.
+- The number-accuracy benchmark now compares number values and no longer counts the article එක as a number. Whisper Sinhala's true figure is 37.5% (21 of 56), not 69.9%; the Engine evaluation was replaced with it. Passing the 90% gate needs fine-tuning on number-heavy speech — post-processing cannot fix mis-heard numbers.
+- The benchmark scripts are kept in the repository (`deploy/asr/engine_bench.py`, `critical_bench.py`).
+
 ## [1.11.0] — 2026-10-25 — One naming convention for datasets
 - `spark datasets:organize --standardize` merges fragments of one source into its main dataset (Aya Collection, xP3x, Sinhala 1.5B corpus, Swa-Bhasha word pairs) — only when rights match and nothing is frozen or used by a training job — and renames every dataset as **"<Category> · <Source> — <content>"** (e.g. "Singlish · Swa-Bhasha — word pairs"). Rights stay in their own column, not in the name.
 - A standard name carries its category; the v2 mix is now "Instructions · WorkSuite Sinhala v2 — balanced training mix".

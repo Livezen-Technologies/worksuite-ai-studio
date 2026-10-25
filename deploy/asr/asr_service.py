@@ -5,6 +5,7 @@ Internal only (127.0.0.1). AI Studio's PHP API forwards uploads here.
        mix = Sinhala and English together: speech is cut at pauses, each phrase's language is identified by the
              multilingual model, Sinhala phrases go to Whisper Sinhala and English phrases to Whisper small.
        words=1  adds per-word timings (for caption splitting); fast=1 uses greedy decoding (live chunks).
+       numerals=0 keeps spoken numbers as words (default: digits, "දහයක්" → "10ක්", see numfix.py).
        Silence is skipped (VAD) and punctuation-only lines are dropped in both modes.
   GET  /health
 """
@@ -14,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from faster_whisper import WhisperModel
 from faster_whisper.vad import VadOptions, get_speech_timestamps
+from numfix import normalise as numerals  # spoken Sinhala numbers → digits
 
 MODEL_DIR = os.environ.get('ASR_MODEL', '/srv/sinhala-data/models/whisper-small-sinhala-ct2-int8')
 MODEL_NAME = 'Whisper Sinhala (SinhaSpeech whisper-small run11, int8)'
@@ -146,6 +148,9 @@ class Handler(BaseHTTPRequestHandler):
                     detected, prob, duration = info.language, info.language_probability, info.duration
         except Exception as e:  # undecodable or empty audio
             return self._send(422, {'error': f'Could not read this audio: {type(e).__name__}. Try WAV, MP3, M4A, OGG, WebM or FLAC.'})
+        if q.get('numerals', ['1'])[0] == '1':  # on by default; numerals=0 keeps numbers as spoken words
+            for sg in segments:
+                sg['text'] = numerals(sg['text'])
         text = ' '.join(s['text'] for s in segments).strip()
         print(f"transcribe lang={lang} fast={int(fast)} audio={pcm.size / RATE:.1f}s peak={peak:.3f} queued={waited:.1f}s ran={time.time() - t_run:.1f}s chars={len(text)}", flush=True)
         self._send(200, {
