@@ -21,7 +21,9 @@ interface Msg {
   id?: number; role: 'user' | 'assistant' | 'system'; content: string; images?: string[]; pending?: boolean; error?: boolean;
   prompt_tokens?: number | null; completion_tokens?: number | null; total_ms?: number | null;
 }
-interface ModelRow { id: number; name: string; server_id: number; server_name: string; server_status: string }
+interface ModelRow { id: number; name: string; server_id: number; server_name: string; server_status: string; is_default?: number | string | boolean; family?: string | null }
+/** Embedding models can't hold a conversation; keep them out of the picker. */
+const isChatModel = (m: ModelRow) => !/(embed|bge-|minilm|e5-)/i.test(`${m.name} ${m.family ?? ''}`);
 interface Agent { id: number; name: string; avatar: string | null; model: string | null; server_id: number | null; system_prompt: string | null; status: string }
 interface Prompt { id: number; name: string; category: string; content: string; variables: string[] }
 
@@ -67,7 +69,9 @@ export default function Chat() {
   const locked = sessionId !== null; // the server fixes the system prompt when the conversation is created
 
   useEffect(() => {
-    if (!modelKey && models.data?.length) setModelKey(keyOf(models.data[0].server_id, models.data[0].name));
+    const usable = (models.data ?? []).filter(isChatModel);
+    const pick = usable.find((m) => Number(m.is_default) === 1) ?? usable[0];
+    if (!modelKey && pick) setModelKey(keyOf(pick.server_id, pick.name));
   }, [models.data, modelKey]);
 
   // Arrive from Prompts ("Use in chat") or Agents ("Chat with agent").
@@ -226,7 +230,9 @@ export default function Chat() {
   };
 
   const modelOptions = useMemo(
-    () => (models.data ?? []).map((m) => ({ value: keyOf(m.server_id, m.name), label: `${m.name} · ${m.server_name}${m.server_status && m.server_status !== 'online' ? ` (${m.server_status})` : ''}` })),
+    () => (models.data ?? []).filter(isChatModel)
+      .sort((a, b) => Number(b.is_default ?? 0) - Number(a.is_default ?? 0) || a.name.localeCompare(b.name))
+      .map((m) => ({ value: keyOf(m.server_id, m.name), label: `${m.name}${Number(m.is_default) === 1 ? ' (default)' : ''} · ${m.server_name}${m.server_status && m.server_status !== 'online' ? ` (${m.server_status})` : ''}` })),
     [models.data],
   );
   // A conversation's model may no longer be listed; keep it selectable.

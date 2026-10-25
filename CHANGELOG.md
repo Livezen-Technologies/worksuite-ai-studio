@@ -2,6 +2,13 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.8.2] — 2026-10-25 — Chat starts with the default model
+
+- Chat starts with the model marked **default** on the Models page (it took the first model in the list), lists the
+  default first with "(default)", and leaves embedding models (bge, MiniLM, mxbai, nomic) out of the picker — they
+  cannot hold a conversation.
+- `helalm:4b` set as the default model (its Sinhala answers are the best of the installed models).
+
 ## [1.8.1] — 2026-10-25 — Voice input fixes (Safari, cancel, feedback)
 
 - **Safari:** the audio engine is resumed explicitly when recording starts. Safari created it paused (it was not
