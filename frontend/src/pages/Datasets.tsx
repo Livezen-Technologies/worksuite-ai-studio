@@ -6,7 +6,7 @@ import {
 } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Alert, Badge, Button, Card, CardHeader, ConfirmDialog, DataTable, EmptyState, ErrorState, FormModal,
-  IconButton, Input, PageHeader, Pagination, SearchInput, Select, Skeleton, StatCard, Tabs, Textarea, Toolbar,
+  IconButton, Input, PageHeader, Pagination, SearchInput, Segmented, Select, Skeleton, StatCard, Tabs, Textarea, Toolbar,
   useDisclosure, useToast, type Column,
 } from '../components/ui';
 import { ApiError, del, download, get, post } from '../lib/api';
@@ -20,6 +20,7 @@ import { RightsChip, type GovernedDataset } from './SinLama/engineDataset';
 interface Dataset {
   id: number; name: string; language: string; description: string | null;
   item_count: number | string; token_estimate: number | string; created_at: string; updated_at?: string;
+  rights_status?: 'quarantined' | 'approved' | 'withdrawn' | null; task?: string | null; manifest_hash?: string | null; version?: number | string | null;
 }
 interface Item { id: number; instruction: string; input: string | null; output: string; tokens: number | string }
 interface Detail { dataset: Dataset & GovernedDataset; items: Item[]; total: number; page: number; per: number }
@@ -43,13 +44,18 @@ function DatasetList({ onOpen }: { onOpen: (id: number) => void }) {
   const { can } = useAuth();
   const canManage = can('models.manage');
   const [q, setQ] = useState('');
+  const [rights, setRights] = useState<'all' | 'approved' | 'quarantined' | 'withdrawn'>('all');
   const create = useDisclosure();
   const [toDelete, setToDelete] = useState<Dataset | null>(null);
   const toast = useToast();
   const qc = useQueryClient();
 
   const list = useQuery({ queryKey: ['datasets'], queryFn: () => get<Dataset[]>('/datasets') });
-  const rows = (list.data ?? []).filter((d) => !q || `${d.name} ${d.description ?? ''}`.toLowerCase().includes(q.toLowerCase()));
+  const rows = (list.data ?? [])
+    .filter((d) => rights === 'all' || (d.rights_status ?? 'quarantined') === rights)
+    .filter((d) => !q || `${d.id} ${d.name} ${d.description ?? ''}`.toLowerCase().includes(q.toLowerCase()))
+    .sort((a, b) => Number(b.id) - Number(a.id));
+  const count = (r: string) => (list.data ?? []).filter((d) => (d.rights_status ?? 'quarantined') === r).length;
   const totals = (list.data ?? []).reduce((a, d) => ({ rows: a.rows + Number(d.item_count || 0), tokens: a.tokens + Number(d.token_estimate || 0) }), { rows: 0, tokens: 0 });
 
   const remove = useMutation({
@@ -59,18 +65,20 @@ function DatasetList({ onOpen }: { onOpen: (id: number) => void }) {
   });
 
   const columns: Column<Dataset>[] = [
+    { key: 'id', header: '#', hideBelow: 'md', className: 'w-12', cell: (d) => <span className="tabular-nums text-slate-500 dark:text-slate-400">{d.id}</span> },
     {
       key: 'name', header: 'Dataset', cell: (d) => (
-        <div className="min-w-0">
+        <div className="max-w-[16rem] min-w-0 sm:max-w-sm lg:max-w-md xl:max-w-xl" title={d.description ? `${d.name}\n${d.description}` : d.name}>
           <p className="truncate font-medium text-slate-900 dark:text-white">{d.name}</p>
-          {d.description && <p className="truncate text-xs text-slate-500 dark:text-slate-400">{d.description}</p>}
+          {d.description && <p className="truncate text-xs font-normal text-slate-500 dark:text-slate-400">{d.description}</p>}
         </div>
       ),
     },
-    { key: 'language', header: 'Language', hideBelow: 'sm', cell: (d) => <Badge tone="indigo">{langLabel(d.language)}</Badge> },
-    { key: 'rows', header: 'Rows', align: 'right', cell: (d) => <span className="tabular-nums">{num(d.item_count)}</span> },
-    { key: 'tokens', header: 'Tokens (est.)', align: 'right', hideBelow: 'md', cell: (d) => <span className="tabular-nums">{compact(d.token_estimate)}</span> },
-    { key: 'created', header: 'Created', hideBelow: 'lg', cell: (d) => <span title={dateTime(d.created_at)}>{ago(d.created_at)}</span> },
+    { key: 'rights', header: 'Rights', className: 'whitespace-nowrap', cell: (d) => <RightsChip status={d.rights_status} /> },
+    { key: 'language', header: 'Language', hideBelow: 'lg', className: 'whitespace-nowrap', cell: (d) => <Badge tone="indigo">{langLabel(d.language)}</Badge> },
+    { key: 'rows', header: 'Rows', align: 'right', className: 'whitespace-nowrap', cell: (d) => <span className="tabular-nums">{num(d.item_count)}</span> },
+    { key: 'tokens', header: 'Tokens', align: 'right', hideBelow: 'md', className: 'whitespace-nowrap', cell: (d) => <span className="tabular-nums">{compact(d.token_estimate)}</span> },
+    { key: 'created', header: 'Created', hideBelow: 'lg', className: 'whitespace-nowrap', cell: (d) => <span title={dateTime(d.created_at)}>{ago(d.created_at)}</span> },
     {
       key: 'actions', header: <span className="sr-only">Actions</span>, align: 'right', cell: (d) => (
         <div onClick={(e) => e.stopPropagation()}>
@@ -88,7 +96,7 @@ function DatasetList({ onOpen }: { onOpen: (id: number) => void }) {
     <>
       <PageHeader
         title="Datasets"
-        description="Alpaca-style instruction datasets for SinLama fine-tuning. Import JSON, JSONL or CSV, clean them, and export for training."
+        description="Instruction datasets for Sinhala fine-tuning, each with its source and rights. Only approved datasets can be frozen and used for training."
         actions={canManage && <Button icon={PlusIcon} onClick={create.onOpen}>New dataset</Button>}
       />
 
@@ -99,7 +107,23 @@ function DatasetList({ onOpen }: { onOpen: (id: number) => void }) {
       </div>
 
       <Card>
-        <Toolbar><SearchInput value={q} onChange={setQ} placeholder="Search datasets…" className="w-full sm:max-w-xs" /></Toolbar>
+        <Toolbar
+          right={
+            <Segmented
+              label="Rights"
+              value={rights}
+              onChange={setRights}
+              options={[
+                { value: 'all', label: `All ${list.data?.length ?? ''}`.trim() },
+                { value: 'approved', label: `Approved ${count('approved')}` },
+                { value: 'quarantined', label: `Quarantined ${count('quarantined')}` },
+                ...(count('withdrawn') ? [{ value: 'withdrawn' as const, label: `Withdrawn ${count('withdrawn')}` }] : []),
+              ]}
+            />
+          }
+        >
+          <SearchInput value={q} onChange={setQ} placeholder="Search by name, description or #…" className="w-full sm:max-w-xs" />
+        </Toolbar>
         <DataTable
           columns={columns}
           rows={rows}

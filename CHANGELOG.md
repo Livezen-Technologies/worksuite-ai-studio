@@ -2,6 +2,13 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.5.6] — 2026-10-25 — Datasets list fixed
+
+- The Datasets list no longer lets long descriptions stretch the table and crush the Created column: name and
+  description are one line each (full text on hover), and every other column stays on one line.
+- New columns: dataset number (#) and Rights (Approved / Quarantined / Withdrawn, with icon and text); a rights
+  filter with counts; search also matches the dataset number; newest first.
+
 ## [1.5.5] — 2026-10-25 — Polish and de-duplicate datasets
 
 - `php spark datasets:polish [ids…] [--cross] [--drop-empty] [--dry-run]` cleans datasets with set-based SQL (minutes
