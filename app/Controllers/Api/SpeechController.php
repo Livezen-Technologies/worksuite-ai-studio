@@ -52,11 +52,17 @@ class SpeechController extends BaseApiController
         $lang = strtolower((string) ($this->request->getPost('language') ?? 'si'));
         if (! in_array($lang, ['si', 'en', 'auto'], true)) $lang = 'si';
 
-        $ch = curl_init($this->serviceUrl() . '/transcribe?language=' . $lang);
+        // Stream the upload from disk: a 60 MB recording must not be read into PHP's memory (memory_limit 128M).
+        $path = $file->getTempName();
+        $fh   = fopen($path, 'rb');
+        $ch   = curl_init($this->serviceUrl() . '/transcribe?language=' . $lang);
         curl_setopt_array($ch, [
             CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => file_get_contents($file->getTempName()),
-            CURLOPT_HTTPHEADER     => ['Content-Type: application/octet-stream'],
+            CURLOPT_UPLOAD         => true,
+            CURLOPT_CUSTOMREQUEST  => 'POST',
+            CURLOPT_INFILE         => $fh,
+            CURLOPT_INFILESIZE     => filesize($path),
+            CURLOPT_HTTPHEADER     => ['Content-Type: application/octet-stream', 'Expect:'],
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT        => 900,          // long recordings on CPU
             CURLOPT_CONNECTTIMEOUT => 5,
@@ -65,6 +71,7 @@ class SpeechController extends BaseApiController
         $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $err  = curl_error($ch);
         curl_close($ch);
+        fclose($fh);
 
         if ($body === false || $code === 0) {
             log_message('error', 'Speech service unreachable: ' . $err);

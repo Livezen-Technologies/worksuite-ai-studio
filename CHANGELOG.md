@@ -2,6 +2,12 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.6.1] — 2026-10-25 — Stream speech uploads
+
+- `POST /api/speech/transcribe` streams the uploaded audio from disk to the speech service instead of reading it
+  into PHP memory, so long recordings (up to 60 MB) stay within PHP's memory limit. Verified: 42 MB / 22.7 min of
+  audio transcribed with 2 MB peak PHP memory in 160 s.
+
 ## [1.6.0] — 2026-10-25 — Speech to Text
 
 - New **Speech to Text** page (AI Workspace → Speech to Text, `/speech`): record from the microphone (live level
