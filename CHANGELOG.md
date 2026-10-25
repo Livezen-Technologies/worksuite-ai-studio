@@ -2,6 +2,13 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.5.7] — 2026-10-25 — Speech models on the Models page
+
+- The Models page gains a **Speech models** section listing the Sinhala Engine's speech-recognition and voice
+  packages (e.g. Whisper Sinhala via faster-whisper): type, runtime and quantisation, size, licence and release state,
+  each linking to its package. Speech models don't run in Ollama, so they stay out of the node list and the Chat
+  model picker.
+
 ## [1.5.6] — 2026-10-25 — Datasets list fixed
 
 - The Datasets list no longer lets long descriptions stretch the table and crush the Created column: name and
