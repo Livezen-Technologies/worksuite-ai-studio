@@ -61,7 +61,11 @@ class DatasetsImport extends BaseCommand
         }
 
         $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
-        $res = (new DatasetService())->import($id, (string) file_get_contents($file), $ext);
+        $svc = new DatasetService();
+        // JSONL streams line by line (millions of rows); JSON / CSV are read whole, as an upload is.
+        $res = $ext === 'jsonl'
+            ? $svc->importJsonlFile($id, $file, static fn (int $i, int $s) => CLI::write("  … {$i} imported, {$s} skipped"))
+            : $svc->import($id, (string) file_get_contents($file), $ext);
         CLI::write("Dataset {$id}: imported {$res['imported']} row(s), skipped {$res['skipped']}.", 'green');
 
         $rights = array_filter([

@@ -2,6 +2,12 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.5.4] — 2026-10-25 — Stream large dataset imports
+
+- `spark datasets:import` streams `.jsonl` files line by line (`DatasetService::importJsonlFile`), inserting in
+  batches of 1,000 with progress every 50,000 lines, so open corpora of millions of rows import without loading the
+  file into memory. Same rules as an upload: field aliases, duplicate skipping, token estimates, group keys.
+
 ## [1.5.3] — 2026-10-25 — Freeze and export from the command line
 
 - `php spark datasets:freeze <id> [--train 0.8] [--dev 0.1]` — the Splits tab's freeze (grouped, deterministic,

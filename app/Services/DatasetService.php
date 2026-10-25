@@ -83,6 +83,62 @@ class DatasetService
         return ['imported' => $imported, 'skipped' => $skipped];
     }
 
+    /**
+     * Stream a JSONL file from disk into a dataset, line by line, so files of millions of rows never sit in memory.
+     * Same rules as import(): field aliases, duplicate skipping by content hash, token estimates, group_key kept.
+     * Calls $progress($imported, $skipped) every 50,000 lines.
+     */
+    public function importJsonlFile(int $datasetId, string $path, ?callable $progress = null): array
+    {
+        $fh = fopen($path, 'rb');
+        if (! $fh) {
+            throw new \InvalidArgumentException("Cannot read {$path}.");
+        }
+        $seen = [];
+        foreach ($this->items->builder()->select('hash')->where('dataset_id', $datasetId)->get()->getResultArray() as $r) {
+            $seen[$r['hash']] = true;
+        }
+        $now = date('Y-m-d H:i:s');
+        $batch = [];
+        $imported = $skipped = $lines = 0;
+        while (($line = fgets($fh)) !== false) {
+            $lines++;
+            $j = json_decode(trim($line), true);
+            $r = is_array($j) ? $this->normaliseRow($j) : null;
+            $instruction = trim((string) ($r['instruction'] ?? ''));
+            $input       = trim((string) ($r['input'] ?? ''));
+            $output      = trim((string) ($r['output'] ?? ''));
+            if ($instruction === '' || $output === '') { $skipped++; continue; }
+            $hash = sha1($instruction . '|' . $input . '|' . $output);
+            if (isset($seen[$hash])) { $skipped++; continue; }
+            $seen[$hash] = true;
+            $batch[] = [
+                'dataset_id'  => $datasetId,
+                'instruction' => $instruction,
+                'input'       => $input !== '' ? $input : null,
+                'output'      => $output,
+                'tokens'      => $this->estimateTokens($instruction . $input . $output),
+                'hash'        => $hash,
+                'group_key'   => ($g = trim((string) ($r['group_key'] ?? ''))) !== '' ? mb_substr($g, 0, 191) : null,
+                'created_at'  => $now,
+            ];
+            $imported++;
+            if (count($batch) >= 1000) {
+                $this->items->builder()->insertBatch($batch);
+                $batch = [];
+            }
+            if ($progress && $lines % 50000 === 0) {
+                $progress($imported, $skipped);
+            }
+        }
+        fclose($fh);
+        if ($batch) {
+            $this->items->builder()->insertBatch($batch);
+        }
+        $this->recount($datasetId);
+        return ['imported' => $imported, 'skipped' => $skipped];
+    }
+
     /** Remove exact duplicates (keeps the earliest row per hash). */
     public function dedupe(int $datasetId): int
     {
