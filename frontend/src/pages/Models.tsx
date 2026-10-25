@@ -13,6 +13,7 @@ import { useAuth } from '../lib/auth';
 import type { Server } from './Servers/shared';
 import InstallModal from './Models/InstallModal';
 import ConfigModal from './Models/ConfigModal';
+import SpeechModels from './Models/SpeechModels';
 
 interface Model {
   id: number; server_id: number; name: string; family: string | null; parameter_size: string | null; quantization: string | null;
@@ -136,6 +137,8 @@ export default function Models() {
           )}
         />
       </Card>
+
+      <SpeechModels />
 
       <InstallModal
         open={installing}
