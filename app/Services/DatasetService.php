@@ -65,6 +65,9 @@ class DatasetService
                 'output'      => $output,
                 'tokens'      => $this->estimateTokens($instruction . $input . $output),
                 'hash'        => $hash,
+                // Rows that come from the same source item (a speaker, a document, or a sentence and its Singlish
+                // form) share a group_key, so freeze() keeps them in one split (TRNPIPE 003).
+                'group_key'   => ($g = trim((string) ($r['group_key'] ?? ''))) !== '' ? mb_substr($g, 0, 191) : null,
                 'created_at'  => $now,
             ];
             $imported++;
@@ -246,6 +249,7 @@ class DatasetService
             'instruction' => $instruction,
             'input'       => $get($r, ['input', 'context']),
             'output'      => $output,
+            'group_key'   => $get($r, ['group_key', 'group']),
         ];
     }
 }

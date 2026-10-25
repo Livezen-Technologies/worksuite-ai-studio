@@ -2,6 +2,13 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.5.2] — 2026-10-25 — Imports keep group keys
+
+- Dataset imports (upload and `spark datasets:import`) now keep an optional `group_key` (or `group`) field per row.
+  Rows that come from the same source item — a speaker, a document, or a Sinhala sentence and its Singlish form —
+  share a key, so freezing keeps them in the same train / dev / test split and the locked test set cannot leak into
+  training (TRNPIPE 003). Verified: 400 grouped rows frozen, no group split across sets.
+
 ## [1.5.1] — 2026-10-25 — Server-side dataset import
 
 - `php spark datasets:import <file>` imports a JSONL / JSON / CSV file that is already on the server into a new or
