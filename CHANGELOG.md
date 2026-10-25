@@ -2,6 +2,10 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.10.0] — 2026-10-25 — Datasets organised for training
+- Every dataset has a training category: Instructions, Q&A, Singlish, Translation, Text corpus, Speech, Evaluation only, Reference. Shown as a column on Datasets, with a category filter.
+- `spark datasets:organize [--mix] [--target 60000] [--dry-run]` sets the categories and builds **WorkSuite Sinhala v2 — balanced training mix**: fixed category shares (instructions 40%, Q&A 20%, Singlish 15%, translation 10%, corpus 15%), sources weighted by the square root of their size, small specialised sources taken whole up to 500 rows, a Sinhala-quality filter, de-duplicated and frozen 80/10/10 by group. Frozen datasets and quarantined, speech, evaluation and reference sets never enter the mix.
+
 ## [1.9.1] — 2026-10-25 — Two-column forms use their full width again
 - New training job, API keys, server and training-lineage forms were squeezed into one sixth of their column (labels overlapping, one word per line). A form section's child that does not choose its own width now spans the row.
 

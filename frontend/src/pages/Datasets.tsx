@@ -7,7 +7,7 @@ import {
 import {
   ActionMenu, Alert, Badge, Button, Card, CardHeader, ConfirmDialog, DataTable, EmptyState, ErrorState, FormModal,
   IconButton, Input, PageHeader, Pagination, SearchInput, Segmented, Select, Skeleton, StatCard, Tabs, Textarea, Toolbar,
-  useDisclosure, useToast, type Column,
+  useDisclosure, useToast, type BadgeTone, type Column,
 } from '../components/ui';
 import { ApiError, del, download, get, post } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -20,7 +20,7 @@ import { RightsChip, type GovernedDataset } from './SinLama/engineDataset';
 interface Dataset {
   id: number; name: string; language: string; description: string | null;
   item_count: number | string; token_estimate: number | string; created_at: string; updated_at?: string;
-  rights_status?: 'quarantined' | 'approved' | 'withdrawn' | null; task?: string | null; manifest_hash?: string | null; version?: number | string | null;
+  rights_status?: 'quarantined' | 'approved' | 'withdrawn' | null; task?: string | null; category?: string | null; manifest_hash?: string | null; version?: number | string | null;
 }
 interface Item { id: number; instruction: string; input: string | null; output: string; tokens: number | string }
 interface Detail { dataset: Dataset & GovernedDataset; items: Item[]; total: number; page: number; per: number }
@@ -32,6 +32,19 @@ const LANGS = [
 ];
 const langLabel = (l: string) => LANGS.find((x) => x.value === l)?.label ?? l;
 const ACCEPT = '.json,.jsonl,.csv';
+
+/** Training categories set by `spark datasets:organize`; the balanced mix takes a fixed share of the first five. */
+const CATEGORIES: { value: string; label: string; tone: BadgeTone }[] = [
+  { value: 'instruction', label: 'Instructions', tone: 'blue' },
+  { value: 'qa', label: 'Q&A', tone: 'green' },
+  { value: 'transliteration', label: 'Singlish', tone: 'purple' },
+  { value: 'translation', label: 'Translation', tone: 'indigo' },
+  { value: 'corpus', label: 'Text corpus', tone: 'amber' },
+  { value: 'speech', label: 'Speech', tone: 'gray' },
+  { value: 'evaluation', label: 'Evaluation only', tone: 'red' },
+  { value: 'reference', label: 'Reference', tone: 'gray' },
+];
+const category = (c?: string | null) => CATEGORIES.find((x) => x.value === c);
 
 export default function Datasets() {
   const [openId, setOpenId] = useState<number | null>(null);
@@ -45,6 +58,7 @@ function DatasetList({ onOpen }: { onOpen: (id: number) => void }) {
   const canManage = can('models.manage');
   const [q, setQ] = useState('');
   const [rights, setRights] = useState<'all' | 'approved' | 'quarantined' | 'withdrawn'>('all');
+  const [cat, setCat] = useState('');
   const create = useDisclosure();
   const [toDelete, setToDelete] = useState<Dataset | null>(null);
   const toast = useToast();
@@ -53,6 +67,7 @@ function DatasetList({ onOpen }: { onOpen: (id: number) => void }) {
   const list = useQuery({ queryKey: ['datasets'], queryFn: () => get<Dataset[]>('/datasets') });
   const rows = (list.data ?? [])
     .filter((d) => rights === 'all' || (d.rights_status ?? 'quarantined') === rights)
+    .filter((d) => !cat || d.category === cat)
     .filter((d) => !q || `${d.id} ${d.name} ${d.description ?? ''}`.toLowerCase().includes(q.toLowerCase()))
     .sort((a, b) => Number(b.id) - Number(a.id));
   const count = (r: string) => (list.data ?? []).filter((d) => (d.rights_status ?? 'quarantined') === r).length;
@@ -74,6 +89,7 @@ function DatasetList({ onOpen }: { onOpen: (id: number) => void }) {
         </div>
       ),
     },
+    { key: 'category', header: 'Category', className: 'whitespace-nowrap', cell: (d) => { const c = category(d.category); return c ? <Badge tone={c.tone}>{c.label}</Badge> : <span className="text-slate-400">—</span>; } },
     { key: 'rights', header: 'Rights', className: 'whitespace-nowrap', cell: (d) => <RightsChip status={d.rights_status} /> },
     { key: 'language', header: 'Language', hideBelow: 'lg', className: 'whitespace-nowrap', cell: (d) => <Badge tone="indigo">{langLabel(d.language)}</Badge> },
     { key: 'rows', header: 'Rows', align: 'right', className: 'whitespace-nowrap', cell: (d) => <span className="tabular-nums">{num(d.item_count)}</span> },
@@ -122,7 +138,16 @@ function DatasetList({ onOpen }: { onOpen: (id: number) => void }) {
             />
           }
         >
-          <SearchInput value={q} onChange={setQ} placeholder="Search by name, description or #…" className="w-full sm:max-w-xs" />
+          <div className="flex w-full flex-col gap-3 sm:flex-row">
+            <SearchInput value={q} onChange={setQ} placeholder="Search by name, description or #…" className="w-full sm:max-w-xs" />
+            <Select
+              aria-label="Category"
+              value={cat}
+              onChange={(e) => setCat(e.target.value)}
+              options={[{ value: '', label: 'All categories' }, ...CATEGORIES.map((c) => ({ value: c.value, label: `${c.label} ${(list.data ?? []).filter((d) => d.category === c.value).length}` }))]}
+              wrapperClassName="sm:w-52"
+            />
+          </div>
         </Toolbar>
         <DataTable
           columns={columns}
