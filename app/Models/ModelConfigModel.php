@@ -18,7 +18,7 @@ class ModelConfigModel extends Model
     /** Defaults applied to a model that has no saved config yet. */
     public const DEFAULTS = [
         'temperature' => 0.80, 'top_p' => 0.90, 'top_k' => 40, 'repeat_penalty' => 1.10,
-        'num_ctx' => 4096, 'num_predict' => -1, 'stop' => null, 'seed' => null,
+        'num_ctx' => 4096, 'num_predict' => 1024, 'stop' => null, 'seed' => null,
         'num_batch' => null, 'num_thread' => null, 'num_gpu' => null,
         'keep_alive' => '5m', 'system_prompt' => null,
     ];
@@ -58,6 +58,14 @@ class ModelConfigModel extends Model
     public function ollamaOptions(string $name): array
     {
         $c = $this->forModel($name);
+        // This box is shared (chat, speech-to-text, queue) on CPU only. An unlimited reply from a model that rambles
+        // held the CPU for 20+ minutes, so length is always bounded, and chat leaves cores free unless a model's
+        // config says otherwise.
+        $maxReply = (int) env('chat.maxReplyTokens', 2048);
+        $c['num_predict'] = (int) $c['num_predict'] <= 0 ? $maxReply : min((int) $c['num_predict'], $maxReply);
+        if ($c['num_thread'] === null && (int) env('chat.numThreads', 4) > 0) {
+            $c['num_thread'] = (int) env('chat.numThreads', 4);
+        }
         $opt = array_filter([
             'temperature'    => (float) $c['temperature'],
             'top_p'          => (float) $c['top_p'],

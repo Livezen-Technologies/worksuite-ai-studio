@@ -2,6 +2,14 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.8.3] — 2026-10-25 — Chat can no longer starve the server
+
+- Replies are always bounded: the default maximum is 1,024 tokens (it was unlimited) and an unlimited setting is
+  capped at 2,048 (`chat.maxReplyTokens`). A small model that rambled held the CPU for over 20 minutes, which made
+  other chats time out and left voice input stuck on "Finishing…".
+- Chat models use 4 CPU threads unless a model's own configuration says otherwise (`chat.numThreads`), leaving the
+  rest of this CPU-only server for speech-to-text and the app.
+
 ## [1.8.2] — 2026-10-25 — Chat starts with the default model
 
 - Chat starts with the model marked **default** on the Models page (it took the first model in the list), lists the
