@@ -7,7 +7,7 @@ namespace App\Controllers\Api;
  *
  *   GET  /api/speech/status        is the speech service up, and which model it runs
  *   POST /api/speech/transcribe    multipart `audio` (≤ 500 MB: WAV / MP3 / M4A / OGG / WebM / FLAC, or MP4 / MOV / WebM video),
- *                                  `language` = si | en | auto, `words` = 1 for per-word timings (captions),
+ *                                  `language` = si | en | mix | auto, `words` = 1 for per-word timings (captions),
  *                                  `fast` = 1 for short live chunks  →  {text, segments[{start,end,text,words?}], language, duration, …}
  *
  * The work is done by the local aistudio-asr service (Whisper Sinhala on faster-whisper, 127.0.0.1:8096,
@@ -36,7 +36,13 @@ class SpeechController extends BaseApiController
             'model'     => $j['model'] ?? null,
             'busy'      => (bool) ($j['busy'] ?? false),
             'max_mb'    => self::MAX_BYTES / 1048576,
-            'languages' => [['value' => 'si', 'label' => 'Sinhala'], ['value' => 'en', 'label' => 'English'], ['value' => 'auto', 'label' => 'Detect automatically']],
+            'mixed'     => (bool) ($j['mixed'] ?? false),
+            'languages' => array_values(array_filter([
+                ['value' => 'si', 'label' => 'Sinhala'],
+                ($j['mixed'] ?? false) ? ['value' => 'mix', 'label' => 'Sinhala + English (mixed)'] : null,
+                ['value' => 'en', 'label' => 'English'],
+                ['value' => 'auto', 'label' => 'Detect automatically'],
+            ])),
         ]);
     }
 
@@ -51,7 +57,7 @@ class SpeechController extends BaseApiController
             return $this->failure('Audio and video files can be up to 500 MB.', 413, ['audio' => 'File too large.']);
         }
         $lang = strtolower((string) ($this->request->getPost('language') ?? 'si'));
-        if (! in_array($lang, ['si', 'en', 'auto'], true)) $lang = 'si';
+        if (! in_array($lang, ['si', 'en', 'mix', 'auto'], true)) $lang = 'si';
         $query = http_build_query(['language' => $lang, 'words' => $this->request->getPost('words') ? 1 : 0, 'fast' => $this->request->getPost('fast') ? 1 : 0]);
 
         // Stream the upload from disk: a 60 MB recording must not be read into PHP's memory (memory_limit 128M).

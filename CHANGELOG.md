@@ -2,6 +2,20 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.8.0] — 2026-10-25 — Voice input in Chat, Sinhala + English speech
+
+- **Voice input in Chat:** a microphone button beside the message box. Speak and the words are typed in as you
+  talk (Whisper Sinhala on the server); the button turns into a red recording pill with live sound bars, a timer and
+  Stop, and the message stays editable before sending. A small switch picks Sinhala (default), Sinhala + English or
+  English, remembered per device.
+- **Sinhala + English (mixed)** on Speech to Text and in Chat: speech is cut at pauses, each phrase is identified as
+  Sinhala or English (Whisper base) and transcribed by the right model — Whisper Sinhala, or OpenAI Whisper small for
+  English — so both appear in their own script, tagged per line. English words inside a Sinhala sentence still come
+  out in Sinhala letters. Neighbouring phrases share one pass; sub-word tails are dropped.
+- The live recording engine is now one shared hook (`useLiveTranscriber`) used by the Speech page and Chat.
+- Speech service: multilingual models `faster-whisper-small` and `faster-whisper-base` (MIT), 6 CPU threads, and a
+  higher CPU priority (`Nice=-5`) so voice input stays responsive while Ollama is answering chats.
+
 ## [1.7.0] — 2026-10-25 — Live transcription, captions and subtitles
 
 - **Live transcription:** while you record, speech is cut at natural pauses (4–12 s) and each piece is transcribed

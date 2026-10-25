@@ -1,7 +1,9 @@
 """AI Studio speech-to-text service: Whisper Sinhala (faster-whisper, CPU int8), kept loaded in memory.
 
 Internal only (127.0.0.1). AI Studio's PHP API forwards uploads here.
-  POST /transcribe?language=si|en|auto&words=1&fast=1   body = the audio or video file's bytes
+  POST /transcribe?language=si|en|mix|auto&words=1&fast=1   body = the audio or video file's bytes
+       mix = Sinhala and English together: speech is cut at pauses, each phrase's language is identified by the
+             multilingual model, Sinhala phrases go to Whisper Sinhala and English phrases to Whisper small.
        words=1  adds per-word timings (for caption splitting); fast=1 uses greedy decoding (live chunks).
        Silence is skipped (VAD) and punctuation-only lines are dropped in both modes.
   GET  /health
@@ -11,11 +13,63 @@ import numpy as np
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from faster_whisper import WhisperModel
+from faster_whisper.vad import VadOptions, get_speech_timestamps
 
 MODEL_DIR = os.environ.get('ASR_MODEL', '/srv/sinhala-data/models/whisper-small-sinhala-ct2-int8')
 MODEL_NAME = 'Whisper Sinhala (SinhaSpeech whisper-small run11, int8)'
 MAX_BYTES = 500 * 1024 * 1024  # video uploads for captions
-model = WhisperModel(MODEL_DIR, device='cpu', compute_type='int8', cpu_threads=int(os.environ.get('ASR_THREADS', '4')))
+THREADS = int(os.environ.get('ASR_THREADS', '4'))
+model = WhisperModel(MODEL_DIR, device='cpu', compute_type='int8', cpu_threads=THREADS)
+# Multilingual Whisper small (OpenAI, MIT) — language identification and English phrases in mixed speech.
+MULTI_DIR = os.environ.get('ASR_MULTI_MODEL', '/srv/sinhala-data/models/faster-whisper-small')
+multi = WhisperModel(MULTI_DIR, device='cpu', compute_type='int8', cpu_threads=THREADS) if os.path.isdir(MULTI_DIR) else None
+# A smaller multilingual model only tells Sinhala from English per phrase — the same answer for a quarter of the work.
+LID_DIR = os.environ.get('ASR_LID_MODEL', '/srv/sinhala-data/models/faster-whisper-base')
+lid = WhisperModel(LID_DIR, device='cpu', compute_type='int8', cpu_threads=THREADS) if os.path.isdir(LID_DIR) else multi
+RATE = 16000
+
+
+def _rows(segs, words, offset=0.0, lang=None):
+    out = []
+    for sg in segs:
+        if not any(ch.isalnum() for ch in sg.text):  # punctuation-only output from noise
+            continue
+        row = {'start': round(sg.start + offset, 2), 'end': round(sg.end + offset, 2), 'text': sg.text.strip()}
+        if lang:
+            row['language'] = lang
+        if words and sg.words:
+            row['words'] = [{'start': round(w.start + offset, 2), 'end': round(w.end + offset, 2), 'word': w.word} for w in sg.words]
+        out.append(row)
+    return out
+
+
+def transcribe_mixed(pcm, words, fast):
+    """Phrase-level code switching: cut at pauses, identify each phrase's language, transcribe with the right model."""
+    spans = get_speech_timestamps(pcm, VadOptions(min_silence_duration_ms=400, max_speech_duration_s=15, speech_pad_ms=150))
+    # 1. language of each phrase (one encoder pass per phrase)
+    tagged = []
+    for sp in spans:
+        if sp['end'] - sp['start'] < RATE * 0.3:
+            continue
+        _, _, probs = lid.detect_language(pcm[sp['start']:sp['end']])
+        p = dict(probs)
+        tagged.append((sp['start'], sp['end'], 'en' if p.get('en', 0) > p.get('si', 0) else 'si'))
+    # 2. neighbouring phrases in the same language share one pass (Whisper pads every input to 30 s anyway)
+    groups = []
+    for a, b, lang in tagged:
+        if groups and groups[-1][2] == lang and b - groups[-1][0] <= RATE * 28:
+            groups[-1][1] = b
+        else:
+            groups.append([a, b, lang])
+    rows, counts = [], {'si': 0.0, 'en': 0.0}
+    for a, b, lang in groups:
+        m = multi if lang == 'en' else model
+        segs, _ = m.transcribe(pcm[a:b], language=lang, beam_size=1 if fast else 3, vad_filter=False, word_timestamps=words,
+                               condition_on_previous_text=False)
+        rows += [r for r in _rows(segs, words, a / RATE, lang) if r['end'] - r['start'] >= 0.35]  # drop sub-word tails
+        counts[lang] += (b - a) / RATE
+    main = max(counts, key=counts.get) if any(counts.values()) else 'si'
+    return rows, main, round(sum(counts.values()) and counts[main] / sum(counts.values()), 3)
 lock = threading.Lock()  # one transcription at a time keeps the CPU for the rest of the box
 
 
@@ -30,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if urlparse(self.path).path == '/health':
-            return self._send(200, {'ok': True, 'model': MODEL_NAME, 'busy': lock.locked()})
+            return self._send(200, {'ok': True, 'model': MODEL_NAME, 'busy': lock.locked(), 'mixed': multi is not None})
         self._send(404, {'error': 'not found'})
 
     def do_POST(self):
@@ -67,24 +121,24 @@ class Handler(BaseHTTPRequestHandler):
         pcm = np.frombuffer(dec.stdout, dtype=np.float32)
         if dec.returncode != 0 or pcm.size < 1600:
             return self._send(422, {'error': 'Could not read audio from this file. Try WAV, MP3, M4A, OGG, WebM, FLAC, MP4 or MOV, at least a second long.'})
+        if lang == 'mix' and multi is None:
+            return self._send(503, {'error': 'Mixed Sinhala + English needs the multilingual model, which is not installed on this server.'})
         try:
             with lock:
-                segs, info = model.transcribe(pcm, language=None if lang == 'auto' else lang, beam_size=1 if fast else 5,
-                                              vad_filter=True, word_timestamps=words)  # VAD also for live chunks: silence otherwise yields '.' lines
-                segments = []
-                for sg in segs:
-                    if not any(ch.isalnum() for ch in sg.text):  # punctuation-only output from noise
-                        continue
-                    row = {'start': round(sg.start, 2), 'end': round(sg.end, 2), 'text': sg.text.strip()}
-                    if words and sg.words:
-                        row['words'] = [{'start': round(w.start, 2), 'end': round(w.end, 2), 'word': w.word} for w in sg.words]
-                    segments.append(row)
+                if lang == 'mix':
+                    segments, detected, prob = transcribe_mixed(pcm, words, fast)
+                    duration = pcm.size / RATE
+                else:
+                    segs, info = model.transcribe(pcm, language=None if lang == 'auto' else lang, beam_size=1 if fast else 5,
+                                                  vad_filter=True, word_timestamps=words)  # VAD also for live chunks: silence otherwise yields '.' lines
+                    segments = _rows(segs, words)
+                    detected, prob, duration = info.language, info.language_probability, info.duration
         except Exception as e:  # undecodable or empty audio
             return self._send(422, {'error': f'Could not read this audio: {type(e).__name__}. Try WAV, MP3, M4A, OGG, WebM or FLAC.'})
         self._send(200, {
             'text': ' '.join(s['text'] for s in segments).strip(), 'segments': segments,
-            'language': info.language, 'language_probability': round(info.language_probability, 3),
-            'duration': round(info.duration, 2), 'processing_seconds': round(time.time() - t0, 2), 'model': MODEL_NAME,
+            'language': 'mix' if lang == 'mix' else detected, 'main_language': detected, 'language_probability': round(prob, 3),
+            'duration': round(duration, 2), 'processing_seconds': round(time.time() - t0, 2), 'model': MODEL_NAME,
         })
 
 

@@ -165,8 +165,10 @@ export default function Speech() {
           )}
           <div className="border-t border-slate-200 px-4 py-4 sm:px-6 dark:border-white/10">
             <Select label="Language" value={language} disabled={!!busy} onChange={(e) => setLanguage(e.target.value)}
-              options={status.data?.languages ?? [{ value: 'si', label: 'Sinhala' }, { value: 'en', label: 'English' }, { value: 'auto', label: 'Detect automatically' }]}
-              hint="Tuned for Sinhala; English and detection work but are less accurate." />
+              options={status.data?.languages ?? [{ value: 'si', label: 'Sinhala' }, { value: 'mix', label: 'Sinhala + English (mixed)' }, { value: 'en', label: 'English' }, { value: 'auto', label: 'Detect automatically' }]}
+              hint={language === 'mix'
+                ? 'Each phrase is identified as Sinhala or English and written in its own script. English words inside a Sinhala sentence stay in Sinhala letters. Slower than Sinhala only.'
+                : 'Sinhala is the most accurate. Choose Sinhala + English when speakers switch between the two.'} />
           </div>
           {media && (
             <div className="border-t border-slate-200 px-4 py-4 sm:px-6 dark:border-white/10">

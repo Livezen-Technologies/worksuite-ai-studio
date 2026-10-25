@@ -14,6 +14,7 @@ import { ApiError, del, get, put, streamNdjson } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ago } from '../lib/format';
 import { Markdown } from './Chat/Markdown';
+import { VoiceInput } from './Speech/VoiceInput';
 
 interface Session { id: number; title: string; model: string | null; server_id: number | null; system_prompt: string | null; updated_at: string; message_count: number | string }
 interface Msg {
@@ -400,6 +401,12 @@ export default function Chat() {
               />
               {(prompts.data?.length ?? 0) > 0 && (
                 <IconButton label="Insert a saved prompt" icon={BookOpenIcon} className="hidden size-10 shrink-0 ring-1 ring-slate-200 sm:inline-flex dark:ring-white/10" onClick={() => setPromptsOpen(true)} />
+              )}
+              {can('chat.use') && (
+                <VoiceInput
+                  disabled={!modelKey || streaming}
+                  onText={(t) => { setDraft((d) => (d && !/\s$/.test(d) ? `${d} ${t}` : `${d}${t}`)); inputRef.current?.focus(); }}
+                />
               )}
               <textarea
                 ref={inputRef}

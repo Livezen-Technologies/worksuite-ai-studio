@@ -4,11 +4,11 @@ After=network.target
 
 [Service]
 User=ubuntu
-Environment=ASR_THREADS=4
+Environment=ASR_THREADS=6
 ExecStart=/home/ubuntu/sinhala-build/.venv-asr/bin/python /home/ubuntu/sinhala-build/asr_service.py
 Restart=on-failure
 RestartSec=5
-Nice=5
+Nice=-5
 
 [Install]
 WantedBy=multi-user.target
