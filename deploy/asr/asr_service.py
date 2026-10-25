@@ -76,8 +76,11 @@ lock = threading.Lock()  # one transcription at a time keeps the CPU for the res
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, body):
         data = json.dumps(body, ensure_ascii=False).encode()
-        self.send_response(code); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(data)))
-        self.end_headers(); self.wfile.write(data)
+        try:
+            self.send_response(code); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(data)))
+            self.end_headers(); self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):  # the browser gave up waiting; nothing to deliver
+            pass
 
     def log_message(self, *a):  # quiet
         pass
@@ -121,10 +124,18 @@ class Handler(BaseHTTPRequestHandler):
         pcm = np.frombuffer(dec.stdout, dtype=np.float32)
         if dec.returncode != 0 or pcm.size < 1600:
             return self._send(422, {'error': 'Could not read audio from this file. Try WAV, MP3, M4A, OGG, WebM, FLAC, MP4 or MOV, at least a second long.'})
+        peak = float(np.abs(pcm).max()) if pcm.size else 0.0
+        if peak < 0.005:  # silence (or a muted / blocked microphone): nothing to transcribe, no model work
+            print(f"transcribe lang={lang} fast={int(fast)} audio={pcm.size / RATE:.1f}s peak={peak:.3f} silent", flush=True)
+            return self._send(200, {'text': '', 'segments': [], 'language': lang, 'main_language': lang, 'language_probability': 0,
+                                    'duration': round(pcm.size / RATE, 2), 'processing_seconds': round(time.time() - t0, 2), 'model': MODEL_NAME, 'silent': True})
         if lang == 'mix' and multi is None:
             return self._send(503, {'error': 'Mixed Sinhala + English needs the multilingual model, which is not installed on this server.'})
         try:
+            t_wait = time.time()
             with lock:
+                waited = time.time() - t_wait
+                t_run = time.time()
                 if lang == 'mix':
                     segments, detected, prob = transcribe_mixed(pcm, words, fast)
                     duration = pcm.size / RATE
@@ -136,8 +147,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:  # undecodable or empty audio
             return self._send(422, {'error': f'Could not read this audio: {type(e).__name__}. Try WAV, MP3, M4A, OGG, WebM or FLAC.'})
         text = ' '.join(s['text'] for s in segments).strip()
-        peak = float(np.abs(pcm).max()) if pcm.size else 0.0
-        print(f"transcribe lang={lang} fast={int(fast)} audio={pcm.size / RATE:.1f}s peak={peak:.3f} took={time.time() - t0:.1f}s chars={len(text)}", flush=True)
+        print(f"transcribe lang={lang} fast={int(fast)} audio={pcm.size / RATE:.1f}s peak={peak:.3f} queued={waited:.1f}s ran={time.time() - t_run:.1f}s chars={len(text)}", flush=True)
         self._send(200, {
             'text': text, 'segments': segments,
             'language': 'mix' if lang == 'mix' else detected, 'main_language': detected, 'language_probability': round(prob, 3),

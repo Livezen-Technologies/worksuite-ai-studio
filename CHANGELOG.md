@@ -2,6 +2,11 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.8.4] — 2026-10-25 — Voice input no longer waits on silence
+- Speech service skips silent audio (a muted or blocked microphone) before any model work: answers in under 0.1 s instead of minutes under load.
+- A browser that gives up waiting no longer leaves a BrokenPipeError in the speech service log.
+- Each transcription logs its queue wait and run time separately, so a slow reply shows whether the CPU or the queue was the cause.
+
 ## [1.8.3] — 2026-10-25 — Chat can no longer starve the server
 
 - Replies are always bounded: the default maximum is 1,024 tokens (it was unlimited) and an unlimited setting is
