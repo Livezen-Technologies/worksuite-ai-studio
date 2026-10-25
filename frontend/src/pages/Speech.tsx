@@ -11,7 +11,7 @@ import { LiveRecorder } from './Speech/LiveRecorder';
 import { CaptionEditor, CaptionPreview } from './Speech/CaptionTools';
 import { buildCues, clock, DEFAULT_RULES, toSrt, toVtt, type Cue, type CueRules, type Segment } from './Speech/cues';
 
-interface Status { available: boolean; model: string | null; busy: boolean; max_mb: number; languages: { value: string; label: string }[] }
+interface Status { available: boolean; model: string | null; busy: boolean; max_mb: number; languages: { value: string; label: string }[]; models?: { value: string; label: string; note: string; installed: boolean }[] }
 interface Result { text: string; segments: Segment[]; language: string; duration: number; processing_seconds: number; model: string }
 
 const ACCEPT = 'audio/*,video/*,.wav,.mp3,.m4a,.ogg,.oga,.opus,.webm,.flac,.aac,.mp4,.mov,.mkv';
@@ -55,6 +55,9 @@ export default function Speech() {
   const [mode, setMode] = useState<'live' | 'upload'>('live');
   const [view, setView] = useState<'transcript' | 'captions'>('transcript');
   const [language, setLanguage] = useState('si');
+  const [model, setModel] = useState('sinhala');
+  const modelRef = useRef(model);
+  modelRef.current = model;
   const [segments, setSegments] = useState<Segment[]>([]);
   const [text, setText] = useState('');
   const [textEdited, setTextEdited] = useState(false);
@@ -86,6 +89,7 @@ export default function Speech() {
     const fd = new FormData();
     fd.append('audio', wav, 'chunk.wav');
     fd.append('language', langRef.current);
+    fd.append('model', modelRef.current);
     fd.append('fast', '1');
     fd.append('words', '1');
     const r = await api<Result>('/speech/transcribe', { method: 'POST', body: fd });
@@ -101,6 +105,7 @@ export default function Speech() {
     const fd = new FormData();
     fd.append('audio', f);
     fd.append('language', language);
+    fd.append('model', model);
     fd.append('words', '1');
     try {
       const { data } = await uploadWithProgress<Result>('/speech/transcribe', fd, setProgress);
@@ -169,6 +174,11 @@ export default function Speech() {
               hint={language === 'mix'
                 ? 'Each phrase is identified as Sinhala or English and written in its own script. English words inside a Sinhala sentence stay in Sinhala letters. Slower than Sinhala only.'
                 : 'Sinhala is the most accurate. Choose Sinhala + English when speakers switch between the two.'} />
+            {language !== 'mix' && (status.data?.models?.length ?? 0) > 1 && (
+              <Select label="Model" wrapperClassName="mt-4" value={model} disabled={!!busy} onChange={(e) => setModel(e.target.value)}
+                options={(status.data?.models ?? []).filter((m) => m.installed).map((m) => ({ value: m.value, label: m.label }))}
+                hint={status.data?.models?.find((m) => m.value === model)?.note} />
+            )}
           </div>
           {media && (
             <div className="border-t border-slate-200 px-4 py-4 sm:px-6 dark:border-white/10">

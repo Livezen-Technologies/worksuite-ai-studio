@@ -36,7 +36,7 @@ class EnginePackageService
     /** Licences that block commercial bundling (SRS §3.2: MMS is CC BY-NC). */
     public const BLOCKED_LICENSES = ['CC-BY-NC-4.0', 'CC-BY-NC-SA-4.0', 'CC-BY-NC-ND-4.0', 'UNKNOWN'];
 
-    public const RUNTIMES = ['ollama', 'faster-whisper', 'tts-runtime', 'rules'];
+    public const RUNTIMES = ['ollama', 'faster-whisper', 'tts-runtime', 'rules', 'onnxruntime', 'pytorch'];
 
     /** Device profiles a package can be bound to (engine_bindings.profile). */
     public const PROFILES = ['minimum', 'standard', 'apple', 'accelerated'];

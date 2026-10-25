@@ -65,7 +65,7 @@ export const useEvaluations = () => useQuery({ queryKey: ['engine', 'evaluations
 /* ---------------------------------------------------------------- labels */
 
 const TASKS: Record<string, string> = {
-  text: 'Text', asr: 'Speech recognition (ASR)', tts: 'Text to speech (TTS)', captions: 'Captions',
+  text: 'Text', asr: 'Speech recognition (ASR)', image_upscale: 'Image upscaling', frame_interpolation: 'Frame interpolation', background_removal: 'Background removal', tts: 'Text to speech (TTS)', captions: 'Captions',
   transliteration: 'Transliteration', legacy_conversion: 'Legacy conversion', suggestions: 'Suggestions',
   spelling: 'Spelling', grammar: 'Grammar', translation: 'Translation',
 };

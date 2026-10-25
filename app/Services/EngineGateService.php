@@ -56,6 +56,16 @@ class EngineGateService
             'adequacy_4plus' => ['min', 0.90, '≥90% segments adequacy ≥4/5'],
             'fluency_4plus'  => ['min', 0.85, '≥85% segments fluency ≥4/5'],
         ],
+        // Vision models (Local models set). No vision suite yet, so these read "insufficient evidence" until one runs.
+        'image_upscale' => [
+            'psnr_db' => ['min', 24.0, 'PSNR ≥24 dB on the reference image set'],
+        ],
+        'frame_interpolation' => [
+            'psnr_db' => ['min', 28.0, 'Interpolated-frame PSNR ≥28 dB'],
+        ],
+        'background_removal' => [
+            'mask_iou' => ['min', 0.90, 'Mask IoU ≥0.90 on the portrait set'],
+        ],
         'text' => [
             'placeholder_preservation' => ['min', 1.0, '100% protected placeholders preserved'],
             'valid_first_attempt'      => ['min', 0.99, '≥99% valid structured output first attempt'],

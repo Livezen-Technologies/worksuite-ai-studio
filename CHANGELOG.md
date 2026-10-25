@@ -2,6 +2,11 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.13.0] — 2026-10-25 — The Local models set
+- Speech to text has a **Model** choice: Whisper Small · Sinhala (default), Tiny, Base, Small, Medium and Large v3 Turbo (multilingual, MIT). The speech service loads a size on first use and keeps at most one extra size in memory. API: `model=sinhala|tiny|base|small|medium|turbo`.
+- `spark engine:register-local` registers the set as Engine candidate packages with server-hashed artifacts: the five Whisper sizes, Real-ESRGAN x4plus (BSD-3-Clause, official v0.1.0 weights), RIFE 4.7–4.9 (MIT, ONNX) and MODNet (Apache-2.0, ONNX).
+- New Engine tasks for the vision models — Image upscaling, Frame interpolation, Background removal — with release gates (PSNR, mask IoU) that read "insufficient evidence" until a vision test suite runs. Runtimes `onnxruntime` and `pytorch` are accepted.
+
 ## [1.12.0] — 2026-10-25 — Spoken numbers become digits
 - Speech to text writes spoken Sinhala numbers as digits: "දහයක්" → "10ක්", "පනස් හය" → 56, "දෙදහස් පන්සියයක්" → "2500ක්", and joins "10 ක්" → "10ක්". The article එක / එකක් stays a word. Send `numerals=0` to keep numbers as words.
 - The number-accuracy benchmark now compares number values and no longer counts the article එක as a number. Whisper Sinhala's true figure is 37.5% (21 of 56), not 69.9%; the Engine evaluation was replaced with it. Passing the 90% gate needs fine-tuning on number-heavy speech — post-processing cannot fix mis-heard numbers.

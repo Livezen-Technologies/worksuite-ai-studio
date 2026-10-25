@@ -1,7 +1,8 @@
 """AI Studio speech-to-text service: Whisper Sinhala (faster-whisper, CPU int8), kept loaded in memory.
 
 Internal only (127.0.0.1). AI Studio's PHP API forwards uploads here.
-  POST /transcribe?language=si|en|mix|auto&words=1&fast=1   body = the audio or video file's bytes
+  POST /transcribe?language=si|en|mix|auto&model=sinhala|tiny|base|small|medium|turbo&words=1&fast=1   body = the audio or video file's bytes
+       model: Whisper Sinhala (default) or a multilingual Whisper size, loaded on first use (mix always uses Sinhala + Small).
        mix = Sinhala and English together: speech is cut at pauses, each phrase's language is identified by the
              multilingual model, Sinhala phrases go to Whisper Sinhala and English phrases to Whisper small.
        words=1  adds per-word timings (for caption splitting); fast=1 uses greedy decoding (live chunks).
@@ -29,6 +30,42 @@ multi = WhisperModel(MULTI_DIR, device='cpu', compute_type='int8', cpu_threads=T
 LID_DIR = os.environ.get('ASR_LID_MODEL', '/srv/sinhala-data/models/faster-whisper-base')
 lid = WhisperModel(LID_DIR, device='cpu', compute_type='int8', cpu_threads=THREADS) if os.path.isdir(LID_DIR) else multi
 RATE = 16000
+
+# Other Whisper sizes (multilingual, OpenAI MIT, CTranslate2 int8), loaded on first use. One of them stays in memory at a
+# time besides the always-loaded Sinhala/LID models, so the large ones never sit in RAM together.
+MODELS_DIR = os.environ.get('ASR_MODELS_DIR', '/srv/sinhala-data/models')
+CATALOG = {
+    'sinhala': {'label': 'Whisper Small · Sinhala', 'dir': MODEL_DIR, 'note': 'Fine-tuned for Sinhala (SinhaSpeech run11). Default.'},
+    'tiny':    {'label': 'Whisper Tiny', 'dir': 'faster-whisper-tiny', 'note': 'Fastest, lower accuracy.'},
+    'base':    {'label': 'Whisper Base', 'dir': 'faster-whisper-base', 'note': 'Fast; also used to detect the language in mixed speech.'},
+    'small':   {'label': 'Whisper Small', 'dir': 'faster-whisper-small', 'note': 'Good balance of speed and accuracy.'},
+    'medium':  {'label': 'Whisper Medium', 'dir': 'faster-whisper-medium', 'note': 'Higher accuracy, slower.'},
+    'turbo':   {'label': 'Whisper Large v3 Turbo', 'dir': 'faster-whisper-large-v3-turbo', 'note': 'Best multilingual accuracy; slow on this CPU, best for uploads.'},
+}
+_extra = {}  # name -> WhisperModel (at most one)
+
+
+def _dir(name):
+    d = CATALOG[name]['dir']
+    return d if os.path.isabs(d) else os.path.join(MODELS_DIR, d)
+
+
+def get_model(name):
+    if name == 'sinhala':
+        return model
+    if name == 'small' and multi is not None:
+        return multi
+    if name == 'base' and lid is not None and lid is not multi:
+        return lid
+    if name not in _extra:
+        _extra.clear()  # free the previous extra model first
+        _extra[name] = WhisperModel(_dir(name), device='cpu', compute_type='int8', cpu_threads=THREADS)
+    return _extra[name]
+
+
+def catalog():
+    return [{'value': k, 'label': v['label'], 'note': v['note'], 'installed': k == 'sinhala' or os.path.exists(os.path.join(_dir(k), 'model.bin'))}
+            for k, v in CATALOG.items()]
 
 
 def _rows(segs, words, offset=0.0, lang=None):
@@ -89,7 +126,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if urlparse(self.path).path == '/health':
-            return self._send(200, {'ok': True, 'model': MODEL_NAME, 'busy': lock.locked(), 'mixed': multi is not None})
+            return self._send(200, {'ok': True, 'model': MODEL_NAME, 'busy': lock.locked(), 'mixed': multi is not None, 'models': catalog()})
         self._send(404, {'error': 'not found'})
 
     def do_POST(self):
@@ -119,6 +156,11 @@ class Handler(BaseHTTPRequestHandler):
         lang = (q.get('language', ['si'])[0] or 'si').lower()
         words = q.get('words', ['0'])[0] == '1'
         fast = q.get('fast', ['0'])[0] == '1'
+        name = (q.get('model', ['sinhala'])[0] or 'sinhala').lower()
+        if name not in CATALOG:
+            return self._send(422, {'error': f'Unknown model {name}. Choose one of: ' + ', '.join(CATALOG)})
+        if not next(m for m in catalog() if m['value'] == name)['installed']:
+            return self._send(503, {'error': f"{CATALOG[name]['label']} is not installed on this server yet."})
         t0 = time.time()
         # ffmpeg decodes anything a browser or phone produces (WebM/Opus, M4A, MP3, OGG, WAV, FLAC) to 16 kHz mono.
         dec = subprocess.run(['ffmpeg', '-nostdin', '-loglevel', 'error', '-i', path, '-vn', '-f', 'f32le', '-ac', '1', '-ar', '16000', 'pipe:1'],
@@ -128,7 +170,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(422, {'error': 'Could not read audio from this file. Try WAV, MP3, M4A, OGG, WebM, FLAC, MP4 or MOV, at least a second long.'})
         peak = float(np.abs(pcm).max()) if pcm.size else 0.0
         if peak < 0.005:  # silence (or a muted / blocked microphone): nothing to transcribe, no model work
-            print(f"transcribe lang={lang} fast={int(fast)} audio={pcm.size / RATE:.1f}s peak={peak:.3f} silent", flush=True)
+            print(f"transcribe model={name} lang={lang} fast={int(fast)} audio={pcm.size / RATE:.1f}s peak={peak:.3f} silent", flush=True)
             return self._send(200, {'text': '', 'segments': [], 'language': lang, 'main_language': lang, 'language_probability': 0,
                                     'duration': round(pcm.size / RATE, 2), 'processing_seconds': round(time.time() - t0, 2), 'model': MODEL_NAME, 'silent': True})
         if lang == 'mix' and multi is None:
@@ -142,7 +184,8 @@ class Handler(BaseHTTPRequestHandler):
                     segments, detected, prob = transcribe_mixed(pcm, words, fast)
                     duration = pcm.size / RATE
                 else:
-                    segs, info = model.transcribe(pcm, language=None if lang == 'auto' else lang, beam_size=1 if fast else 5,
+                    m = get_model(name)
+                    segs, info = m.transcribe(pcm, language=None if lang == 'auto' else lang, beam_size=1 if fast else 5,
                                                   vad_filter=True, word_timestamps=words)  # VAD also for live chunks: silence otherwise yields '.' lines
                     segments = _rows(segs, words)
                     detected, prob, duration = info.language, info.language_probability, info.duration
@@ -152,11 +195,12 @@ class Handler(BaseHTTPRequestHandler):
             for sg in segments:
                 sg['text'] = numerals(sg['text'])
         text = ' '.join(s['text'] for s in segments).strip()
-        print(f"transcribe lang={lang} fast={int(fast)} audio={pcm.size / RATE:.1f}s peak={peak:.3f} queued={waited:.1f}s ran={time.time() - t_run:.1f}s chars={len(text)}", flush=True)
+        print(f"transcribe model={name} lang={lang} fast={int(fast)} audio={pcm.size / RATE:.1f}s peak={peak:.3f} queued={waited:.1f}s ran={time.time() - t_run:.1f}s chars={len(text)}", flush=True)
         self._send(200, {
             'text': text, 'segments': segments,
             'language': 'mix' if lang == 'mix' else detected, 'main_language': detected, 'language_probability': round(prob, 3),
-            'duration': round(duration, 2), 'processing_seconds': round(time.time() - t0, 2), 'model': MODEL_NAME,
+            'duration': round(duration, 2), 'processing_seconds': round(time.time() - t0, 2),
+            'model': MODEL_NAME if name == 'sinhala' or lang == 'mix' else CATALOG[name]['label'],
         })
 
 
