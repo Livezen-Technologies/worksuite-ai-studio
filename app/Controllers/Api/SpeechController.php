@@ -39,9 +39,9 @@ class SpeechController extends BaseApiController
             'mixed'     => (bool) ($j['mixed'] ?? false),
             'models'    => $j['models'] ?? [['value' => 'sinhala', 'label' => 'Whisper Small · Sinhala', 'note' => '', 'installed' => true]],
             'run_on'    => array_merge(
-                [['value' => 'auto', 'label' => 'Auto — a free GPU node, else this server', 'device' => null]],
-                array_map(fn ($n) => ['value' => 'node:' . $n['id'], 'label' => $n['name'] . ' — GPU', 'device' => $n['asr_device']], $this->gpuNodes()),
-                [['value' => 'server', 'label' => 'This server — CPU', 'device' => 'CPU']]
+                [['value' => 'auto', 'label' => 'Auto — fastest ready node, else this server', 'device' => null, 'ready' => true]],
+                $this->nodeChoices(),
+                [['value' => 'server', 'label' => 'This server — CPU', 'device' => 'CPU', 'ready' => true]]
             ),
             'languages' => array_values(array_filter([
                 ['value' => 'si', 'label' => 'Sinhala'],
@@ -52,12 +52,37 @@ class SpeechController extends BaseApiController
         ]);
     }
 
-    /** GPU nodes whose speech service reported healthy in the last 90 s (enabled, tunnel port known). */
+    /** Nodes (GPU first) whose speech service reported healthy in the last 90 s (enabled, tunnel port known). */
     private function gpuNodes(): array
     {
         return \Config\Database::connect()->table('servers')->select('id, name, asr_port, asr_device, asr_seen_at')
             ->where('deleted_at', null)->where('is_enabled', 1)->where('asr_enabled', 1)->where('asr_port IS NOT NULL')
-            ->where('asr_seen_at >=', date('Y-m-d H:i:s', time() - 90))->orderBy('id')->get()->getResultArray();
+            ->where('asr_seen_at >=', date('Y-m-d H:i:s', time() - 90))
+            ->orderBy('gpu_model IS NULL', '', false)->orderBy('gpu_count', 'DESC')->orderBy('id')->get()->getResultArray();
+    }
+
+    /** Every remote node, ready or not, with why it cannot take speech yet. */
+    private function nodeChoices(): array
+    {
+        $ready = array_column($this->gpuNodes(), null, 'id');
+        $rows  = \Config\Database::connect()->table('servers')
+            ->select('id, name, is_enabled, asr_enabled, tunnel_port, gpu_model, gpu_count, cpu_cores, agent_version, agent_seen_at')
+            ->where('deleted_at', null)->where('is_local', 0)->orderBy('name')->get()->getResultArray();
+        $out = [];
+        foreach ($rows as $n) {
+            $hw = $n['gpu_model'] ? (max(1, (int) $n['gpu_count']) > 1 ? $n['gpu_count'] . ' × ' : '') . trim(explode(',', $n['gpu_model'])[0]) : ($n['cpu_cores'] ? $n['cpu_cores'] . ' CPU cores' : 'CPU');
+            $why = match (true) {
+                isset($ready[$n['id']])                                        => null,
+                ! (int) $n['is_enabled']                                       => 'node disabled',
+                ! (int) $n['asr_enabled']                                      => 'speech off for this node',
+                empty($n['tunnel_port'])                                       => 'not connected by tunnel',
+                ! $n['agent_seen_at'] || $n['agent_seen_at'] < date('Y-m-d H:i:s', time() - 120) => 'training agent not running — install it on the Training page',
+                version_compare((string) $n['agent_version'], '1.3.0', '<')    => 'agent ' . $n['agent_version'] . ' — reinstall the agent to add speech',
+                default                                                        => 'setting up speech (first time takes a few minutes)',
+            };
+            $out[] = ['value' => 'node:' . $n['id'], 'label' => $n['name'] . ' — ' . $hw . ($why ? " ({$why})" : ''), 'device' => $ready[$n['id']]['asr_device'] ?? $hw, 'ready' => $why === null];
+        }
+        return $out;
     }
 
     /** Stream the upload to a speech service (never read into PHP memory). Returns [http code, body|false, curl error]. */

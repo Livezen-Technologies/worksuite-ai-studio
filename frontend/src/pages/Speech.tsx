@@ -11,7 +11,7 @@ import { LiveRecorder } from './Speech/LiveRecorder';
 import { CaptionEditor, CaptionPreview } from './Speech/CaptionTools';
 import { buildCues, clock, DEFAULT_RULES, toSrt, toVtt, type Cue, type CueRules, type Segment } from './Speech/cues';
 
-interface Status { available: boolean; model: string | null; busy: boolean; max_mb: number; languages: { value: string; label: string }[]; models?: { value: string; label: string; note: string; installed: boolean }[]; run_on?: { value: string; label: string; device: string | null }[] }
+interface Status { available: boolean; model: string | null; busy: boolean; max_mb: number; languages: { value: string; label: string }[]; models?: { value: string; label: string; note: string; installed: boolean }[]; run_on?: { value: string; label: string; device: string | null; ready?: boolean }[] }
 interface Result { text: string; segments: Segment[]; language: string; duration: number; processing_seconds: number; model: string; ran_on?: { name: string; device: string } }
 
 const ACCEPT = 'audio/*,video/*,.wav,.mp3,.m4a,.ogg,.oga,.opus,.webm,.flac,.aac,.mp4,.mov,.mkv';
@@ -186,8 +186,8 @@ export default function Speech() {
             )}
             {(status.data?.run_on?.length ?? 0) > 1 && (
               <Select label="Run on" wrapperClassName="mt-4" value={runOn} disabled={!!busy} onChange={(e) => setRunOn(e.target.value)}
-                options={(status.data?.run_on ?? []).map((t) => ({ value: t.value, label: t.device && t.value.startsWith('node:') ? `${t.label} (${t.device})` : t.label }))}
-                hint="A GPU node transcribes several times faster; Auto falls back to this server when no node is free." />
+                options={(status.data?.run_on ?? []).map((t) => ({ value: t.value, label: t.label, disabled: t.ready === false }))}
+                hint="A node transcribes faster than this server (a GPU node several times faster). Auto picks the fastest ready node and falls back to this server." />
             )}
           </div>
           {media && (

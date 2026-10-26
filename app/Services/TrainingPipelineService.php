@@ -213,12 +213,12 @@ class TrainingPipelineService
 
     /**
      * The node's GPU speech service: record what the agent reports, and tell it whether to run one and on which port.
-     * Wanted when the node has an NVIDIA GPU, a tunnel and speech switched on. Port = tunnel port + 1000.
+     * Wanted when the node has a tunnel and speech switched on — on its GPU when it has one, else on its CPU (a 64-core
+     * node still beats this 8-core server). Port = tunnel port + 1000.
      */
     private function speech(array $server, array $in): array
     {
-        $gpu  = TrainingRecipes::fits(['needs_gpu' => true], $server);
-        $want = $gpu && ! empty($server['tunnel_port']) && (int) ($server['asr_enabled'] ?? 1) === 1 && (int) ($server['is_enabled'] ?? 1) === 1;
+        $want = ! empty($server['tunnel_port']) && (int) ($server['asr_enabled'] ?? 1) === 1 && (int) ($server['is_enabled'] ?? 1) === 1;
         $port = $want ? (int) $server['tunnel_port'] + 1000 : null;
         $upd  = ['asr_port' => $port];
         if (($in['asr_state'] ?? '') === 'ok' && $want) {

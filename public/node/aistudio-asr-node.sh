@@ -5,7 +5,8 @@
 #                                               prints the state: ok | setup | error:<reason> | off
 #   aistudio-asr-node.sh stop                   stop the service and its tunnel
 #
-# Runs Whisper on the GPU (faster-whisper, CTranslate2 with NVIDIA's cuBLAS/cuDNN wheels) on 127.0.0.1:18096 and
+# Runs Whisper on the GPU (faster-whisper, CTranslate2 with NVIDIA's cuBLAS/cuDNN wheels) — or on all CPU cores of a
+# node without one — on 127.0.0.1:18096 and
 # forwards it to the Studio on <tunnel-port> over the node's existing tunnel key (~/.aistudio-node). The code and the
 # models come from the Studio with the agent token. Python: conda if the agent uses it, else python3-venv.
 set -uo pipefail
@@ -31,7 +32,8 @@ setup() {   # runs in the background; writes $S/ready or $S/error
       python3 -m venv "$S/env" || { echo "python3 -m venv failed" > "$S/error"; return; }
     fi
     "$PY" -m pip install -q --upgrade pip
-    "$PY" -m pip install -q "faster-whisper>=1.1,<2" numpy imageio-ffmpeg "nvidia-cublas-cu12" "nvidia-cudnn-cu12==9.*" \
+    GPU_LIBS=""; command -v nvidia-smi >/dev/null && GPU_LIBS="nvidia-cublas-cu12 nvidia-cudnn-cu12==9.*"
+    "$PY" -m pip install -q "faster-whisper>=1.1,<2" numpy imageio-ffmpeg $GPU_LIBS \
       || { rm -rf "$S/env"; echo "pip install failed: $(tail -n 2 "$S/setup.log" | tr '\n' ' ')" > "$S/error"; return; }
   fi
   sync_files || return
@@ -59,7 +61,8 @@ start_service() {
   PY="$S/env/bin/python"
   LIBS="$("$PY" -c 'import os, nvidia.cublas.lib, nvidia.cudnn.lib; print(os.path.dirname(nvidia.cublas.lib.__file__) + ":" + os.path.dirname(nvidia.cudnn.lib.__file__))' 2>/dev/null)"
   FF="$("$PY" -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())' 2>/dev/null)"
-  ( cd "$S/code" && LD_LIBRARY_PATH="${LIBS}:${LD_LIBRARY_PATH:-}" ASR_DEVICE=cuda ASR_PORT=$LOCAL_PORT ASR_THREADS=4 ASR_FFMPEG="${FF:-ffmpeg}" \
+  if command -v nvidia-smi >/dev/null; then DEV=cuda; THR=4; else DEV=cpu; THR="$(nproc)"; fi   # CPU nodes use all their cores
+  ( cd "$S/code" && LD_LIBRARY_PATH="${LIBS}:${LD_LIBRARY_PATH:-}" ASR_DEVICE=$DEV ASR_PORT=$LOCAL_PORT ASR_THREADS=$THR ASR_FFMPEG="${FF:-ffmpeg}" \
       ASR_MODELS_DIR="$S/models" ASR_MODEL="$S/models/whisper-small-sinhala-ct2-int8" \
       ASR_MULTI_MODEL="$S/models/faster-whisper-small" ASR_LID_MODEL="$S/models/faster-whisper-base" \
       setsid "$PY" asr_service.py >> "$S/service.log" 2>&1 < /dev/null & echo $! > "$S/service.pid" )
@@ -78,7 +81,6 @@ case "${1:-}" in
   stop) stop_all; state off ;;
   ensure)
     PORT="${2:-}"; [ -n "$PORT" ] || { stop_all; state off; exit 0; }
-    command -v nvidia-smi >/dev/null || { state "error:no NVIDIA GPU"; exit 0; }
     if [ ! -f "$S/ready" ]; then
       [ -f "$S/error" ] && [ $(( $(date +%s) - $(stat -c %Y "$S/error") )) -lt 900 ] && { state "error:$(head -c 200 "$S/error")"; exit 0; }
       if ! alive setup; then ( setup ) & echo $! > "$S/setup.pid"; fi

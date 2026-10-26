@@ -9,7 +9,7 @@
 # it is alive, stops the run if the job is cancelled, and reports how the process ended. Get the token on the Servers
 # page: ⋯ → Install training agent. Run as your normal user (not root); it asks for sudo once to keep running after logout.
 set -euo pipefail
-VERSION="1.3.0"
+VERSION="1.3.1"
 DIR="${HOME}/.aistudio-agent"
 SERVER="" TOKEN="" UNINSTALL=0 FORCE_VENV=0
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -60,10 +60,10 @@ printf 'SERVER=%s\nTOKEN=%s\nAISTUDIO_PYENV=%s\nAISTUDIO_CONDA=%s\n' "$SERVER" "
 cat > "$DIR/agent-loop.sh" <<'LOOP'
 #!/usr/bin/env bash
 # AI Studio training agent loop (installed by aistudio-agent.sh).
-VERSION="1.3.0"
+VERSION="1.3.1"
 DIR="${HOME}/.aistudio-agent"
 . "$DIR/agent.env"
-JOB="" PID="" EXITED="" CODE="" TAIL="" ASR_STATE="" ASR_DEVICE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+JOB="" PID="" EXITED="" CODE="" TAIL="" ASR_STATE="" ASR_DEVICE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"; ASR_DEVICE="${ASR_DEVICE:-$(nproc) CPU cores}"
 log() { echo "$(date '+%F %T') $*" >> "$DIR/agent.log"; }
 log "agent ${VERSION} started"
 trap '[ -n "$PID" ] && kill -TERM -- "-$PID" 2>/dev/null; exit 0' TERM INT

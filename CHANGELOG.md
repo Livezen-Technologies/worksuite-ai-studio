@@ -2,6 +2,10 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.18.1] — 2026-10-27 — Every node in Run on; CPU nodes run speech too
+- Speech → Run on lists every node. Ready ones can be chosen; the others say why not (training agent not running, agent too old — reinstall to add speech, setting up, disabled, no tunnel). Auto prefers GPU nodes (most GPUs first), then CPU nodes, then this server.
+- A node without a GPU runs the speech service on all its CPU cores (agent 1.3.1); the NVIDIA libraries are only installed where there is a GPU.
+
 ## [1.18.0] — 2026-10-27 — Speech to text on GPU nodes
 - A GPU node's training agent (1.3.0) also runs the speech service on its GPU: it sets up once in the background (faster-whisper with NVIDIA's cuBLAS/cuDNN wheels and a bundled ffmpeg, in conda or venv), downloads the speech code and the Sinhala models (run11, the numbers fine-tune, and Whisper base/small for mixed speech) with its agent token, keeps the service running and forwards it to the Studio on its tunnel port + 1000 with the node's existing tunnel key. New or changed models are picked up every 30 minutes. `/api/agent/asr/manifest` and `/api/agent/asr/file` serve only those files.
 - Speech page: **Run on** — Auto (a GPU node whose speech service reported healthy in the last 90 s, else this server), a specific GPU node, or this server's CPU. A node that is unreachable, lacks the chosen model or fails hands over to the next target. Each result says where it ran. The chat voice input uses Auto.
