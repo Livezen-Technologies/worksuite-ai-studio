@@ -2,6 +2,11 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.18.3] — 2026-10-27 — Node speech: agent no longer hangs; GPU self-test
+- The speech helper started the node's speech service inside a subshell that kept the agent's output pipe open, so the agent waited forever after starting it — heartbeats stopped and the node never showed as ready. Background processes are now fully detached, and each speech check has a 60 s limit.
+- Agent 1.3.2 refreshes the speech helper from the Studio every time it starts, and the helper syncs the speech code before (re)starting the service, so fixes reach nodes on a restart.
+- The speech service runs a GPU self-test at start; if CUDA cannot run (missing cuDNN/cuBLAS, driver mismatch) it logs why and serves on the node's CPU instead of failing every request. A GPU failure during a request returns 503 with the real error (it said "Could not read this audio: RuntimeError"), so the Studio moves on to the next target.
+
 ## [1.18.2] — 2026-10-27 — Lower speech latency
 - Models stay loaded: chosen models are kept in memory (the 3 most recently used, `ASR_KEEP`), and `ASR_PRELOAD` (default the numbers fine-tune) loads at start, so the first piece no longer waits several seconds for a model to load.
 - Parallel transcriptions: up to `ASR_PARALLEL` at once (2 on CPU, 3 on a GPU) with as many CTranslate2 workers per model, instead of one global lock where every user queued behind every other. "Busy" now means all slots are in use.

@@ -62,10 +62,15 @@ start_service() {
   LIBS="$("$PY" -c 'import os, nvidia.cublas.lib, nvidia.cudnn.lib; print(os.path.dirname(nvidia.cublas.lib.__file__) + ":" + os.path.dirname(nvidia.cudnn.lib.__file__))' 2>/dev/null)"
   FF="$("$PY" -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())' 2>/dev/null)"
   if command -v nvidia-smi >/dev/null; then DEV=cuda; THR=4; else DEV=cpu; THR="$(nproc)"; fi   # CPU nodes use all their cores
-  ( cd "$S/code" && LD_LIBRARY_PATH="${LIBS}:${LD_LIBRARY_PATH:-}" ASR_DEVICE=$DEV ASR_PORT=$LOCAL_PORT ASR_THREADS=$THR ASR_FFMPEG="${FF:-ffmpeg}" \
-      ASR_MODELS_DIR="$S/models" ASR_MODEL="$S/models/whisper-small-sinhala-ct2-int8" \
-      ASR_MULTI_MODEL="$S/models/faster-whisper-small" ASR_LID_MODEL="$S/models/faster-whisper-base" \
-      setsid "$PY" asr_service.py >> "$S/service.log" 2>&1 < /dev/null & echo $! > "$S/service.pid" )
+  # Started detached with every stream redirected: the agent reads this script's output, and a child that kept that
+  # pipe open made the agent wait forever (its heartbeats stopped).
+  cd "$S/code" || return 1
+  LD_LIBRARY_PATH="${LIBS}:${LD_LIBRARY_PATH:-}" ASR_DEVICE=$DEV ASR_PORT=$LOCAL_PORT ASR_THREADS=$THR ASR_FFMPEG="${FF:-ffmpeg}" \
+    ASR_MODELS_DIR="$S/models" ASR_MODEL="$S/models/whisper-small-sinhala-ct2-int8" \
+    ASR_MULTI_MODEL="$S/models/faster-whisper-small" ASR_LID_MODEL="$S/models/faster-whisper-base" \
+    setsid "$PY" asr_service.py >> "$S/service.log" 2>&1 < /dev/null &
+  echo $! > "$S/service.pid"
+  cd - >/dev/null
 }
 
 start_tunnel() {   # reuse the node tunnel's key, host and user; listen on the Studio at <tunnel-port>
@@ -83,13 +88,16 @@ case "${1:-}" in
     PORT="${2:-}"; [ -n "$PORT" ] || { stop_all; state off; exit 0; }
     if [ ! -f "$S/ready" ]; then
       [ -f "$S/error" ] && [ $(( $(date +%s) - $(stat -c %Y "$S/error") )) -lt 900 ] && { state "error:$(head -c 200 "$S/error")"; exit 0; }
-      if ! alive setup; then ( setup ) & echo $! > "$S/setup.pid"; fi
+      if ! alive setup; then ( setup ) >/dev/null 2>&1 < /dev/null & echo $! > "$S/setup.pid"; fi
       state setup; exit 0
     fi
     # new or changed models (e.g. a fine-tune) are picked up every 30 minutes
-    [ $(( $(date +%s) - $(cat "$S/synced" 2>/dev/null || echo 0) )) -gt 1800 ] && ! alive setup && ( sync_files ) &
-    alive service || start_service
+    [ $(( $(date +%s) - $(cat "$S/synced" 2>/dev/null || echo 0) )) -gt 1800 ] && ! alive setup && { ( sync_files ) >/dev/null 2>&1 < /dev/null & }
+    alive service || { sync_files >/dev/null 2>&1; start_service; }   # a (re)start always runs the current code
     alive tunnel || start_tunnel "$PORT" || { state "error:$(head -c 200 "$S/error")"; exit 0; }
-    if curl -fsS -m 5 "http://127.0.0.1:$LOCAL_PORT/health" >/dev/null 2>&1; then state ok; else state setup; fi ;;
+    H="$(curl -fsS -m 5 "http://127.0.0.1:$LOCAL_PORT/health" 2>/dev/null)"
+    if [ -z "$H" ]; then state setup
+    elif printf '%s' "$H" | grep -q '"device": "cpu"' && command -v nvidia-smi >/dev/null; then state "ok"   # GPU failed its self-test: serving on CPU
+    else state ok; fi ;;
   *) echo "usage: $0 ensure <port> | stop" >&2; exit 2 ;;
 esac

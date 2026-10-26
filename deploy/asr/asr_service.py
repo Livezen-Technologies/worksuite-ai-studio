@@ -219,9 +219,12 @@ class Handler(BaseHTTPRequestHandler):
                     segments = _rows(segs, words)
                     detected, prob, duration = info.language, info.language_probability, info.duration
                 with _active_lock: _active[0] -= 1
-        except Exception as e:  # undecodable or empty audio
+        except Exception as e:  # undecodable audio — or a model/device failure, which must say so
             with _active_lock: _active[0] = max(0, _active[0] - 1)
-            return self._send(422, {'error': f'Could not read this audio: {type(e).__name__}. Try WAV, MP3, M4A, OGG, WebM or FLAC.'})
+            print(f'transcribe failed: {type(e).__name__}: {e}', flush=True)
+            if isinstance(e, RuntimeError) and DEVICE == 'cuda':
+                return self._send(503, {'error': f'GPU speech failed on this node: {str(e)[:300]}'})
+            return self._send(422, {'error': f'Could not read this audio ({type(e).__name__}: {str(e)[:200]}). Try WAV, MP3, M4A, OGG, WebM or FLAC.'})
         if q.get('numerals', ['1'])[0] == '1':  # on by default; numerals=0 keeps numbers as spoken words
             for sg in segments:
                 sg['text'] = numerals(sg['text'])
@@ -235,6 +238,26 @@ class Handler(BaseHTTPRequestHandler):
         })
 
 
+def _gpu_selftest():
+    """On a GPU, transcribe one second of noise at start. If CUDA cannot run (missing cuDNN/cuBLAS, driver mismatch), log
+    why and reload every model on the CPU, so the node still serves (slower) instead of failing every request."""
+    global DEVICE, COMPUTE, model, multi, lid
+    if DEVICE != 'cuda':
+        return
+    try:
+        segs, _ = model.transcribe((np.random.default_rng(0).normal(0, 0.1, RATE)).astype(np.float32), language='si', beam_size=1)
+        list(segs)
+        print('GPU self-test passed', flush=True)
+    except Exception as e:
+        print(f'GPU self-test failed, serving on CPU instead: {type(e).__name__}: {e}', flush=True)
+        DEVICE, COMPUTE = 'cpu', 'int8'
+        model = WhisperModel(MODEL_DIR, device='cpu', compute_type='int8', cpu_threads=THREADS, num_workers=PARALLEL)
+        multi = WhisperModel(MULTI_DIR, device='cpu', compute_type='int8', cpu_threads=THREADS, num_workers=PARALLEL) if os.path.isdir(MULTI_DIR) else None
+        lid = WhisperModel(LID_DIR, device='cpu', compute_type='int8', cpu_threads=THREADS, num_workers=PARALLEL) if os.path.isdir(LID_DIR) else multi
+        _extra.clear()
+
+
 if __name__ == '__main__':
+    _gpu_selftest()
     threading.Thread(target=_preload, daemon=True).start()
     ThreadingHTTPServer(('127.0.0.1', int(os.environ.get('ASR_PORT', '8096'))), Handler).serve_forever()
