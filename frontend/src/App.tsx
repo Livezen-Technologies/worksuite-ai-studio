@@ -9,6 +9,7 @@ import Login from './pages/Login';
 const pages = {
   '/': lazy(() => import('./pages/Dashboard')),
   '/servers': lazy(() => import('./pages/Servers')),
+  '/node-app': lazy(() => import('./pages/NodeApp')),
   '/models': lazy(() => import('./pages/Models')),
   '/monitoring': lazy(() => import('./pages/Monitoring')),
   '/queue': lazy(() => import('./pages/Queue')),
@@ -36,7 +37,7 @@ const pages = {
 } as const;
 
 const perms: Record<keyof typeof pages, string> = {
-  '/': 'dashboard.view', '/servers': 'servers.view', '/models': 'models.view', '/monitoring': 'monitoring.view', '/queue': 'queues.view',
+  '/': 'dashboard.view', '/servers': 'servers.view', '/node-app': 'servers.view', '/models': 'models.view', '/monitoring': 'monitoring.view', '/queue': 'queues.view',
   '/studio': 'models.view', '/datasets': 'models.view', '/training': 'models.view', '/engine': 'engine.view', '/engine/evaluations': 'engine.view', '/engine/approvals': 'engine.view', '/engine/packages': 'engine.view', '/engine/bindings': 'engine.view',
   '/chat': 'chat.use', '/speech': 'chat.use', '/prompts': 'prompts.view',
   '/knowledge': 'knowledge.view', '/agents': 'agents.view', '/api-keys': 'apikeys.view', '/api-logs': 'logs.view', '/analytics': 'analytics.view',
