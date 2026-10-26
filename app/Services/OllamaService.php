@@ -251,11 +251,13 @@ class OllamaService
         $start = microtime(true);
         try {
             $version = $this->version();
+            // Latency is one round trip; summing all three calls marks distant (tunnelled) nodes as degraded.
+            $latency = (int) round((microtime(true) - $start) * 1000);
             $tags    = $this->tags();
             $ps      = $this->ps();
             return [
                 'ok'             => true,
-                'latency_ms'     => (int) round((microtime(true) - $start) * 1000),
+                'latency_ms'     => $latency,
                 'version'        => $version['version'] ?? null,
                 'models_total'   => count($tags['models'] ?? []),
                 'models_running' => count($ps['models'] ?? []),

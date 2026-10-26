@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import {
-  ArrowPathIcon, HeartIcon, PencilSquareIcon, PlusIcon, ServerStackIcon, TrashIcon, EyeIcon,
+  ArrowPathIcon, CommandLineIcon, HeartIcon, PencilSquareIcon, PlusIcon, ServerStackIcon, TrashIcon, EyeIcon,
   PowerIcon, ArrowUpTrayIcon, ArrowPathRoundedSquareIcon,
 } from '@heroicons/react/24/outline';
 import {
@@ -15,6 +15,7 @@ import { useAuth } from '../lib/auth';
 import { HealthScore, KINDS, type ControlAction, type Server } from './Servers/shared';
 import ServerForm from './Servers/ServerForm';
 import ServerDetail from './Servers/ServerDetail';
+import EnrolNode from './Servers/EnrolNode';
 
 export default function Servers() {
   const qc = useQueryClient();
@@ -27,6 +28,7 @@ export default function Servers() {
   const [editing, setEditing] = useState<Server | null | undefined>(undefined); // undefined = closed, null = new
   const [removing, setRemoving] = useState<Server | null>(null);
   const [control, setControl] = useState<{ server: Server; action: ControlAction } | null>(null);
+  const [enrolling, setEnrolling] = useState(false);
 
   const list = useQuery({ queryKey: ['servers'], queryFn: () => get<Server[]>('/servers') });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['servers'] });
@@ -126,6 +128,7 @@ export default function Servers() {
         ) : undefined}
         actions={<>
           <Button icon={ArrowPathIcon} loading={list.isRefetching} onClick={() => list.refetch()}>Refresh</Button>
+          {manage && <Button icon={CommandLineIcon} onClick={() => setEnrolling(true)}>Connect a node</Button>}
           {manage && <Button variant="primary" icon={PlusIcon} onClick={() => setEditing(null)}>Add server</Button>}
         </>}
       />
@@ -150,6 +153,7 @@ export default function Servers() {
         />
       </Card>
 
+      {enrolling && <EnrolNode onClose={() => setEnrolling(false)} />}
       {editing !== undefined && <ServerForm server={editing} onClose={() => setEditing(undefined)} />}
       {openId && (
         <ServerDetail

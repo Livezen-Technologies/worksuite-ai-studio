@@ -9,6 +9,9 @@ $routes->get('/', 'Home::index');
 // Lightweight unauthenticated health probe for the control plane itself.
 $routes->get('api/ping', 'Api\HealthController::ping');
 
+// Node enrolment by the aistudio-node tool; the one-time token in the body is the credential.
+$routes->post('api/nodes/enrol', 'Api\NodesController::enrol');
+
 /*
  * Auth (guest entry points + token-protected profile/logout).
  */
@@ -29,6 +32,7 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     // --- Server Manager (Phase 2) ---
     $routes->get('servers', 'ServersController::index');
     $routes->post('servers', 'ServersController::create');
+    $routes->post('servers/enrolments', 'NodesController::issue');
     $routes->get('servers/(:num)', 'ServersController::show/$1');
     $routes->put('servers/(:num)', 'ServersController::update/$1');
     $routes->delete('servers/(:num)', 'ServersController::delete/$1');

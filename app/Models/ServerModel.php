@@ -15,6 +15,7 @@ class ServerModel extends Model
         'name', 'description', 'kind', 'hostname', 'ip_address', 'api_url', 'port', 'auth_token',
         'gpu_model', 'cuda_version', 'cpu_cores', 'ram_gb', 'storage_gb', 'os',
         'ollama_version', 'is_local', 'status', 'health_score', 'last_heartbeat_at',
+        'tunnel_port', 'ssh_public_key', 'ssh_fingerprint', 'enrolled_at',
     ];
 
     protected $validationRules = [
@@ -26,7 +27,7 @@ class ServerModel extends Model
     public function publicRow(array $row): array
     {
         $row['has_token'] = ! empty($row['auth_token'] ?? null);
-        unset($row['auth_token'], $row['deleted_at']);
+        unset($row['auth_token'], $row['deleted_at'], $row['ssh_public_key']);
         return $row;
     }
 }
