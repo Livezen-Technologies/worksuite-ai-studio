@@ -1,0 +1,1 @@
+const e={unplaced:"Not placed",pending:"Waiting",running:"Running",completed:"Completed",failed:"Failed",partial:"Partly failed",cancelled:"Cancelled"},n={pending:"Pending",assigned:"Assigned",running:"Running",completed:"Completed",failed:"Failed",cancelled:"Cancelled"};export{n as N,e as P};
