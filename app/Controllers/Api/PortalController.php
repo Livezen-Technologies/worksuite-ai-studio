@@ -83,7 +83,7 @@ class PortalController extends BaseApiController
         $uid = $this->userId();
         $db  = \Config\Database::connect();
         return $this->ok([
-            'allocations' => $this->svc()->allocations($uid),
+            'allocations' => $this->myAllocations(),
             'jobs'        => $this->myJobs(10),
             'counts'      => [
                 'datasets' => $db->table('datasets')->where('created_by', $uid)->countAllResults(),
@@ -97,10 +97,34 @@ class PortalController extends BaseApiController
     {
         if ($r = $this->requirePermission('portal.use')) return $r;
         $rows = array_values(array_filter(
-            $this->svc()->allocations($this->userId()),
+            $this->myAllocations(),
             fn ($a) => ! $a['expired'] && (int) $a['allow_training'] === 1
         ));
         return $this->ok($rows);
+    }
+
+    /**
+     * The user's node allocations. An administrator (compute.manage) needs none: every node open for training is
+     * offered at full capacity, and their placements are saved as admin overrides.
+     */
+    private function myAllocations(): array
+    {
+        $rows = $this->svc()->allocations($this->userId());
+        if (! $this->can('compute.manage')) return $rows;
+        $have = array_column($rows, 'server_id');
+        foreach ($this->svc()->trainingNodes() as $n) {
+            if (in_array($n['id'], $have) || ! (int) $n['allow_training'] || ! (int) ($n['is_enabled'] ?? 1)) continue;
+            $cpu = (int) $n['cpu_cores']; $gpus = max((int) $n['gpu_count'], $n['gpu_model'] ? 1 : 0);
+            $rows[] = [
+                'id' => null, 'user_id' => $this->userId(), 'server_id' => (int) $n['id'], 'server_name' => $n['name'],
+                'server_status' => $n['status'], 'server_cpu_cores' => $cpu, 'server_gpu_count' => $gpus, 'gpu_model' => $n['gpu_model'],
+                'gpu_vram_gb' => $n['gpu_vram_gb'], 'allow_training' => 1, 'max_cpu_cores' => $cpu, 'max_gpus' => $gpus,
+                'max_concurrent_jobs' => 99, 'used_cpu_cores' => (int) $n['used_cpu_cores'], 'used_gpus' => (int) $n['used_gpus'],
+                'active_jobs' => (int) $n['active_jobs'], 'free_cpu_cores' => max(0, $cpu - (int) $n['used_cpu_cores']),
+                'free_gpus' => max(0, $gpus - (int) $n['used_gpus']), 'expires_at' => null, 'expired' => false, 'admin' => true,
+            ];
+        }
+        return $rows;
     }
 
     // ---- datasets ----
@@ -211,7 +235,8 @@ class PortalController extends BaseApiController
         if ($dsId && ! $this->visibleDataset($dsId)) return $this->failure('Dataset not found.', 404);
 
         $nodes    = $this->nodesInput($in['nodes'] ?? []);
-        $problems = $this->svc()->check($this->userId(), $nodes);
+        $admin    = $this->can('compute.manage');                       // administrators place without an allocation
+        $problems = $admin ? [] : $this->svc()->check($this->userId(), $nodes);
         if ($problems) return $this->failure(implode(' ', $problems), 409, ['problems' => $problems]);
 
         $db = \Config\Database::connect();
@@ -225,7 +250,7 @@ class PortalController extends BaseApiController
             'notes'       => $in['notes'] ?? null,
             'created_by'  => $this->userId(),
         ], true);
-        $this->svc()->place((int) $id, $nodes, $this->userId(), false);
+        $this->svc()->place((int) $id, $nodes, $this->userId(), $admin);
         $db->transComplete();
         return $this->jobShow($id)->setStatusCode(201);
     }
@@ -239,9 +264,10 @@ class PortalController extends BaseApiController
             return $this->failure('Placement cannot change once the job has started.', 409);
         }
         $nodes    = $this->nodesInput($this->input()['nodes'] ?? []);
-        $problems = $this->svc()->check($this->userId(), $nodes, (int) $id);
+        $admin    = $this->can('compute.manage');
+        $problems = $admin ? [] : $this->svc()->check($this->userId(), $nodes, (int) $id);
         if ($problems) return $this->failure(implode(' ', $problems), 409, ['problems' => $problems]);
-        $this->svc()->place((int) $id, $nodes, $this->userId(), false);
+        $this->svc()->place((int) $id, $nodes, $this->userId(), $admin);
         return $this->jobShow($id);
     }
 

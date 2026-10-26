@@ -2,6 +2,9 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.17.1] — 2026-10-26 — Administrators can place jobs without an allocation
+- In My jobs → Placement, an administrator (compute.manage) is offered every node that is enabled and open for training, at full capacity, and the placement is saved as an admin override. Before, the dialog said "You have no node allocations yet" and nothing could be chosen unless an allocation had been made to the admin first. Regular users still see only their allocations.
+
 ## [1.17.0] — 2026-10-26 — Automated training: pipelines and node training agents
 - **Training pipelines** (Training page): a recipe + its data + a node (or any capable node). With **Automatic** on, the every-minute scheduler queues a run when the data changes (dataset rows, rights, freeze/split, or the prepared files) and once at the start; **Run now** starts one by hand. One run per pipeline at a time.
 - **Preparation and validation on the server** before anything leaves: dataset rights must be approved and the category trainable; rows are cleaned (empty, oversized, duplicate rows skipped), split (frozen: its train/dev splits, the locked test split stays; otherwise a stable 95/5), checked against a minimum row count and staged with the recipe's code, requirements and settings. A failure stops the job here with the reason.
