@@ -23,6 +23,26 @@ $routes->group('api/auth', ['namespace' => 'App\Controllers\Api'], static functi
     $routes->post('refresh', 'AuthController::refresh');
     $routes->get('profile', 'AuthController::profile', ['filter' => 'jwt']);
     $routes->post('logout', 'AuthController::logout', ['filter' => 'jwt']);
+    $routes->post('mfa', 'AuthController::mfa');
+    $routes->post('mfa/setup', 'AuthController::mfaSetup');
+    $routes->post('mfa/setup/confirm', 'AuthController::mfaSetupConfirm');
+    $routes->post('passkey/options', 'AuthController::passkeyOptions');
+    $routes->post('passkey', 'AuthController::passkey');
+});
+
+/*
+ * The signed-in user's own passkeys and two-factor settings (Account -> Security).
+ */
+$routes->group('api/account/security', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'], static function ($routes) {
+    $routes->get('/', 'SecurityController::index');
+    $routes->post('totp/setup', 'SecurityController::totpSetup');
+    $routes->post('totp/enable', 'SecurityController::totpEnable');
+    $routes->post('totp/disable', 'SecurityController::totpDisable');
+    $routes->post('recovery-codes', 'SecurityController::recoveryCodes');
+    $routes->post('passkeys/options', 'SecurityController::passkeyOptions');
+    $routes->post('passkeys', 'SecurityController::passkeyCreate');
+    $routes->put('passkeys/(:num)', 'SecurityController::passkeyRename/$1');
+    $routes->delete('passkeys/(:num)', 'SecurityController::passkeyDelete/$1');
 });
 
 /*

@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircleIcon, NoSymbolIcon, PencilSquareIcon, PlusIcon, TrashIcon, UsersIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, CheckCircleIcon, NoSymbolIcon, PencilSquareIcon, PlusIcon, TrashIcon, UsersIcon } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, EmptyState, FormModal, Input, PageHeader, SearchInput, Select,
-  Toolbar, useToast, type Column,
+  Toggle, Toolbar, useToast, type Column,
 } from '../components/ui';
 import { ApiError, del, get, post, put } from '../lib/api';
 import { ago, dateTime } from '../lib/format';
@@ -19,11 +19,13 @@ interface UserRow {
   role_label?: string | null;
   last_login_at?: string | null;
   created_at?: string | null;
+  two_factor_required?: number | string | boolean | null;
+  totp_enabled_at?: string | null;
 }
 interface Role { id: number; name: string; label: string }
 
-interface FormState { name: string; email: string; password: string; role_id: string; status: string }
-const blank: FormState = { name: '', email: '', password: '', role_id: '', status: 'active' };
+interface FormState { name: string; email: string; password: string; role_id: string; status: string; require2fa: boolean }
+const blank: FormState = { name: '', email: '', password: '', role_id: '', status: 'active', require2fa: false };
 const STATUS_OPTIONS = [{ value: 'active', label: 'Active' }, { value: 'suspended', label: 'Suspended' }];
 
 export default function Users() {
@@ -44,6 +46,7 @@ export default function Users() {
   const [form, setForm] = useState<FormState>(blank);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [deleting, setDeleting] = useState<UserRow | null>(null);
+  const [resetting, setResetting] = useState<UserRow | null>(null);
 
   // Role options come from the roles endpoint; without roles.view, fall back to the roles already on users.
   const roleOptions = useMemo(() => {
@@ -68,7 +71,7 @@ export default function Users() {
 
   const save = useMutation({
     mutationFn: (f: FormState) => {
-      const body: Record<string, unknown> = { name: f.name.trim(), email: f.email.trim(), role_id: Number(f.role_id), status: f.status };
+      const body: Record<string, unknown> = { name: f.name.trim(), email: f.email.trim(), role_id: Number(f.role_id), status: f.status, two_factor_required: f.require2fa };
       if (f.password) body.password = f.password;
       return editing ? put<UserRow>(`/users/${editing.id}`, body) : post<UserRow>('/users', body);
     },
@@ -89,6 +92,12 @@ export default function Users() {
     onError: (e) => toast.error(e),
   });
 
+  const resetSignIn = useMutation({
+    mutationFn: (u: UserRow) => put(`/users/${u.id}`, { reset_sign_in_methods: true }),
+    onSuccess: () => { toast.success('Two-factor and passkeys reset', 'They can sign in with their password and set up again.'); setResetting(null); invalidate(); },
+    onError: (e) => toast.error(e),
+  });
+
   const remove = useMutation({
     mutationFn: (u: UserRow) => del(`/users/${u.id}`),
     onSuccess: () => { toast.success('User deleted'); setDeleting(null); invalidate(); },
@@ -103,7 +112,7 @@ export default function Users() {
   };
   const openEdit = (u: UserRow) => {
     setEditing(u);
-    setForm({ name: u.name, email: u.email, password: '', role_id: u.role_id ? String(u.role_id) : '', status: u.status || 'active' });
+    setForm({ name: u.name, email: u.email, password: '', role_id: u.role_id ? String(u.role_id) : '', status: u.status || 'active', require2fa: Boolean(Number(u.two_factor_required)) });
     setErrors({});
     setFormOpen(true);
   };
@@ -118,7 +127,7 @@ export default function Users() {
     if (!Object.keys(errs).length) save.mutate(form);
   };
 
-  const set = (k: keyof FormState) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const set = (k: Exclude<keyof FormState, 'require2fa'>) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
   const isMe = (u: UserRow | null) => !!u && me?.id === u.id;
 
   const columns: Column<UserRow>[] = [
@@ -145,6 +154,14 @@ export default function Users() {
       key: 'status',
       header: 'Status',
       cell: (u) => <Badge tone={u.status === 'active' ? 'green' : 'red'} dot>{u.status === 'active' ? 'Active' : 'Suspended'}</Badge>,
+    },
+    {
+      key: '2fa',
+      header: '2FA',
+      hideBelow: 'md',
+      cell: (u) => u.totp_enabled_at
+        ? <Badge tone="green">On</Badge>
+        : Number(u.two_factor_required) ? <Badge tone="amber">Required</Badge> : <span className="text-sm text-slate-400">Off</span>,
     },
     {
       key: 'login',
@@ -175,6 +192,7 @@ export default function Users() {
             u.status === 'active'
               ? { label: 'Suspend', icon: NoSymbolIcon, onClick: () => setStatus.mutate({ u, status: 'suspended' }), disabled: isMe(u) || setStatus.isPending }
               : { label: 'Reactivate', icon: CheckCircleIcon, onClick: () => setStatus.mutate({ u, status: 'active' }), disabled: setStatus.isPending },
+            { label: 'Reset 2FA & passkeys', icon: ArrowPathIcon, onClick: () => setResetting(u) },
             { label: 'Delete', icon: TrashIcon, danger: true, onClick: () => setDeleting(u), disabled: isMe(u) },
           ]}
         />
@@ -262,7 +280,23 @@ export default function Users() {
             error={errors.status}
           />
         </div>
+        <Toggle
+          checked={form.require2fa}
+          onChange={(v) => setForm((f) => ({ ...f, require2fa: v }))}
+          label="Require two-factor authentication"
+          description="They must set up an authenticator app (or use a passkey) to sign in."
+        />
       </FormModal>
+
+      <ConfirmDialog
+        open={!!resetting}
+        onClose={() => setResetting(null)}
+        onConfirm={() => resetting && resetSignIn.mutate(resetting)}
+        title="Reset two-factor and passkeys"
+        message={`${resetting?.name} will lose their authenticator, recovery codes and passkeys, and sign in with just their password until they set them up again. Use this when they've lost their phone.`}
+        confirmLabel="Reset"
+        busy={resetSignIn.isPending}
+      />
 
       <ConfirmDialog
         open={!!deleting}

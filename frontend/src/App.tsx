@@ -6,6 +6,8 @@ import { AppShell } from './layout/AppShell';
 import { Button, EmptyState, Spinner } from './components/ui';
 import Login from './pages/Login';
 
+const Account = lazy(() => import('./pages/Account'));
+
 const pages = {
   '/': lazy(() => import('./pages/Dashboard')),
   '/servers': lazy(() => import('./pages/Servers')),
@@ -107,6 +109,7 @@ export function App() {
       <Route path="/dashboard" element={<Navigate to="/" replace />} />
       <Route element={<RequireAuth><AppShell /></RequireAuth>}>
         <Route path="/servers/:id" element={<ServerDeepLink />} />
+        <Route path="/account" element={<PageBoundary><Suspense fallback={<PageLoading />}><Account /></Suspense></PageBoundary>} />
         {(Object.keys(pages) as (keyof typeof pages)[]).map((path) => {
           const Page = pages[path];
           return <Route key={path} path={path === '/' ? undefined : `${path}/*`} index={path === '/'} element={<Guard perm={perms[path]}><Page /></Guard>} />;

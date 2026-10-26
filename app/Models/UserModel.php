@@ -13,6 +13,7 @@ class UserModel extends Model
     protected $useTimestamps    = true;
     protected $allowedFields    = [
         'name', 'email', 'password_hash', 'role_id', 'avatar', 'status', 'last_login_at',
+        'totp_secret', 'totp_enabled_at', 'totp_last_step', 'two_factor_required',
     ];
 
     protected $validationRules = [
@@ -24,6 +25,12 @@ class UserModel extends Model
     public function findByEmail(string $email): ?array
     {
         return $this->where('email', $email)->where('status', 'active')->first();
+    }
+
+    /** Active user by id (raw row, includes 2FA columns). */
+    public function findActive(int $id): ?array
+    {
+        return $id > 0 ? $this->where('id', $id)->where('status', 'active')->first() : null;
     }
 
     /**
@@ -40,7 +47,9 @@ class UserModel extends Model
         if (! $user) {
             return null;
         }
-        unset($user['password_hash']);
+        unset($user['password_hash'], $user['totp_secret'], $user['totp_last_step']);
+        $user['two_factor_enabled']  = ! empty($user['totp_enabled_at']);
+        $user['two_factor_required'] = (bool) ($user['two_factor_required'] ?? false);
         $user['permissions'] = $this->permissionsForRole((int) ($user['role_id'] ?? 0));
         return $user;
     }

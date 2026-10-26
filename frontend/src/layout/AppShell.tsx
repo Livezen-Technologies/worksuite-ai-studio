@@ -5,7 +5,7 @@ import {
   Menu, MenuButton, MenuItem, MenuItems, Popover, PopoverButton, PopoverPanel, TransitionChild,
 } from '@headlessui/react';
 import {
-  ArrowRightStartOnRectangleIcon, Bars3Icon, BellIcon, ComputerDesktopIcon, MagnifyingGlassIcon, MoonIcon, SunIcon, UserCircleIcon, XMarkIcon,
+  ArrowRightStartOnRectangleIcon, Bars3Icon, BellIcon, ComputerDesktopIcon, FingerPrintIcon, MagnifyingGlassIcon, MoonIcon, SunIcon, UserCircleIcon, XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { ChevronDownIcon, ChevronRightIcon, HomeIcon } from '@heroicons/react/20/solid';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -210,6 +210,11 @@ function UserMenu() {
           <p className="truncate text-xs text-slate-500 dark:text-slate-400">{user?.email}</p>
           {(user?.role_label || user?.role) && <p className="mt-1 text-xs text-brand-600 dark:text-blue-400">{String(user?.role_label ?? user?.role)}</p>}
         </div>
+        <MenuItem>
+          <Link to="/account" className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 data-focus:bg-slate-50 dark:text-slate-200 dark:data-focus:bg-white/5">
+            <FingerPrintIcon aria-hidden className="size-4 text-slate-400" /> Account security
+          </Link>
+        </MenuItem>
         <MenuItem>
           <Link to="/settings" className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 data-focus:bg-slate-50 dark:text-slate-200 dark:data-focus:bg-white/5">
             <UserCircleIcon aria-hidden className="size-4 text-slate-400" /> Settings

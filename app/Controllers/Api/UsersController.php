@@ -21,7 +21,7 @@ class UsersController extends BaseApiController
     {
         if ($r = $this->requirePermission('users.view')) return $r;
         $rows = $this->users()->builder()
-            ->select('users.id, users.name, users.email, users.status, users.role_id, users.avatar, users.last_login_at, users.created_at, roles.name AS role, roles.label AS role_label')
+            ->select('users.id, users.name, users.email, users.status, users.role_id, users.avatar, users.last_login_at, users.created_at, users.two_factor_required, users.totp_enabled_at, roles.name AS role, roles.label AS role_label')
             ->join('roles', 'roles.id = users.role_id', 'left')
             ->where('users.deleted_at', null)
             ->orderBy('users.id', 'ASC')->get()->getResultArray();
@@ -46,6 +46,7 @@ class UsersController extends BaseApiController
             'name' => $in['name'], 'email' => strtolower(trim($in['email'])),
             'password_hash' => $m->hash($in['password']),
             'role_id' => (int) $in['role_id'], 'status' => $in['status'] ?? 'active',
+            'two_factor_required' => ! empty($in['two_factor_required']) ? 1 : 0,
         ], true);
         return $this->ok($this->one($id), 'User created.', 201);
     }
@@ -72,7 +73,13 @@ class UsersController extends BaseApiController
             if (strlen($in['password']) < 8) return $this->failure('Password must be at least 8 characters.', 422);
             $data['password_hash'] = $m->hash($in['password']);
         }
-        $m->update((int) $id, $data);
+        if (isset($in['two_factor_required'])) $data['two_factor_required'] = $in['two_factor_required'] ? 1 : 0;
+        if ($data) $m->update((int) $id, $data);
+        // Lost phone: clear their authenticator and passkeys so they can sign in with a password and set up again.
+        if (! empty($in['reset_sign_in_methods'])) {
+            (new \App\Services\TotpService())->disable((int) $id);
+            \Config\Database::connect()->table('user_passkeys')->where('user_id', (int) $id)->delete();
+        }
         return $this->ok($this->one((int) $id), 'User updated.');
     }
 
@@ -99,7 +106,7 @@ class UsersController extends BaseApiController
     private function one(int $id): array
     {
         return $this->users()->builder()
-            ->select('users.id, users.name, users.email, users.status, users.role_id, users.last_login_at, roles.name AS role, roles.label AS role_label')
+            ->select('users.id, users.name, users.email, users.status, users.role_id, users.last_login_at, users.two_factor_required, users.totp_enabled_at, roles.name AS role, roles.label AS role_label')
             ->join('roles', 'roles.id = users.role_id', 'left')
             ->where('users.id', $id)->get()->getRowArray() ?? [];
     }

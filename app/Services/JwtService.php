@@ -45,6 +45,26 @@ class JwtService
         ]);
     }
 
+    /**
+     * Short-lived token for one sign-in step (type = $purpose): a pending 2FA challenge, a TOTP secret
+     * awaiting confirmation, or a WebAuthn challenge. $claims are merged into the payload.
+     */
+    public function generateStepToken(string $purpose, array $claims, int $ttl = 300): string
+    {
+        return $this->encode([
+            'type' => $purpose,
+            'iat'  => time(),
+            'exp'  => time() + $ttl,
+        ] + $claims);
+    }
+
+    /** decode() that also checks the token type. */
+    public function decodeStep(string $token, string $purpose): ?array
+    {
+        $payload = $token !== '' ? $this->decode($token) : null;
+        return $payload && ($payload['type'] ?? '') === $purpose ? $payload : null;
+    }
+
     public function accessTtl(): int
     {
         return $this->accessTtl;
