@@ -48,6 +48,16 @@ STAGE=training
 "${VENV}/bin/python" train.py 2>&1 | tee train.log
 RC=${PIPESTATUS[0]}
 if [ "$RC" != 0 ] && ! grep -q 'nothing to upload' train.log; then
-  fail "train.py exited with code ${RC}: $(tail -n 2 train.log | tr '\n' ' ' | cut -c1-300)"
+  # Send the end of the log (the traceback) with the failure, JSON-encoded by Python so nothing is lost.
+  BODY="$("${VENV}/bin/python" - "$RC" <<'PY'
+import json, sys
+lines = [l.rstrip() for l in open('train.log', encoding='utf-8', errors='replace') if l.strip()][-30:]
+last = next((l for l in reversed(lines) if 'Error' in l or 'error' in l), lines[-1] if lines else '')
+print(json.dumps({'status': 'failed', 'phase': 'training failed', 'error': f'train.py exited with code {sys.argv[1]}: {last}'[:1500],
+                  'log': ['--- end of train.log ---'] + lines}))
+PY
+)"
+  curl -s -m 20 "${auth[@]}" -H 'Content-Type: application/json' -d "$BODY" "$AISTUDIO_JOB_URL" >/dev/null || true
+  exit "$RC"
 fi
 exit "$RC"

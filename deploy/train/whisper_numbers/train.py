@@ -7,6 +7,8 @@ benchmark), saves the best epoch in fp16 and uploads it to the server as whisper
 
 Encoder frozen for the first half (the change lands in the decoder, which writes the number words), then joins.
 """
+import os
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')  # before torch touches CUDA
 import io, json, math, os, random, re, subprocess, sys, tarfile, time, urllib.request
 from collections import Counter
 
@@ -61,7 +63,17 @@ model = WhisperForConditionalGeneration.from_pretrained(BASE).to(dev)
 model.config.forced_decoder_ids = None
 model.generation_config.forced_decoder_ids = None
 N_GPU = max(1, torch.cuda.device_count())
-net = torch.nn.DataParallel(model) if N_GPU > 1 else model      # every visible GPU takes a share of each batch
+class LossOnly(torch.nn.Module):
+    """Each GPU returns only its loss. DataParallel otherwise gathers every output (vocabulary logits for every token,
+    hidden states) onto GPU 0, which ran a 16 GB T4 out of memory."""
+    def __init__(self, m):
+        super().__init__(); self.m = m
+
+    def forward(self, **kw):
+        return self.m(**kw).loss.reshape(1)
+
+
+net = torch.nn.DataParallel(LossOnly(model)) if N_GPU > 1 else LossOnly(model)   # every GPU takes a share of each batch
 STEP_BATCH = BATCH * N_GPU                                       # BATCH is per GPU
 prefix = proc.tokenizer.convert_tokens_to_ids(['<|startoftranscript|>', '<|si|>', '<|transcribe|>', '<|notimestamps|>'])
 
@@ -143,7 +155,7 @@ def run_epoch(ep):
         for k in range(0, len(rows), size):
             f, d, l = batch(rows[k:k + size])
             with torch.autocast('cuda', dtype=torch.float16, enabled=dev.type == 'cuda'):
-                loss = net(input_features=f, decoder_input_ids=d, labels=l).loss.mean() * len(rows[k:k + size]) / len(rows)
+                loss = net(input_features=f, decoder_input_ids=d, labels=l).mean() * len(rows[k:k + size]) / len(rows)
             scaler.scale(loss).backward(); total += loss.item()
         scaler.unscale_(opt); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         scaler.step(opt); scaler.update(); sched.step(); opt.zero_grad(set_to_none=True); step += 1
@@ -163,7 +175,6 @@ for ep in range(EPOCHS):
         # Keep what was learned: a model saved at an earlier epoch is uploaded instead of being lost with the run.
         stopped = f'stopped in epoch {ep + 1}: GPU out of memory'
         say(f'{stopped} ({str(e).splitlines()[0][:160]})')
-        torch.cuda.empty_cache()
         if not saved: raise
         break
     report(phase=f'evaluating epoch {ep + 1}')

@@ -171,11 +171,12 @@ export default function Training() {
           )}
           <ActionMenu actions={[
             { label: 'Live progress & logs', icon: ChartBarIcon, onClick: () => setLiveJob(j.id) },
-            { label: 'Download kit', icon: ArrowDownTrayIcon, disabled: !HAS_KIT.includes(j.status), onClick: () => downloadKit(j) },
+            { label: 'Download kit', icon: ArrowDownTrayIcon, hidden: !!j.recipe, disabled: !HAS_KIT.includes(j.status), onClick: () => downloadKit(j) },
             { label: 'Lineage', icon: BeakerIcon, onClick: () => setLineageJob(j) },
-            { label: 'Edit', icon: PencilSquareIcon, hidden: !canManage, onClick: () => { setEditing(j); form.onOpen(); } },
+            // Pipeline jobs are run by a node agent: their settings come from the pipeline, and status from the run.
+            { label: 'Edit', icon: PencilSquareIcon, hidden: !canManage || !!j.recipe, onClick: () => { setEditing(j); form.onOpen(); } },
             ...STATUSES.filter((s) => s.value !== j.status).map((s) => ({
-              label: `Mark ${s.label.toLowerCase()}`, hidden: !canManage, onClick: () => setStatus.mutate({ id: j.id, status: s.value }),
+              label: `Mark ${s.label.toLowerCase()}`, hidden: !canManage || !!j.recipe, onClick: () => setStatus.mutate({ id: j.id, status: s.value }),
             })),
             { label: 'Delete', icon: TrashIcon, danger: true, hidden: !canManage, onClick: () => setToDelete(j) },
           ]} />

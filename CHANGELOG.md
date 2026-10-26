@@ -2,6 +2,11 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.17.8] — 2026-10-27 — Multi-GPU training no longer floods GPU 0
+- Both recipes wrap the model so each GPU returns only its loss. DataParallel otherwise gathered every output (vocabulary logits for every token, hidden states) onto GPU 0, which ran a 16 GB T4 out of memory in the Whisper run. `expandable_segments` is on to reduce fragmentation, and the out-of-memory handler no longer calls into a failed CUDA context (that turned the real error into "unspecified launch failure").
+- On failure the runner sends the last 30 lines of train.log and the error line (it sent 2 lines, often blank).
+- Pipeline jobs hide Edit, Mark status and the kit actions: their settings come from the pipeline (the manual Edit form had replaced job #5's settings with kit defaults).
+
 ## [1.17.7] — 2026-10-27 — Whisper fine-tune fits a 16 GB GPU; settings and failure reason on the job
 - Whisper numbers recipe: once the encoder joins (second half), each step runs as two half-batches with gradient accumulation and non-reentrant gradient checkpointing — same effective batch, far less memory. Job #5 ran out of GPU memory there (14.56 GiB on GPU 0 of 2 × T4).
 - A run that crashes after an epoch was saved now uploads that best model instead of losing it ("stopped early" in its report).

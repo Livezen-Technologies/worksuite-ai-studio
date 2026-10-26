@@ -5,6 +5,8 @@ Data: train.jsonl / dev.jsonl ({instruction, input, output}) staged by the serve
 fp16 base with gradient checkpointing (fits a 16 GB T4 for a 3B model); LoRA weights in fp32 so the grad scaler works.
 Reports progress to AI Studio, keeps the epoch with the best dev loss, uploads the adapter as adapter.tar.gz.
 """
+import os
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')  # before torch touches CUDA
 import json, math, os, random, subprocess, sys, tarfile, time, urllib.request
 
 import torch
@@ -95,7 +97,17 @@ for p in model.parameters():
     if p.requires_grad: p.data = p.data.float()                               # fp32 adapters for the grad scaler
 say('trainable parameters: ' + str(sum(p.numel() for p in model.parameters() if p.requires_grad)))
 N_GPU = max(1, torch.cuda.device_count())
-net = torch.nn.DataParallel(model) if N_GPU > 1 else model      # every visible GPU takes a share of each batch
+class LossOnly(torch.nn.Module):
+    """Each GPU returns only its loss. DataParallel otherwise gathers every output (vocabulary logits for every token,
+    hidden states) onto GPU 0, which ran a 16 GB T4 out of memory."""
+    def __init__(self, m):
+        super().__init__(); self.m = m
+
+    def forward(self, **kw):
+        return self.m(**kw).loss.reshape(1)
+
+
+net = torch.nn.DataParallel(LossOnly(model)) if N_GPU > 1 else LossOnly(model)   # every GPU takes a share of each batch
 if N_GPU > 1:
     batches = [train[i:i + BATCH * N_GPU] for i in range(0, len(train), BATCH * N_GPU)]   # BATCH is per GPU
     say(f'{N_GPU} GPUs: {BATCH * N_GPU} rows per step')
@@ -126,7 +138,7 @@ for ep in range(EPOCHS):
     for b, part in enumerate(batches):
         ids, att, lab = collate(part)
         with torch.autocast('cuda', dtype=torch.float16, enabled=dev.type == 'cuda'):
-            loss = net(input_ids=ids, attention_mask=att, labels=lab).loss.mean() / ACCUM   # one loss per GPU → mean
+            loss = net(input_ids=ids, attention_mask=att, labels=lab).mean() / ACCUM   # one loss per GPU → mean
         scaler.scale(loss).backward()
         if (b + 1) % ACCUM == 0 or b == len(batches) - 1:
             scaler.unscale_(opt); torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.0)
