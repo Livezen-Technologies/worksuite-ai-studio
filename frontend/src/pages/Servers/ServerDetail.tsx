@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { HeartIcon, PencilSquareIcon, PowerIcon, ArrowUpTrayIcon, ArrowPathRoundedSquareIcon, CpuChipIcon } from '@heroicons/react/24/outline';
 import {
-  Badge, Button, Card, CardHeader, DescriptionList, EmptyState, ErrorState, Modal, SkeletonRows, StatusBadge, useToast,
+  Badge, Button, Card, CardHeader, DescriptionList, EmptyState, ErrorState, Modal, SkeletonRows, StatusBadge, Tabs, useToast,
 } from '../../components/ui';
+import { ServerLogs, ServerUsage } from './ServerUsage';
 import { get, post } from '../../lib/api';
 import { ago, bytes, dateTime, parseTs } from '../../lib/format';
 import { useAuth } from '../../lib/auth';
@@ -17,6 +19,7 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
   const qc = useQueryClient();
   const toast = useToast();
   const manage = useAuth().can('servers.manage');
+  const [tab, setTab] = useState<'overview' | 'usage' | 'logs'>('overview');
   const q = useQuery({ queryKey: ['server', id], queryFn: () => get<Server & { health_history: HealthRow[] }>(`/servers/${id}`) });
   const s = q.data;
   const models = useQuery({
@@ -64,7 +67,10 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
         </div>
       )}
     >
-      {q.isLoading ? <SkeletonRows rows={6} cols={2} /> : q.error ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : s && (
+      {s && <Tabs className="mb-4" value={tab} onChange={(k) => setTab(k as typeof tab)} tabs={[{ key: 'overview', label: 'Overview' }, { key: 'usage', label: 'Usage' }, { key: 'logs', label: 'Logs' }]} />}
+      {s && tab === 'usage' && <ServerUsage id={id} />}
+      {s && tab === 'logs' && <ServerLogs id={id} />}
+      {q.isLoading ? <SkeletonRows rows={6} cols={2} /> : q.error ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : s && tab === 'overview' && (
         <div className="space-y-4">
           {last?.error && s.status !== 'online' && (
             <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">Last check: {last.error}</p>

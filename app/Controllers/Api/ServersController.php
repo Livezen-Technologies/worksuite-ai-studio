@@ -30,6 +30,80 @@ class ServersController extends BaseApiController
         return $this->ok($rows);
     }
 
+    /** Fleet totals for the stat cards on the Servers page. */
+    public function summary()
+    {
+        if ($r = $this->requirePermission('servers.view')) return $r;
+        $rows  = $this->servers()->where('kind', 'ollama')->findAll();
+        $vram  = 0.0;
+        $gpus  = 0;
+        foreach ($rows as $s) {
+            if (! empty($s['gpu_model'])) {
+                $gpus++;
+                // Enrolled nodes record "Name, 4096 MiB".
+                if (preg_match('/([\d.]+)\s*MiB/i', $s['gpu_model'], $m)) {
+                    $vram += (float) $m[1] / 1024;
+                }
+            }
+        }
+        $since = date('Y-m-d H:i:s', time() - 86400);
+        $use   = \Config\Database::connect()->table('api_logs')
+            ->select('COUNT(*) AS requests, COALESCE(SUM(total_tokens), 0) AS tokens')
+            ->where('created_at >=', $since)->where('server_id IS NOT NULL')->get()->getRowArray();
+
+        return $this->ok([
+            'servers'      => count($rows),
+            'online'       => count(array_filter($rows, static fn ($s) => $s['status'] === 'online')),
+            'cpu_cores'    => array_sum(array_map(static fn ($s) => (int) $s['cpu_cores'], $rows)),
+            'ram_gb'       => round(array_sum(array_map(static fn ($s) => (float) $s['ram_gb'], $rows)), 1),
+            'gpus'         => $gpus,
+            'vram_gb'      => round($vram, 1),
+            'requests_24h' => (int) $use['requests'],
+            'tokens_24h'   => (int) $use['tokens'],
+        ]);
+    }
+
+    /**
+     * Usage, analytics and logs for one server: gateway calls it served (api_logs) and its health checks.
+     *   GET /api/servers/{id}/usage?days=7
+     */
+    public function usage($id = null)
+    {
+        if ($r = $this->requirePermission('servers.view')) return $r;
+        if (! $this->servers()->find((int) $id)) return $this->failure('Server not found.', 404);
+        $days  = max(1, min(90, (int) ($this->request->getGet('days') ?? 7)));
+        $since = date('Y-m-d H:i:s', strtotime('-' . ($days - 1) . ' days midnight'));
+        $db    = \Config\Database::connect();
+        $logs  = static fn () => $db->table('api_logs')->where('server_id', (int) $id)->where('created_at >=', $since);
+
+        $totals = $logs()->select('COUNT(*) AS requests, COALESCE(SUM(status >= 400), 0) AS errors, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+            COALESCE(SUM(completion_tokens), 0) AS completion_tokens, COALESCE(SUM(total_tokens), 0) AS tokens, COALESCE(ROUND(AVG(processing_ms)), 0) AS avg_ms', false)
+            ->get()->getRowArray();
+        $daily = $logs()->select('DATE(created_at) AS day, COUNT(*) AS requests, SUM(status >= 400) AS errors, COALESCE(SUM(total_tokens), 0) AS tokens', false)
+            ->groupBy('DATE(created_at)')->orderBy('day', 'ASC')->get()->getResultArray();
+        $byModel = $logs()->select("COALESCE(model, '—') AS model, COUNT(*) AS requests, COALESCE(SUM(total_tokens), 0) AS tokens, ROUND(AVG(processing_ms)) AS avg_ms, SUM(status >= 400) AS errors", false)
+            ->groupBy('model')->orderBy('requests', 'DESC')->limit(20)->get()->getResultArray();
+        $recent = $db->table('api_logs')->select('created_at, endpoint, model, status, total_tokens, processing_ms, error')
+            ->where('server_id', (int) $id)->orderBy('id', 'DESC')->limit(50)->get()->getResultArray();
+        $checks = $db->table('server_health')->select('checked_at, status, health_score, latency_ms, models_total, models_running, error')
+            ->where('server_id', (int) $id)->orderBy('id', 'DESC')->limit(50)->get()->getResultArray();
+        $uptime = $db->table('server_health')->select("COUNT(*) AS checks, SUM(status IN ('online','degraded')) AS up", false)
+            ->where('server_id', (int) $id)->where('checked_at >=', $since)->get()->getRowArray();
+
+        $totals = array_map('intval', $totals);
+        $totals['uptime_pct'] = $uptime['checks'] ? round($uptime['up'] / $uptime['checks'] * 100, 1) : null;
+
+        // One bar per day, including days without traffic.
+        $byDay  = array_column($daily, null, 'day');
+        $series = [];
+        for ($t = strtotime($since); $t <= time(); $t += 86400) {
+            $d        = date('Y-m-d', $t);
+            $series[] = ['day' => $d, 'requests' => (int) ($byDay[$d]['requests'] ?? 0), 'errors' => (int) ($byDay[$d]['errors'] ?? 0), 'tokens' => (int) ($byDay[$d]['tokens'] ?? 0)];
+        }
+
+        return $this->ok(['days' => $days, 'totals' => $totals, 'daily' => $series, 'by_model' => $byModel, 'recent' => $recent, 'checks' => $checks]);
+    }
+
     public function show($id = null)
     {
         if ($r = $this->requirePermission('servers.view')) return $r;
