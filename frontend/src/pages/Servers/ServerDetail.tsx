@@ -53,7 +53,7 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
       open
       onClose={onClose}
       size="xl"
-      title={s ? <span className="flex flex-wrap items-center gap-2">{s.name} <StatusBadge status={s.status} />{!ollama && <Badge tone={KINDS[kind].tone}>{KINDS[kind].label}</Badge>}</span> : 'Server'}
+      title={s ? <span className="flex flex-wrap items-center gap-2">{s.name} <StatusBadge status={s.status} />{s.is_enabled === false && <Badge tone="amber">Disabled</Badge>}{!ollama && <Badge tone={KINDS[kind].tone}>{KINDS[kind].label}</Badge>}</span> : 'Server'}
       description={s?.api_url || (s && KINDS[kind].base)}
       footer={s && (
         <div className="flex w-full flex-wrap justify-end gap-2">
@@ -72,6 +72,11 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
       {s && tab === 'logs' && <ServerLogs id={id} />}
       {q.isLoading ? <SkeletonRows rows={6} cols={2} /> : q.error ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : s && tab === 'overview' && (
         <div className="space-y-4">
+          {s.is_enabled === false && (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-600/20 ring-inset dark:bg-amber-400/10 dark:text-amber-300 dark:ring-amber-400/20">
+              Disabled{s.disabled_at ? ` since ${s.disabled_at}` : ''}{s.disabled_reason ? ` — ${s.disabled_reason}` : ''}. It gets no new chat, gateway, knowledge or training work; health checks continue. Enable it from the Servers list.
+            </p>
+          )}
           {last?.error && s.status !== 'online' && (
             <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">Last check: {last.error}</p>
           )}
@@ -96,11 +101,13 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
               <CardHeader title="Hardware & health history" />
               <div className="space-y-4 p-4 sm:px-6">
                 {ollama && (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                     <Spec label="CPU" value={s.cpu_cores ? `${s.cpu_cores} cores` : '—'} />
                     <Spec label="RAM" value={s.ram_gb ? `${Number(s.ram_gb)} GB` : '—'} />
                     <Spec label="Storage" value={s.storage_gb ? `${Number(s.storage_gb)} GB` : '—'} />
-                    <Spec label="GPU" value={s.gpu_model ? `${s.gpu_model}${s.cuda_version ? ` · CUDA ${s.cuda_version}` : ''}` : 'CPU-only'} />
+                    <Spec label="GPU" value={s.gpu_model ? `${Number(s.gpu_count) > 1 ? `${s.gpu_count} × ` : ''}${s.gpu_model}` : 'CPU-only'} />
+                    <Spec label="CUDA cores" value={s.gpu_model ? (s.cuda_cores ? Number(s.cuda_cores).toLocaleString() : 'Unknown model') : '—'} />
+                    <Spec label="CUDA version" value={s.cuda_version || '—'} />
                   </div>
                 )}
                 {history.length > 1 ? (
@@ -152,7 +159,7 @@ function Spec({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5">
       <div className="text-xs text-slate-500 dark:text-slate-400">{label}</div>
-      <div className="mt-1 truncate text-sm font-semibold text-slate-900 dark:text-white" title={value}>{value}</div>
+      <div className="mt-1 text-sm font-semibold break-words text-slate-900 dark:text-white" title={value}>{value}</div>
     </div>
   );
 }

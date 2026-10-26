@@ -43,7 +43,7 @@ class NodesController extends BaseApiController
             foreach ($out as $k => $v) {
                 $lines[] = strtoupper($k) . '=' . str_replace(["\r", "\n"], ' ', (string) $v);
             }
-            return $this->response->setContentType('text/plain')->setBody(implode("\n", $lines) . "\n");
+            return $this->response->setStatusCode(201)->setContentType('text/plain')->setBody(implode("\n", $lines) . "\n");
         }
         return $this->ok($out, 'Node enrolled.', 201);
     }

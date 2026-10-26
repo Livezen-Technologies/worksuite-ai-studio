@@ -62,6 +62,8 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->put('servers/(:num)', 'ServersController::update/$1');
     $routes->delete('servers/(:num)', 'ServersController::delete/$1');
     $routes->post('servers/(:num)/health', 'ServersController::health/$1');
+    $routes->post('servers/(:num)/disable', 'ServersController::disable/$1');
+    $routes->post('servers/(:num)/enable', 'ServersController::enable/$1');
     $routes->get('servers/(:num)/models', 'ServersController::models/$1');
     $routes->post('servers/(:num)/(restart|shutdown|update)', 'ServersController::control/$1/$2');
 

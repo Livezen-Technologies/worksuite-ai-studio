@@ -12,7 +12,7 @@ import { useAuth } from '../lib/auth';
 import { bytes } from '../lib/format';
 import { uploadWithProgress } from './SinLama/upload';
 
-interface Server { id: number; name: string; kind?: string; status?: string }
+interface Server { id: number; name: string; kind?: string; status?: string; is_enabled?: boolean }
 interface NodeModel { id: number; name: string; server_id: number }
 interface Preset { key: string; label: string; name: string; system: string; parameters: { temperature?: number; num_ctx?: number } }
 interface Blob { digest: string; filename: string; size: number }
@@ -30,7 +30,7 @@ export default function Studio() {
 
   const servers = useQuery({ queryKey: ['servers'], queryFn: () => get<Server[]>('/servers') });
   const presets = useQuery({ queryKey: ['studio', 'presets'], queryFn: () => get<Preset[]>('/studio/presets') });
-  const nodes = useMemo(() => (servers.data ?? []).filter((s) => (s.kind ?? 'ollama') === 'ollama'), [servers.data]);
+  const nodes = useMemo(() => (servers.data ?? []).filter((s) => (s.kind ?? 'ollama') === 'ollama' && s.is_enabled !== false), [servers.data]);
 
   const [mode, setMode] = useState<Mode>('customize');
   const [serverId, setServerId] = useState('');

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import {
   ArrowPathIcon, ChartBarIcon, CommandLineIcon, CpuChipIcon, HeartIcon, Squares2X2Icon, PencilSquareIcon, PlusIcon, ServerStackIcon, TrashIcon, EyeIcon,
-  PowerIcon, ArrowUpTrayIcon, ArrowPathRoundedSquareIcon,
+  PowerIcon, ArrowUpTrayIcon, ArrowPathRoundedSquareIcon, NoSymbolIcon, CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, EmptyState, PageHeader, StatusBadge, Toolbar,
@@ -35,6 +35,15 @@ export default function Servers() {
   const t = summary.data;
   const invalidate = () => qc.invalidateQueries({ queryKey: ['servers'] });
 
+  const toggle = useMutation({
+    mutationFn: ({ id, enable }: { id: number; enable: boolean }) => post<Server>(`/servers/${id}/${enable ? 'enable' : 'disable'}`),
+    onSuccess: (_r, v) => {
+      toast.success(v.enable ? 'Node enabled' : 'Node disabled', v.enable ? undefined : 'It gets no new work until you enable it. Running jobs finish.');
+      invalidate();
+      qc.invalidateQueries({ queryKey: ['server', v.id] });
+    },
+    onError: (e) => toast.error(e),
+  });
   const health = useMutation({
     mutationFn: (id: number) => post<{ status: string; health_score: number }>(`/servers/${id}/health`),
     onSuccess: (r, id) => {
@@ -83,13 +92,21 @@ export default function Servers() {
         );
       },
     },
-    { key: 'status', header: 'Status', cell: (s) => <StatusBadge status={s.status} /> },
+    {
+      key: 'status', header: 'Status', cell: (s) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <StatusBadge status={s.status} />
+          {s.is_enabled === false && <Badge tone="amber">Disabled</Badge>}
+        </div>
+      ),
+    },
     { key: 'health', header: 'Health', cell: (s) => <HealthScore score={s.health_score} />, hideBelow: 'sm' },
     {
       key: 'specs', header: 'Specs', hideBelow: 'lg', cell: (s) => (
         <div className="text-xs text-slate-500 dark:text-slate-400">
           <div>{s.cpu_cores ? `${s.cpu_cores} cores` : '—'}{s.ram_gb ? ` · ${Number(s.ram_gb)} GB RAM` : ''}</div>
           <div>{s.gpu_model || ((s.kind ?? 'ollama') === 'ollama' ? 'CPU-only' : 'Hosted API')}{s.ollama_version ? ` · Ollama ${s.ollama_version}` : ''}</div>
+          {s.gpu_model && <div>{s.cuda_cores ? `${num(s.cuda_cores)} CUDA cores` : 'CUDA cores unknown'}{s.cuda_version ? ` · CUDA ${s.cuda_version}` : ''}</div>}
         </div>
       ),
     },
@@ -106,6 +123,8 @@ export default function Servers() {
               { label: 'View details', icon: EyeIcon, onClick: () => open(s.id) },
               { label: 'Run health check', icon: HeartIcon, onClick: () => health.mutate(s.id), hidden: !manage, disabled: health.isPending },
               { label: 'Edit', icon: PencilSquareIcon, onClick: () => setEditing(s), hidden: !manage },
+              { label: 'Disable node', icon: NoSymbolIcon, onClick: () => toggle.mutate({ id: s.id, enable: false }), hidden: !manage || s.is_enabled === false, disabled: toggle.isPending },
+              { label: 'Enable node', icon: CheckCircleIcon, onClick: () => toggle.mutate({ id: s.id, enable: true }), hidden: !manage || s.is_enabled !== false, disabled: toggle.isPending },
               { label: 'Restart Ollama', icon: ArrowPathRoundedSquareIcon, onClick: () => setControl({ server: s, action: 'restart' }), hidden: !manage || !ollama },
               { label: 'Update Ollama', icon: ArrowUpTrayIcon, onClick: () => setControl({ server: s, action: 'update' }), hidden: !manage || !ollama },
               { label: 'Shut down node', icon: PowerIcon, onClick: () => setControl({ server: s, action: 'shutdown' }), hidden: !manage || !ollama, danger: true },

@@ -71,30 +71,10 @@ class ServersController extends BaseApiController
         ]);
     }
 
-    /** CUDA cores for common NVIDIA GPUs (nvidia-smi doesn't report them). Longest matching name wins. */
+    /** CUDA cores per GPU (nvidia-smi doesn't report them); one table for the summary and each server row. */
     private static function cudaCores(string $gpu): ?int
     {
-        static $table = [
-            'H100' => 14592, 'H200' => 16896, 'A100' => 6912, 'A40' => 10752, 'A30' => 3584, 'A10' => 9216, 'L40S' => 18176, 'L40' => 18176,
-            'L4' => 7424, 'T4' => 2560, 'V100' => 5120, 'P100' => 3584,
-            'RTX 6000 Ada' => 18176, 'RTX A6000' => 10752, 'RTX A5000' => 8192, 'RTX A4500' => 7168, 'RTX A4000' => 6144, 'RTX A2000' => 3328,
-            'Quadro RTX 8000' => 4608, 'Quadro RTX 6000' => 4608, 'Quadro RTX 5000' => 3072, 'Quadro RTX 4000' => 2304,
-            'T1000' => 896, 'T600' => 640, 'T400' => 384, 'T2000' => 1024, 'T1200' => 1024, 'P2000' => 1024, 'P1000' => 640,
-            'RTX 5090' => 21760, 'RTX 5080' => 10752, 'RTX 5070 Ti' => 8960, 'RTX 5070' => 6144, 'RTX 5060 Ti' => 4608,
-            'RTX 4090' => 16384, 'RTX 4080 SUPER' => 10240, 'RTX 4080' => 9728, 'RTX 4070 Ti SUPER' => 8448, 'RTX 4070 Ti' => 7680,
-            'RTX 4070 SUPER' => 7168, 'RTX 4070' => 5888, 'RTX 4060 Ti' => 4352, 'RTX 4060' => 3072,
-            'RTX 3090 Ti' => 10752, 'RTX 3090' => 10496, 'RTX 3080 Ti' => 10240, 'RTX 3080' => 8704, 'RTX 3070 Ti' => 6144, 'RTX 3070' => 5888,
-            'RTX 3060 Ti' => 4864, 'RTX 3060' => 3584, 'RTX 3050' => 2560,
-            'RTX 2080 Ti' => 4352, 'RTX 2080 SUPER' => 3072, 'RTX 2080' => 2944, 'RTX 2070 SUPER' => 2560, 'RTX 2070' => 2304, 'RTX 2060 SUPER' => 2176, 'RTX 2060' => 1920,
-            'GTX 1660 Ti' => 1536, 'GTX 1660 SUPER' => 1408, 'GTX 1660' => 1408, 'GTX 1650' => 896, 'GTX 1080 Ti' => 3584, 'GTX 1080' => 2560, 'GTX 1070' => 1920, 'GTX 1060' => 1280,
-        ];
-        $best = null;
-        foreach ($table as $name => $cores) {
-            if (stripos($gpu, $name) !== false && ($best === null || strlen($name) > strlen($best))) {
-                $best = $name;
-            }
-        }
-        return $best ? $table[$best] : null;
+        return \App\Libraries\GpuSpecs::cudaCores($gpu);
     }
 
     /**
@@ -208,6 +188,28 @@ class ServersController extends BaseApiController
         if (! $m->find((int) $id)) return $this->failure('Server not found.', 404);
         $m->delete((int) $id);
         return $this->ok(null, 'Server removed.');
+    }
+
+    /** POST /api/servers/{id}/disable {reason?} — no new work for this node (running jobs finish; health checks continue). */
+    public function disable($id = null)
+    {
+        if ($r = $this->requirePermission('servers.manage')) return $r;
+        $m = $this->servers();
+        if (! $m->find((int) $id)) return $this->failure('Server not found.', 404);
+        $in = $this->request->getJSON(true) ?: [];
+        $m->update((int) $id, ['is_enabled' => 0, 'disabled_at' => date('Y-m-d H:i:s'),
+                               'disabled_reason' => mb_substr(trim((string) ($in['reason'] ?? '')), 0, 255) ?: null]);
+        return $this->ok($m->publicRow($m->find((int) $id)), 'Node disabled. It gets no new work until you enable it.');
+    }
+
+    /** POST /api/servers/{id}/enable */
+    public function enable($id = null)
+    {
+        if ($r = $this->requirePermission('servers.manage')) return $r;
+        $m = $this->servers();
+        if (! $m->find((int) $id)) return $this->failure('Server not found.', 404);
+        $m->update((int) $id, ['is_enabled' => 1, 'disabled_at' => null, 'disabled_reason' => null]);
+        return $this->ok($m->publicRow($m->find((int) $id)), 'Node enabled.');
     }
 
     public function health($id = null)

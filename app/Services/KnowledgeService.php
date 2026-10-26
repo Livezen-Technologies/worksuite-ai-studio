@@ -179,7 +179,7 @@ class KnowledgeService
     /** Pick the node to embed against: the KB's server if online, else any online node. */
     private function embedServer(?array $kb): ?array
     {
-        $b = $this->db->table('servers')->where('deleted_at', null)->whereIn('status', ['online', 'degraded']);
+        $b = $this->db->table('servers')->where('deleted_at', null)->where('is_enabled', 1)->whereIn('status', ['online', 'degraded']);
         if (! empty($kb['server_id'])) {
             $s = (clone $b)->where('id', $kb['server_id'])->get()->getRowArray();
             if ($s) return $s;

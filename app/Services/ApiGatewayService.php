@@ -36,6 +36,7 @@ class ApiGatewayService
             ->join('servers s', 's.id = m.server_id')
             ->where('m.name', $model)
             ->where('s.deleted_at', null)
+            ->where('s.is_enabled', 1) // a disabled node gets no gateway traffic
             ->whereIn('s.status', $statuses)
             ->orderBy('s.health_score', 'DESC')->orderBy('s.id', 'ASC')
             ->get()->getResultArray();

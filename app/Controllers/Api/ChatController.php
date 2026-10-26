@@ -98,6 +98,7 @@ class ChatController extends BaseApiController
         }
         $server = (new ServerModel())->find($serverId);
         if (! $server) return $this->failure('Server not found.', 404);
+        if (! (int) ($server['is_enabled'] ?? 1)) return $this->failure('This node is disabled. Choose another server or enable it on the Servers page.', 409);
 
         // Resolve or create the session.
         $sessionId = (int) ($in['session_id'] ?? 0);
@@ -184,6 +185,7 @@ class ChatController extends BaseApiController
         }
         $server = (new ServerModel())->find($serverId);
         if (! $server) return $this->failure('Server not found.', 404);
+        if (! (int) ($server['is_enabled'] ?? 1)) return $this->failure('This node is disabled. Choose another server or enable it on the Servers page.', 409);
 
         $cfg = (new ModelConfigModel())->ollamaOptions($model);
         $this->beginStream();

@@ -2,6 +2,12 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.15.0] — 2026-10-26 — Disable a node any time; CUDA cores per server
+- **Disable / Enable node** on the Servers page (row menu). A disabled node gets no new chat, gateway, knowledge-base or training work — the gateway and knowledge base skip it, chat refuses it, training allocation reports it — while health checks continue and running jobs finish. The list and detail show a Disabled badge, with when and why. API: `POST /api/servers/{id}/disable {reason?}`, `POST /api/servers/{id}/enable`.
+- **CUDA cores per server**: each row (Specs) and the detail page show the server's CUDA cores (per-GPU figure × GPU count) and CUDA version, derived from the GPU model — nvidia-smi does not report core counts. One table (`App\Libraries\GpuSpecs`) now serves the summary card and each server.
+- The detail page's hardware tiles wrap long GPU names instead of cutting them off.
+- Node enrolment in `format=env` answers 201 like the JSON form, so the install scripts no longer report a successful enrolment as "Enrolment failed (200)".
+
 ## [1.14.0] — 2026-10-25 — Download models and datasets with an API key
 - Two API key scopes: **Download models** and **Download datasets** (API keys page). Unknown scopes are no longer stored.
 - `GET /api/v1/catalog` lists what the key may download: every non-revoked Engine package with its files, sha256, size, licence and state, and every rights-approved dataset with its category, rows, permitted use and rights reference.

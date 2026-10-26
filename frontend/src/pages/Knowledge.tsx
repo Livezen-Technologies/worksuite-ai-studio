@@ -21,7 +21,7 @@ interface Doc {
   status: string; chunk_count: number | string; embedded: number | string; created_at: string | null;
 }
 interface SearchResult { mode: string; results: { content: string; document_id: number; score?: number | null }[] }
-interface Server { id: number; name: string; status?: string }
+interface Server { id: number; name: string; status?: string; is_enabled?: boolean }
 
 const ACCEPT = '.txt,.md,.markdown,.csv,.tsv,.json,.log,.html,.htm,.xml,.yml,.yaml';
 
@@ -144,7 +144,7 @@ export default function Knowledge() {
             value={form.server_id}
             onChange={(e) => setForm({ ...form, server_id: e.target.value })}
             placeholder="Any online node"
-            options={(servers.data ?? []).map((s) => ({ value: s.id, label: `${s.name}${s.status ? ` (${s.status})` : ''}` }))}
+            options={(servers.data ?? []).filter((s) => s.is_enabled !== false).map((s) => ({ value: s.id, label: `${s.name}${s.status ? ` (${s.status})` : ''}` }))}
           />
         )}
       </FormModal>

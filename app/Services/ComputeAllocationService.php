@@ -96,6 +96,7 @@ class ComputeAllocationService
             $server = $this->db->table('servers')->where('id', $sid)->where('deleted_at', null)->get()->getRowArray();
             $label  = $server['name'] ?? "#{$sid}";
             if (! $server) { $problems[] = "Node {$label} does not exist."; continue; }
+            if (! (int) ($server['is_enabled'] ?? 1)) { $problems[] = "Node {$label} is disabled."; continue; }
             if (! (int) $server['allow_training']) { $problems[] = "Node {$label} is not open for training."; continue; }
             $a = $alloc[$sid] ?? null;
             if (! $a) { $problems[] = "You have no allocation on node {$label}."; continue; }
@@ -211,7 +212,7 @@ class ComputeAllocationService
     {
         $usage = $this->usageByNode();
         $rows = $this->db->table('servers')
-            ->select('id, name, status, cpu_cores, ram_gb, gpu_model, gpu_count, gpu_vram_gb, allow_training')
+            ->select('id, name, status, is_enabled, cpu_cores, ram_gb, gpu_model, gpu_count, gpu_vram_gb, allow_training')
             ->where('deleted_at', null)->orderBy('name')->get()->getResultArray();
         foreach ($rows as &$r) {
             $u = $usage[(int) $r['id']] ?? ['cpu' => 0, 'gpus' => 0, 'jobs' => 0];

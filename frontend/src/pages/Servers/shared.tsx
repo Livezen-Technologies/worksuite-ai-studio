@@ -22,6 +22,13 @@ export interface Server {
   ollama_version: string | null;
   is_local: number | string;
   status: 'online' | 'offline' | 'degraded' | 'unknown';
+  /** false = disabled: no new chat, gateway, knowledge or training work (health checks continue) */
+  is_enabled?: boolean;
+  disabled_at?: string | null;
+  disabled_reason?: string | null;
+  /** total CUDA cores (per-GPU figure × GPU count), derived from the GPU model; null when unknown or CPU-only */
+  cuda_cores?: number | null;
+  gpu_count?: number | string | null;
   health_score: number | string;
   last_heartbeat_at: string | null;
   created_at: string | null;
