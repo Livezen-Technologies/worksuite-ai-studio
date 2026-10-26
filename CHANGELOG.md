@@ -2,6 +2,12 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.19.0] — 2026-10-27 — Create a custom LLM
+- Training page → **Create custom LLM**: name it, pick a base model (Qwen2.5 0.5B / 1.5B / 3B Instruct, SmolLM2 1.7B, or any Hugging Face id), an approved dataset, a node (or any GPU node), training settings, the model's name in Ollama, quantization (Q4_K_M, Q5_K_M, Q8_0, F16) and a system prompt. **Run now** starts it; Automatic retrains when the dataset changes.
+- A GPU node trains the LoRA adapter (recipe `text_sft`) and uploads it; the server then builds the model in the background (`spark training:finalize <job>`): merge into the base → GGUF f16 → quantize → `ollama create` with the system prompt → the local node's model list → an Engine text package (downloadable with an API key). Progress shows in the job's phase and log; the result goes to Notifications; the pipeline shows **ready** with **Try in Chat** (Chat honours `?model=`).
+- Shared toolkit `/opt/aistudio-llm` (CPU PyTorch, transformers, peft, gguf, llama.cpp convert + quantize), base models cached in `/srv/aistudio-hf`, built models in `/srv/aistudio-models`.
+- Tested end to end on the server with Qwen2.5-0.5B: adapter → Ollama model answering in 46 s.
+
 ## [1.18.3] — 2026-10-27 — Node speech: agent no longer hangs; GPU self-test
 - The speech helper started the node's speech service inside a subshell that kept the agent's output pipe open, so the agent waited forever after starting it — heartbeats stopped and the node never showed as ready. Background processes are now fully detached, and each speech check has a 60 s limit.
 - Agent 1.3.2 refreshes the speech helper from the Studio every time it starts, and the helper syncs the speech code before (re)starting the service, so fixes reach nodes on a restart.

@@ -1,20 +1,22 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BoltIcon, ClipboardDocumentIcon, CpuChipIcon, PencilSquareIcon, PlayIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { BoltIcon, ChatBubbleLeftRightIcon, ClipboardDocumentIcon, CpuChipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, TrashIcon } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Alert, Badge, Button, Card, CardHeader, CodeBlock, ConfirmDialog, EmptyState, FormModal, Input, Modal, Select,
-  StatusBadge, Toggle, useToast,
+  StatusBadge, Textarea, Toggle, useToast,
 } from '../../components/ui';
 import { del, get, post, put } from '../../lib/api';
 import { ago, num } from '../../lib/format';
 
-interface Recipe { key: string; label: string; task: string; needs_gpu: boolean; base_model: string; hyperparams: Record<string, number>; data: 'dataset' | 'prepared'; output: string }
+interface Recipe { key: string; label: string; task: string; needs_gpu: boolean; base_model: string; hyperparams: Record<string, number>; data: 'dataset' | 'prepared'; output: string; base_options?: { id: string; label: string; vram_gb: number }[] }
+interface LlmOutput { ollama_name: string; quant: string; system_prompt: string }
 interface Pipeline {
   id: number; name: string; recipe: string; recipe_label: string; dataset_id: number | null; dataset_name: string | null;
   server_id: number | null; server_name: string | null; base_model: string | null; hyperparams: Record<string, number>;
   auto_trigger: number | string; enabled: number | string; min_rows: number | string; max_attempts: number | string;
   last_job_id: number | null; last_triggered_at: string | null; last_status: string | null; last_progress: string | number | null;
   last_error: string | null; pending_change: boolean;
+  output?: LlmOutput | null; last_output_status?: string | null; last_output_model?: string | null; last_phase?: string | null;
 }
 interface Node {
   id: number; name: string; status: string; is_enabled: number | string; allow_training: number | string; gpu_model: string | null;
@@ -36,7 +38,7 @@ export default function TrainingPipelines({ canManage }: { canManage: boolean })
     queryKey: ['training', 'pipelines'], queryFn: () => get<Overview>('/training/pipelines'),
     refetchInterval: 15_000,
   });
-  const [editing, setEditing] = useState<Pipeline | 'new' | null>(null);
+  const [editing, setEditing] = useState<Pipeline | 'new' | 'llm' | null>(null);
   const [removing, setRemoving] = useState<Pipeline | null>(null);
   const [agent, setAgent] = useState<{ node: Node; command: string } | null>(null);
   const refresh = () => { qc.invalidateQueries({ queryKey: ['training'] }); };
@@ -72,7 +74,12 @@ export default function TrainingPipelines({ canManage }: { canManage: boolean })
         <CardHeader
           title="Training pipelines"
           description="A pipeline queues a training run when its data changes; a node's training agent picks it up, trains and sends the model back."
-          actions={canManage && <Button size="sm" icon={PlusIcon} onClick={() => setEditing('new')}>New pipeline</Button>}
+          actions={canManage && (
+            <div className="flex gap-2">
+              <Button size="sm" icon={SparklesIcon} onClick={() => setEditing('llm')}>Create custom LLM</Button>
+              <Button size="sm" variant="secondary" icon={PlusIcon} onClick={() => setEditing('new')}>New pipeline</Button>
+            </div>
+          )}
         />
         {q.isLoading ? <p className="p-6 text-sm text-slate-500">Loading…</p> : !data?.pipelines.length ? (
           <EmptyState icon={BoltIcon} title="No pipelines yet"
@@ -97,7 +104,18 @@ export default function TrainingPipelines({ canManage }: { canManage: boolean })
                       {p.last_status === 'running' && p.last_progress != null && <span className="tabular-nums">{Number(p.last_progress).toFixed(0)}%</span>}
                       {p.last_triggered_at && <span>{ago(p.last_triggered_at)}</span>}</> : 'Not run yet'}
                   </p>
-                  {p.last_error && p.last_status === 'failed' && <p className="mt-1 line-clamp-2 text-xs text-red-700 dark:text-red-400">{p.last_error}</p>}
+                  {p.last_error && (p.last_status === 'failed' || p.last_output_status === 'failed') && <p className="mt-1 line-clamp-2 text-xs text-red-700 dark:text-red-400">{p.last_error}</p>}
+                  {p.recipe === 'text_sft' && (
+                    <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                      Model <code className="text-slate-700 dark:text-slate-300">{p.output?.ollama_name || '(named after the pipeline)'}</code>
+                      {p.last_output_status === 'building' && <Badge tone="blue">building: {p.last_phase}</Badge>}
+                      {p.last_output_status === 'ready' && p.last_output_model && <>
+                        <Badge tone="green">ready</Badge>
+                        <a href={`/chat?model=${encodeURIComponent(p.last_output_model)}`} className="inline-flex items-center gap-1 font-medium text-brand-600 hover:underline dark:text-blue-400">
+                          <ChatBubbleLeftRightIcon className="size-3.5" aria-hidden />Try in Chat</a></>}
+                      {p.last_output_status === 'failed' && <Badge tone="red">build failed</Badge>}
+                    </p>
+                  )}
                 </div>
                 {canManage && (
                   <div className="flex items-center gap-2">
@@ -149,7 +167,7 @@ export default function TrainingPipelines({ canManage }: { canManage: boolean })
       </Card>
 
       {editing && data && (
-        <PipelineForm pipeline={editing === 'new' ? null : editing} recipes={data.recipes} nodes={data.nodes}
+        <PipelineForm pipeline={editing === 'new' || editing === 'llm' ? null : editing} preset={editing === 'llm' ? 'text_sft' : undefined} recipes={data.recipes} nodes={data.nodes}
           onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refresh(); }} />
       )}
       <ConfirmDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={() => { if (removing) remove.mutate(removing); }}
@@ -172,16 +190,20 @@ export default function TrainingPipelines({ canManage }: { canManage: boolean })
   );
 }
 
-function PipelineForm({ pipeline, recipes, nodes, onClose, onSaved }: {
-  pipeline: Pipeline | null; recipes: Recipe[]; nodes: Node[]; onClose: () => void; onSaved: () => void;
+function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
+  pipeline: Pipeline | null; preset?: string; recipes: Recipe[]; nodes: Node[]; onClose: () => void; onSaved: () => void;
 }) {
+  const llm = preset === 'text_sft' || pipeline?.recipe === 'text_sft';
+  const [modelName, setModelName] = useState(pipeline?.output?.ollama_name ?? '');
+  const [quant, setQuant] = useState(pipeline?.output?.quant ?? 'Q4_K_M');
+  const [system, setSystem] = useState(pipeline?.output?.system_prompt ?? '');
   const toast = useToast();
   const [name, setName] = useState(pipeline?.name ?? '');
-  const [recipe, setRecipe] = useState(pipeline?.recipe ?? recipes[0]?.key ?? 'text_sft');
+  const [recipe, setRecipe] = useState(pipeline?.recipe ?? preset ?? recipes[0]?.key ?? 'text_sft');
   const [datasetId, setDatasetId] = useState(String(pipeline?.dataset_id ?? ''));
   const [serverId, setServerId] = useState(String(pipeline?.server_id ?? ''));
   const [base, setBase] = useState(pipeline?.base_model ?? '');
-  const [auto, setAuto] = useState(pipeline ? on(pipeline.auto_trigger) : true);
+  const [auto, setAuto] = useState(pipeline ? on(pipeline.auto_trigger) : !llm);   // a custom LLM starts with Run now
   const [minRows, setMinRows] = useState(String(pipeline?.min_rows ?? 200));
   const r = recipes.find((x) => x.key === recipe);
   const [hp, setHp] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(pipeline?.hyperparams ?? {}).map(([k, v]) => [k, String(v)])));
@@ -195,6 +217,7 @@ function PipelineForm({ pipeline, recipes, nodes, onClose, onSaved }: {
         name, recipe, dataset_id: r?.data === 'dataset' ? Number(datasetId) || null : null, server_id: Number(serverId) || null,
         base_model: base.trim() || null, auto_trigger: auto, min_rows: Number(minRows) || 200,
         hyperparams: Object.fromEntries(Object.entries(hp).filter(([, v]) => v.trim() !== '').map(([k, v]) => [k, Number(v)])),
+        ...(recipe === 'text_sft' ? { output: { ollama_name: modelName.trim().toLowerCase(), quant, system_prompt: system } } : {}),
       };
       return pipeline ? put(`/training/pipelines/${pipeline.id}`, body) : post('/training/pipelines', body);
     },
@@ -203,9 +226,11 @@ function PipelineForm({ pipeline, recipes, nodes, onClose, onSaved }: {
   });
 
   return (
-    <FormModal open onClose={onClose} size="lg" title={pipeline ? `Edit ${pipeline.name}` : 'New training pipeline'}
-      description="When Automatic is on, a run is queued whenever the data changes (and once at the start)."
-      submitLabel={pipeline ? 'Save' : 'Create pipeline'} submitting={save.isPending} onSubmit={() => save.mutate()}>
+    <FormModal open onClose={onClose} size="lg" title={pipeline ? `Edit ${pipeline.name}` : llm ? 'Create a custom LLM' : 'New training pipeline'}
+      description={llm
+        ? 'A GPU node fine-tunes the base model on your dataset (LoRA); this server merges it, converts it to GGUF and adds it to Ollama — it then appears in Models and Chat.'
+        : 'When Automatic is on, a run is queued whenever the data changes (and once at the start).'}
+      submitLabel={pipeline ? 'Save' : llm ? 'Create' : 'Create pipeline'} submitting={save.isPending} onSubmit={() => save.mutate()}>
       <div className="grid gap-4 sm:grid-cols-2">
         <Input label="Name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="WorkSuite Sinhala chat — v2 mix" wrapperClassName="sm:col-span-2" />
         <Select label="Recipe" value={recipe} onChange={(e) => { setRecipe(e.target.value); setHp({}); }}
@@ -219,7 +244,25 @@ function PipelineForm({ pipeline, recipes, nodes, onClose, onSaved }: {
         )}
         <Select label="Node" value={serverId} onChange={(e) => setServerId(e.target.value)}
           options={[{ value: '', label: 'Any capable node' }, ...capable.map((n) => ({ value: String(n.id), label: n.name }))]} />
-        <Input label="Base model" value={base} onChange={(e) => setBase(e.target.value)} placeholder={r?.base_model} hint="Hugging Face id; empty uses the recipe default." />
+        {r?.base_options?.length ? (
+          <Select label="Base model" value={r.base_options.some((o) => o.id === base) || !base ? (base || r.base_model) : '__custom'}
+            onChange={(e) => setBase(e.target.value === '__custom' ? ' ' : e.target.value)}
+            options={[...r.base_options.map((o) => ({ value: o.id, label: `${o.label} (≈${o.vram_gb} GB GPU)` })), { value: '__custom', label: 'Other Hugging Face model…' }]} />
+        ) : null}
+        {(!r?.base_options?.length || (base && !r.base_options.some((o) => o.id === base))) && (
+          <Input label={r?.base_options?.length ? 'Hugging Face model id' : 'Base model'} value={base.trim()} onChange={(e) => setBase(e.target.value)} placeholder={r?.base_model}
+            hint="Hugging Face id; empty uses the recipe default. Gated models (Llama, Gemma) need the node to be logged in to Hugging Face." />
+        )}
+        {recipe === 'text_sft' && <>
+          <Input label="Model name in Ollama" value={modelName} onChange={(e) => setModelName(e.target.value)} placeholder="worksuite-sinhala:3b-v2"
+            hint="Lowercase, with an optional :tag. Empty uses the pipeline name." />
+          <Select label="Quantization" value={quant} onChange={(e) => setQuant(e.target.value)}
+            options={[{ value: 'Q4_K_M', label: 'Q4_K_M — smallest, recommended' }, { value: 'Q5_K_M', label: 'Q5_K_M — a little better' }, { value: 'Q8_0', label: 'Q8_0 — near full quality' }, { value: 'F16', label: 'F16 — full quality, largest' }]} />
+          <div className="sm:col-span-2">
+            <Textarea label="System prompt" rows={3} value={system} onChange={(e) => setSystem(e.target.value)}
+              placeholder="You are WorkSuite Sinhala, a helpful assistant. Answer in clear Sinhala." hint="Built into the model in Ollama; Chat can still add its own." />
+          </div>
+        </>}
         {r && Object.entries(r.hyperparams).map(([k, v]) => (
           <Input key={k} label={k.replace(/_/g, ' ')} type="number" step="any" value={hp[k] ?? ''} placeholder={String(v)}
             onChange={(e) => setHp((h) => ({ ...h, [k]: e.target.value }))} />

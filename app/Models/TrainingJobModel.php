@@ -18,6 +18,7 @@ class TrainingJobModel extends Model
         'placement_status',
         // Automated pipelines (TrainingPipelineService)
         'pipeline_id', 'recipe', 'trigger_reason', 'attempt', 'max_attempts', 'error', 'claimed_at', 'cancel_requested',
+        'output_status', 'output_model', 'output_path',
         // Live progress (TrainingProgressController)
         'server_id', 'progress_pct', 'phase', 'current_step', 'total_steps', 'epoch', 'eta_seconds', 'live',
         'started_at', 'finished_at', 'last_report_at', 'report_token_hash',

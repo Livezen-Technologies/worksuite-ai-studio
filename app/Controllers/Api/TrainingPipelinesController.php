@@ -29,11 +29,13 @@ class TrainingPipelinesController extends BaseApiController
         $db  = $this->db();
         $svc = $this->svc();
         $rows = $db->table('training_pipelines p')
-            ->select('p.*, d.name AS dataset_name, s.name AS server_name, j.status AS last_status, j.progress_pct AS last_progress, j.error AS last_error')
+            ->select('p.*, d.name AS dataset_name, s.name AS server_name, j.status AS last_status, j.progress_pct AS last_progress, j.error AS last_error,
+                      j.output_status AS last_output_status, j.output_model AS last_output_model, j.phase AS last_phase')
             ->join('datasets d', 'd.id = p.dataset_id', 'left')->join('servers s', 's.id = p.server_id', 'left')
             ->join('training_jobs j', 'j.id = p.last_job_id', 'left')->orderBy('p.id')->get()->getResultArray();
         foreach ($rows as &$p) {
             $p['hyperparams'] = json_decode((string) $p['hyperparams'], true) ?: (object) [];
+            $p['output'] = json_decode((string) ($p['output'] ?? ''), true) ?: null;
             $p['pending_change'] = $svc->fingerprint($p) !== $p['last_fingerprint'];
             $p['recipe_label'] = TrainingRecipes::get($p['recipe'])['label'] ?? $p['recipe'];
         }
@@ -47,7 +49,7 @@ class TrainingPipelinesController extends BaseApiController
         $recipes = [];
         foreach (TrainingRecipes::all() as $k => $r) {
             $recipes[] = ['key' => $k, 'label' => $r['label'], 'task' => $r['task'], 'needs_gpu' => $r['needs_gpu'], 'base_model' => $r['base_model'],
-                          'hyperparams' => $r['hyperparams'], 'data' => $r['data']['type'], 'output' => $r['output']];
+                          'hyperparams' => $r['hyperparams'], 'data' => $r['data']['type'], 'output' => $r['output'], 'base_options' => $r['base_options'] ?? []];
         }
         return $this->ok(['pipelines' => $rows, 'recipes' => $recipes, 'nodes' => $nodes]);
     }
@@ -60,6 +62,16 @@ class TrainingPipelinesController extends BaseApiController
         foreach (['auto_trigger', 'enabled'] as $f) if (array_key_exists($f, $in)) $out[$f] = $in[$f] ? 1 : 0;
         foreach (['min_rows', 'max_attempts'] as $f) if (array_key_exists($f, $in)) $out[$f] = max(1, (int) $in[$f]);
         if (array_key_exists('hyperparams', $in)) $out['hyperparams'] = is_array($in['hyperparams']) && $in['hyperparams'] ? json_encode($in['hyperparams']) : null;
+        if (array_key_exists('output', $in)) {                               // custom LLM: Ollama name, quantization, system prompt
+            $o = is_array($in['output']) ? $in['output'] : [];
+            $name = strtolower(trim((string) ($o['ollama_name'] ?? '')));
+            if ($name !== '' && ! preg_match('/^[a-z0-9][a-z0-9._-]{0,60}(:[a-z0-9._-]{1,40})?$/', $name)) {
+                throw new \InvalidArgumentException('Model name: lowercase letters, digits, . _ - and an optional :tag (e.g. worksuite-sinhala:3b-v2).');
+            }
+            $quant = strtoupper((string) ($o['quant'] ?? 'Q4_K_M'));
+            if (! in_array($quant, ['Q4_K_M', 'Q5_K_M', 'Q8_0', 'F16'], true)) $quant = 'Q4_K_M';
+            $out['output'] = json_encode(['ollama_name' => $name, 'quant' => $quant, 'system_prompt' => mb_substr(trim((string) ($o['system_prompt'] ?? '')), 0, 4000)]);
+        }
         if ($create && empty($out['name'])) throw new \InvalidArgumentException('Give the pipeline a name.');
         if (isset($out['recipe']) && ! TrainingRecipes::get($out['recipe'])) throw new \InvalidArgumentException('Unknown recipe.');
         return $out;

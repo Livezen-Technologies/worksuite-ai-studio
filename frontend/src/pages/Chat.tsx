@@ -70,7 +70,10 @@ export default function Chat() {
 
   useEffect(() => {
     const usable = (models.data ?? []).filter(isChatModel);
-    const pick = usable.find((m) => Number(m.is_default) === 1) ?? usable[0];
+    // ?model=<name> (e.g. "Try in Chat" on a freshly built custom LLM) wins over the default model
+    const wanted = new URLSearchParams(window.location.search).get('model');
+    const pick = (wanted && usable.find((m) => m.name === wanted || m.name === `${wanted}:latest`))
+      ?? usable.find((m) => Number(m.is_default) === 1) ?? usable[0];
     if (!modelKey && pick) setModelKey(keyOf(pick.server_id, pick.name));
   }, [models.data, modelKey]);
 

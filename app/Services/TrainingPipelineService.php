@@ -313,6 +313,11 @@ class TrainingPipelineService
     public function finished(array $job, string $status): void
     {
         if (! $job['recipe']) return;
+        if ($status === 'completed' && $job['recipe'] === 'text_sft') {
+            LlmFinalizeService::spawn((int) $job['id']);                    // merge → GGUF → quantize → Ollama, in the background
+            $this->notify("Training completed: {$job['name']}", "Job #{$job['id']} finished on the node; the model is being built on the server (merge, GGUF, Ollama).", 'success', true);
+            return;
+        }
         if ($status === 'completed') {
             $this->notify("Training completed: {$job['name']}", "Job #{$job['id']} finished; its result is on the server (Training → job → Results).", 'success', true);
         } elseif ($status === 'failed') {

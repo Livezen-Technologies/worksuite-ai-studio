@@ -24,7 +24,14 @@ class TrainingRecipes
                 'hyperparams' => ['epochs' => 2, 'batch' => 4, 'grad_accum' => 4, 'lr' => 2e-4, 'lora_r' => 16, 'max_len' => 1024, 'max_rows' => 60000],
                 'data'        => ['type' => 'dataset'],
                 'extra'       => [],
-                'output'      => 'LoRA adapter (adapter.tar.gz)',
+                'output'      => 'a custom LLM in Ollama (LoRA merged into the base, GGUF)',
+                // Open base models a 16 GB GPU can LoRA-train in fp16 (no gated licences); any Hugging Face id also works.
+                'base_options' => [
+                    ['id' => 'Qwen/Qwen2.5-0.5B-Instruct', 'label' => 'Qwen2.5 0.5B Instruct — fastest, for testing', 'vram_gb' => 4],
+                    ['id' => 'Qwen/Qwen2.5-1.5B-Instruct', 'label' => 'Qwen2.5 1.5B Instruct — small and quick', 'vram_gb' => 8],
+                    ['id' => 'Qwen/Qwen2.5-3B-Instruct', 'label' => 'Qwen2.5 3B Instruct — recommended for Sinhala', 'vram_gb' => 14],
+                    ['id' => 'HuggingFaceTB/SmolLM2-1.7B-Instruct', 'label' => 'SmolLM2 1.7B Instruct — English-first', 'vram_gb' => 8],
+                ],
             ],
             'whisper_numbers' => [
                 'label'       => 'Whisper Sinhala — numbers fine-tune',
