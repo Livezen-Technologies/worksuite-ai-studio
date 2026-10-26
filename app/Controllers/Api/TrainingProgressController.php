@@ -76,12 +76,20 @@ class TrainingProgressController extends BaseApiController
         $dir = WRITEPATH . 'training/' . (int) $id . '/output/';
         if (! is_dir($dir)) mkdir($dir, 0775, true);
         @set_time_limit(0);
-        $in  = fopen('php://input', 'rb');
-        $out = fopen($dir . $name . '.part', 'wb');
-        $n   = stream_copy_to_stream($in, $out);
-        fclose($in); fclose($out);
-        if (! $n) { @unlink($dir . $name . '.part'); return $this->failure('Empty upload.', 422); }
-        rename($dir . $name . '.part', $dir . $name);
+        // Large results come in pieces (?part=0..parts-1): the framework reads a request body into memory, so one
+        // 450 MB body exceeded PHP's memory limit. Part 0 starts the file, each part appends, the last one finishes it.
+        $part  = max(0, (int) ($this->request->getGet('part') ?? 0));
+        $parts = max(1, (int) ($this->request->getGet('parts') ?? 1));
+        if ($part >= $parts) return $this->failure('part must be below parts.', 422);
+        $tmp  = $dir . $name . '.part';
+        if ($part > 0 && ! is_file($tmp)) return $this->failure('Upload part 0 first.', 409);
+        $body = $this->request->getBody() ?? '';
+        if ($body === '') return $this->failure('Empty upload.', 422);
+        file_put_contents($tmp, $body, $part === 0 ? 0 : FILE_APPEND);
+        clearstatcache(true, $tmp);                                      // is_file() above cached the old size
+        $n = filesize($tmp);
+        if ($part < $parts - 1) return $this->ok(['part' => $part, 'received_bytes' => $n], 'Part stored.');
+        rename($tmp, $dir . $name);
         return $this->ok(['name' => $name, 'size_bytes' => $n, 'sha256' => hash_file('sha256', $dir . $name)], 'Result stored on the server.', 201);
     }
 

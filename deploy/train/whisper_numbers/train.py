@@ -43,6 +43,26 @@ def gpu():
         return {}
 
 
+def upload(path, name):
+    """Send the result to the server in 32 MB pieces (one big body exceeds the server's PHP memory limit)."""
+    size, piece = os.path.getsize(path), 32 * 1024 * 1024
+    parts = max(1, math.ceil(size / piece))
+    base = URL.replace('/progress', '/output/' + name)
+    with open(path, 'rb') as fh:
+        for k in range(parts):
+            for attempt in range(5):
+                try:
+                    req = urllib.request.Request(f'{base}?part={k}&parts={parts}', data=fh.read(piece) if attempt == 0 else chunk, method='PUT',
+                                                 headers={'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/octet-stream'})
+                    chunk = req.data
+                    res = json.load(urllib.request.urlopen(req, timeout=600)); break
+                except Exception as e:
+                    if attempt == 4: raise
+                    say(f'upload part {k + 1}/{parts} failed ({e}); retrying'); time.sleep(10 * (attempt + 1))
+            if k % 4 == 0 or k == parts - 1: report(phase=f'uploading {k + 1}/{parts}')
+    return res
+
+
 def report(**kw):
     if not URL: return
     body = dict(kw, host=os.uname().nodename, device=str(dev), **gpu())
@@ -52,6 +72,17 @@ def report(**kw):
         urllib.request.urlopen(req, timeout=20).read()
     except Exception as e:
         print('report failed:', e, flush=True)
+
+
+# A retry of the same job whose training already finished (the result file is only written after the last epoch)
+# uploads that result instead of training again — e.g. when only the upload failed.
+if os.path.exists('whisper-sinhala-numbers.tar.gz') and os.path.getsize('whisper-sinhala-numbers.tar.gz') > 1_000_000:
+    say('A finished result from an earlier attempt of this job is here; uploading it instead of training again.')
+    report(status='running', phase='uploading earlier result')
+    res = upload('whisper-sinhala-numbers.tar.gz', 'whisper-sinhala-numbers.tar.gz')
+    say(f'uploaded {res["data"]["size_bytes"]} bytes, sha256 {res["data"]["sha256"]}')
+    report(status='completed', phase='done', metrics={'output_sha256': res['data']['sha256']})
+    sys.exit(0)
 
 
 def values(text):
@@ -193,9 +224,7 @@ report(phase='uploading', metrics={'after': after})
 with tarfile.open('whisper-sinhala-numbers.tar.gz', 'w:gz') as t:
     t.add(OUT, arcname='whisper-sinhala-numbers')
 up = URL.replace('/progress', '/output/whisper-sinhala-numbers.tar.gz')
-req = urllib.request.Request(up, data=open('whisper-sinhala-numbers.tar.gz', 'rb').read(), method='PUT',
-                             headers={'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/octet-stream'})
-res = json.load(urllib.request.urlopen(req, timeout=1800))
+res = upload('whisper-sinhala-numbers.tar.gz', 'whisper-sinhala-numbers.tar.gz')
 say(f'uploaded {res["data"]["size_bytes"]} bytes, sha256 {res["data"]["sha256"]}')
 say('REPORT ' + json.dumps({'stopped_early': stopped, 'base': BASE, 'train_utts': len(train), 'dev_utts': len(devset), 'epochs': EPOCHS,
                             'train_minutes': round((time.time() - t0) / 60, 1), 'before': before, 'after': after}))

@@ -2,6 +2,11 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.17.9] — 2026-10-27 — Large training results upload in pieces
+- A node uploads its result in 32 MB parts (`?part=k&parts=n`); the server appends them and hashes the finished file. One 500 MB body exceeded PHP's 128 MB memory limit (the framework reads a request body into memory) and the Whisper model upload failed with HTTP 500 after training had finished. Each part is retried up to 5 times.
+- A retry of a job whose training already finished uploads that result instead of training again (the result file is only written after the last epoch).
+- The reported upload size is correct (a cached file size was returned).
+
 ## [1.17.8] — 2026-10-27 — Multi-GPU training no longer floods GPU 0
 - Both recipes wrap the model so each GPU returns only its loss. DataParallel otherwise gathered every output (vocabulary logits for every token, hidden states) onto GPU 0, which ran a 16 GB T4 out of memory in the Whisper run. `expandable_segments` is on to reduce fragmentation, and the out-of-memory handler no longer calls into a failed CUDA context (that turned the real error into "unspecified launch failure").
 - On failure the runner sends the last 30 lines of train.log and the error line (it sent 2 lines, often blank).
