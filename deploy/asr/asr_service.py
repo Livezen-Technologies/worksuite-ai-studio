@@ -36,6 +36,8 @@ RATE = 16000
 MODELS_DIR = os.environ.get('ASR_MODELS_DIR', '/srv/sinhala-data/models')
 CATALOG = {
     'sinhala': {'label': 'Whisper Small · Sinhala', 'dir': MODEL_DIR, 'note': 'Fine-tuned for Sinhala (SinhaSpeech run11). Default.'},
+    'sinhala_numbers': {'label': 'Whisper Small · Sinhala — numbers (new)', 'dir': 'whisper-small-sinhala-numbers-ct2-int8',
+                        'note': 'Run11 fine-tuned on number-heavy speech (training job #5, 2 × T4). Being benchmarked; not the default yet.'},
     'tiny':    {'label': 'Whisper Tiny', 'dir': 'faster-whisper-tiny', 'note': 'Fastest, lower accuracy.'},
     'base':    {'label': 'Whisper Base', 'dir': 'faster-whisper-base', 'note': 'Fast; also used to detect the language in mixed speech.'},
     'small':   {'label': 'Whisper Small', 'dir': 'faster-whisper-small', 'note': 'Good balance of speed and accuracy.'},

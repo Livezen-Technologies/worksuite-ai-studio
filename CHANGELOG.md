@@ -2,6 +2,9 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.17.10] — 2026-10-27 — The numbers fine-tune is selectable
+- Speech to text → Model offers **Whisper Small · Sinhala — numbers (new)**: run11 fine-tuned on number-heavy speech by training job #5 on 2 × Tesla T4, converted to CTranslate2 int8. Not the default while its benchmark against run11 runs.
+
 ## [1.17.9] — 2026-10-27 — Large training results upload in pieces
 - A node uploads its result in 32 MB parts (`?part=k&parts=n`); the server appends them and hashes the finished file. One 500 MB body exceeded PHP's 128 MB memory limit (the framework reads a request body into memory) and the Whisper model upload failed with HTTP 500 after training had finished. Each part is retried up to 5 times.
 - A retry of a job whose training already finished uploads that result instead of training again (the result file is only written after the last epoch).
