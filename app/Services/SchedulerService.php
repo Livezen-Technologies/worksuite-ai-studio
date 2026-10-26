@@ -19,6 +19,7 @@ class SchedulerService
         'cleanup_cache'  => ['Clear cache', 'Flush the framework cache', 'cleanup_cache', 'daily'],
         'generate_report'=> ['Daily report', 'Roll up usage statistics', 'generate_report', 'daily'],
         'backup'         => ['Backup', 'Snapshot the database', 'backup', 'daily'],
+        'training_pipelines' => ['Training pipelines', 'Start runs when data changes; retry or fail stalled jobs', 'training_pipelines', 'every_minute'],
     ];
 
     public function __construct()
@@ -90,6 +91,7 @@ class SchedulerService
             'generate_report' => (new AnalyticsService())->report(),
             'cleanup_cache'   => ['flushed' => \Config\Services::cache()->clean()],
             'backup'          => $this->backup(),
+            'training_pipelines' => (new TrainingPipelineService())->tick(),
             default           => throw new \RuntimeException("Unknown handler: {$handler}"),
         };
     }

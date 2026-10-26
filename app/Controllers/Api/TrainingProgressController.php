@@ -106,6 +106,7 @@ class TrainingProgressController extends BaseApiController
         if (! empty($in['phase'])) $set['phase'] = mb_substr((string) $in['phase'], 0, 40);
         if (isset($in['server_id']) && is_numeric($in['server_id'])) $set['server_id'] = (int) $in['server_id'];
 
+        if (in_array($job['status'], ['cancelled'], true)) return $this->ok(['cancelled' => true]); // late reports from a stopped run
         $status = $in['status'] ?? null;
         if (in_array($status, ['running', 'completed', 'failed'], true)) {
             $set['status'] = $status;
@@ -137,6 +138,9 @@ class TrainingProgressController extends BaseApiController
             $set['logs'] = mb_strlen($logs) > self::LOG_LIMIT ? mb_substr($logs, -self::LOG_LIMIT) : $logs;
         }
         $jobs->update((int) $id, $set);
+        if (isset($set['status']) && in_array($set['status'], ['completed', 'failed'], true) && $job['status'] === 'running') {
+            (new \App\Services\TrainingPipelineService())->finished($job, $set['status']); // notifications for pipeline jobs
+        }
 
         // One chart point per report that carries a step or machine figures.
         if (isset($in['step']) || isset($in['gpu_pct']) || isset($in['loss'])) {

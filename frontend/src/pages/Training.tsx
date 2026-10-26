@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AcademicCapIcon, ArchiveBoxArrowDownIcon, BeakerIcon, ChartBarIcon, ArrowDownTrayIcon, CpuChipIcon, PencilSquareIcon, PlusIcon, TrashIcon,
+  AcademicCapIcon, ArchiveBoxArrowDownIcon, ArrowPathIcon, StopCircleIcon, BeakerIcon, ChartBarIcon, ArrowDownTrayIcon, CpuChipIcon, PencilSquareIcon, PlusIcon, TrashIcon,
 } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Alert, Badge, Button, Card, ConfirmDialog, DataTable, EmptyState, FormModal, FormSection, Input,
@@ -12,8 +12,9 @@ import { useAuth } from '../lib/auth';
 import { ago, dateTime, num } from '../lib/format';
 import TrainingLineage, { type LineageJob } from './SinLama/TrainingLineage';
 import TrainingLive, { JobProgress } from './Training/TrainingLive';
+import TrainingPipelines from './Training/Pipelines';
 
-type Status = 'draft' | 'kit_ready' | 'running' | 'completed' | 'failed' | 'imported';
+type Status = 'draft' | 'kit_ready' | 'preparing' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'imported';
 interface Hyper {
   epochs: number; learning_rate: number; lora_rank: number; lora_alpha: number; lora_dropout: number;
   batch_size: number; grad_accum: number; max_seq_len: number; warmup_steps: number; seed: number; quant_export: string;
@@ -24,16 +25,22 @@ interface Job extends LineageJob {
   notes: string | null; logs: string | null; created_at: string; updated_at: string | null;
   progress_pct?: string | number | null; eta_seconds?: number | string | null; current_step?: number | string | null;
   total_steps?: number | string | null; phase?: string | null; last_report_at?: string | null;
+  /** set for jobs a training pipeline created (they run through a node's training agent) */
+  pipeline_id?: number | null; recipe?: string | null; error?: string | null; trigger_reason?: string | null; attempt?: number | string | null;
 }
+const ACTIVE: Status[] = ['preparing', 'queued', 'running'];
 interface ListResponse { jobs: Job[]; base_models: string[]; defaults: Hyper }
 interface Dataset { id: number; name: string; item_count: number | string }
 
 const STATUSES: { value: Status; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'kit_ready', label: 'Kit ready' },
+  { value: 'preparing', label: 'Preparing' },
+  { value: 'queued', label: 'Queued' },
   { value: 'running', label: 'Running' },
   { value: 'completed', label: 'Completed' },
   { value: 'failed', label: 'Failed' },
+  { value: 'cancelled', label: 'Cancelled' },
   { value: 'imported', label: 'Imported' },
 ];
 const statusLabel = (s: Status) => STATUSES.find((x) => x.value === s)?.label ?? s;
@@ -65,13 +72,18 @@ export default function Training() {
   // Refresh while anything is running so progress moves without a reload.
   const list = useQuery({
     queryKey: ['training'], queryFn: () => get<ListResponse>('/training'),
-    refetchInterval: (query) => (query.state.data?.jobs.some((j) => j.status === 'running') ? 10_000 : false),
+    refetchInterval: (query) => (query.state.data?.jobs.some((j) => ACTIVE.includes(j.status)) ? 10_000 : false),
   });
   const jobs = list.data?.jobs ?? [];
   const rows = jobs.filter((j) => (tab === 'all' || j.status === tab)
     && (!q || `${j.name} ${j.base_model} ${j.dataset_name ?? ''}`.toLowerCase().includes(q.toLowerCase())));
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['training'] });
+  const jobAction = useMutation({
+    mutationFn: ({ id, action }: { id: number; action: 'cancel' | 'retry' }) => post(`/training/${id}/${action}`),
+    onSuccess: (_r, v) => { toast.success(v.action === 'cancel' ? 'Job cancelled' : 'Job queued again'); refresh(); qc.invalidateQueries({ queryKey: ['training', 'pipelines'] }); },
+    onError: (e) => toast.error(e),
+  });
   const kit = useMutation({
     mutationFn: (id: number) => post<Job>(`/training/${id}/kit`),
     onSuccess: (_, id) => { setKitRefusal((r) => (r?.job.id === id ? null : r)); toast.success('Training kit generated', 'Download it and run it on a GPU.'); refresh(); },
@@ -105,7 +117,12 @@ export default function Training() {
       key: 'name', header: 'Job', cell: (j) => (
         <div className="min-w-0">
           <p className="truncate font-medium text-slate-900 dark:text-white">{j.name}</p>
-          <p className="truncate text-xs text-slate-500 dark:text-slate-400">{j.base_model}</p>
+          <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+            {j.base_model}{j.recipe && <> · <Badge tone="blue">pipeline</Badge>{Number(j.attempt) > 1 ? ` attempt ${j.attempt}` : ''}</>}
+          </p>
+          {j.error && (j.status === 'failed' || j.status === 'queued') && (
+            <p className="mt-0.5 line-clamp-2 text-xs text-red-700 dark:text-red-400" title={j.error}>{j.error}</p>
+          )}
         </div>
       ),
     },
@@ -133,7 +150,13 @@ export default function Training() {
     {
       key: 'actions', header: <span className="sr-only">Actions</span>, align: 'right', cell: (j) => (
         <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-          {canManage && (
+          {canManage && j.recipe && ACTIVE.includes(j.status) && (
+            <Button size="sm" variant="secondary" icon={StopCircleIcon} loading={jobAction.isPending} onClick={() => jobAction.mutate({ id: j.id, action: 'cancel' })}>Cancel</Button>
+          )}
+          {canManage && j.recipe && (j.status === 'failed' || j.status === 'cancelled') && (
+            <Button size="sm" variant="secondary" icon={ArrowPathIcon} loading={jobAction.isPending} onClick={() => jobAction.mutate({ id: j.id, action: 'retry' })}>Retry</Button>
+          )}
+          {canManage && !j.recipe && (
             <Button
               size="sm"
               variant={j.status === 'draft' ? 'primary' : 'secondary'}
@@ -169,10 +192,7 @@ export default function Training() {
         actions={canManage && <Button icon={PlusIcon} onClick={() => { setEditing(null); form.onOpen(); }}>New training job</Button>}
       />
 
-      <Alert tone="info" title="This server is CPU-only — training runs elsewhere" className="mb-6">
-        A kit is a zip with <code>train.py</code> (Unsloth + PEFT + TRL), <code>dataset.jsonl</code> and a README with RunPod / Colab steps.
-        Run it on a GPU, then import the resulting GGUF in Model Studio. Status flow: draft → kit ready → running → completed → imported.
-      </Alert>
+      <TrainingPipelines canManage={canManage} />
 
       {kitRefusal && (
         <Alert tone="danger" title={`Kit not generated for “${kitRefusal.job.name}”`} className="mb-6">{kitRefusal.message}</Alert>

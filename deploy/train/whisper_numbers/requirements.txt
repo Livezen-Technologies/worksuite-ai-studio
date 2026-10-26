@@ -1,0 +1,6 @@
+torch
+transformers==4.46.3
+accelerate
+pyarrow
+soundfile
+librosa

@@ -16,6 +16,8 @@ $routes->post('api/nodes/enrol', 'Api\NodesController::enrol');
 $routes->post('api/training/(:num)/progress', 'Api\TrainingProgressController::progress/$1');
 $routes->get('api/training/(:num)/files/(:segment)', 'Api\TrainingProgressController::file/$1/$2');
 $routes->put('api/training/(:num)/output/(:segment)', 'Api\TrainingProgressController::output/$1/$2');
+// Node training agents poll for work with their agent token.
+$routes->post('api/agent/heartbeat', 'Api\AgentController::heartbeat');
 
 /*
  * Auth (guest entry points + token-protected profile/logout).
@@ -184,6 +186,14 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->get('training/(:num)/kit', 'TrainingController::downloadKit/$1');
     $routes->post('training/(:num)/report-token', 'TrainingProgressController::reportToken/$1');
     $routes->get('training/(:num)/live', 'TrainingProgressController::live/$1');
+    $routes->post('training/(:num)/cancel', 'TrainingPipelinesController::cancel/$1');
+    $routes->post('training/(:num)/retry', 'TrainingPipelinesController::retry/$1');
+    $routes->get('training/pipelines', 'TrainingPipelinesController::index');
+    $routes->post('training/pipelines', 'TrainingPipelinesController::create');
+    $routes->put('training/pipelines/(:num)', 'TrainingPipelinesController::update/$1');
+    $routes->delete('training/pipelines/(:num)', 'TrainingPipelinesController::delete/$1');
+    $routes->post('training/pipelines/(:num)/run', 'TrainingPipelinesController::run/$1');
+    $routes->post('servers/(:num)/agent-token', 'TrainingPipelinesController::agentToken/$1');
 
     // --- User portal + compute allocations ---
     $routes->get('portal/overview', 'PortalController::overview');
