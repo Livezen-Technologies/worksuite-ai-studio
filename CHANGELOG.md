@@ -2,6 +2,11 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.16.0] — 2026-10-26 — Training jobs that run on a node and bring their model back
+- A training job's runner can fetch its files from the server (`GET /api/training/{id}/files/{name}`) and upload its result (`PUT /api/training/{id}/output/{name}`, raw body up to 4 GB), both with the job's report token. Files live in `writable/training/{id}/files/`, results in `.../output/` — a model trained on a node no longer stays on that machine.
+- `deploy/train/whisper_numbers/`: the Whisper Sinhala numbers fine-tune as a node job (CUDA, fp16 autocast, encoder frozen for the first half). `run.sh` fetches the job files, builds its venv once, trains with live progress and GPU figures on the Training page, scores number accuracy (values, article එක not counted) on the dev clips before and after, and uploads the best epoch. A setup or training error marks the job failed.
+- Job #3 "Whisper Sinhala — numbers fine-tune (Tesla T4)" is set up for Node_02_MLSP.
+
 ## [1.15.0] — 2026-10-26 — Disable a node any time; CUDA cores per server
 - **Disable / Enable node** on the Servers page (row menu). A disabled node gets no new chat, gateway, knowledge-base or training work — the gateway and knowledge base skip it, chat refuses it, training allocation reports it — while health checks continue and running jobs finish. The list and detail show a Disabled badge, with when and why. API: `POST /api/servers/{id}/disable {reason?}`, `POST /api/servers/{id}/enable`.
 - **CUDA cores per server**: each row (Specs) and the detail page show the server's CUDA cores (per-GPU figure × GPU count) and CUDA version, derived from the GPU model — nvidia-smi does not report core counts. One table (`App\Libraries\GpuSpecs`) now serves the summary card and each server.

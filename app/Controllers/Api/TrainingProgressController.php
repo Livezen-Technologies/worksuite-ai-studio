@@ -10,6 +10,11 @@ use App\Models\TrainingJobModel;
  *   POST /api/training/{id}/report-token   issue the runner's token, shown once        (models.manage)
  *   POST /api/training/{id}/progress       runner → Studio: step, loss, ETA, machine     (Bearer job token)
  *   GET  /api/training/{id}/live           progress, chart points and log tail           (models.view)
+ *   GET  /api/training/{id}/files/{name}   runner fetches its job files (script, data)   (Bearer job token)
+ *   PUT  /api/training/{id}/output/{name}  runner uploads its result (raw body)          (Bearer job token)
+ *
+ * Job files live in writable/training/{id}/files/, results land in writable/training/{id}/output/ — so a model
+ * trained on a node comes back to the server instead of staying on that machine.
  *
  * The runner is the training script itself or `aistudio-train-report`, which follows a training log.
  */
@@ -32,15 +37,59 @@ class TrainingProgressController extends BaseApiController
         ], 'Report token created. It replaces any earlier token for this job.', 201);
     }
 
+    /** The job row when the request carries its Bearer report token, else null. */
+    private function jobForToken($id): ?array
+    {
+        $job  = (new TrainingJobModel())->find((int) $id);
+        $auth = (string) $this->request->getHeaderLine('Authorization');
+        $tok  = str_starts_with($auth, 'Bearer ') ? substr($auth, 7) : '';
+        if (! $job || ! $job['report_token_hash'] || ! hash_equals($job['report_token_hash'], hash('sha256', $tok))) return null;
+        return $job;
+    }
+
+    private static function safeName(string $name): ?string
+    {
+        $name = basename($name);
+        return preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/', $name) ? $name : null;
+    }
+
+    public function file($id = null, $name = null)
+    {
+        if (! $this->jobForToken($id)) return $this->failure('Invalid job or token.', 401);
+        $name = self::safeName((string) $name);
+        $path = $name ? WRITEPATH . 'training/' . (int) $id . '/files/' . $name : null;
+        if (! $path || ! is_file($path)) return $this->failure('No such job file.', 404);
+        @set_time_limit(0);
+        while (ob_get_level() > 0) { ob_end_clean(); }
+        header('Content-Type: application/octet-stream');
+        header('Content-Length: ' . filesize($path));
+        header('Content-Disposition: attachment; filename="' . $name . '"');
+        readfile($path);
+        exit;
+    }
+
+    public function output($id = null, $name = null)
+    {
+        if (! $this->jobForToken($id)) return $this->failure('Invalid job or token.', 401);
+        $name = self::safeName((string) $name);
+        if (! $name) return $this->failure('Give the file a plain name (letters, digits, . _ -).', 422);
+        $dir = WRITEPATH . 'training/' . (int) $id . '/output/';
+        if (! is_dir($dir)) mkdir($dir, 0775, true);
+        @set_time_limit(0);
+        $in  = fopen('php://input', 'rb');
+        $out = fopen($dir . $name . '.part', 'wb');
+        $n   = stream_copy_to_stream($in, $out);
+        fclose($in); fclose($out);
+        if (! $n) { @unlink($dir . $name . '.part'); return $this->failure('Empty upload.', 422); }
+        rename($dir . $name . '.part', $dir . $name);
+        return $this->ok(['name' => $name, 'size_bytes' => $n, 'sha256' => hash_file('sha256', $dir . $name)], 'Result stored on the server.', 201);
+    }
+
     public function progress($id = null)
     {
         $jobs = new TrainingJobModel();
-        $job  = $jobs->find((int) $id);
-        $auth = (string) $this->request->getHeaderLine('Authorization');
-        $tok  = str_starts_with($auth, 'Bearer ') ? substr($auth, 7) : '';
-        if (! $job || ! $job['report_token_hash'] || ! hash_equals($job['report_token_hash'], hash('sha256', $tok))) {
-            return $this->failure('Invalid job or token.', 401);
-        }
+        $job  = $this->jobForToken($id);
+        if (! $job) return $this->failure('Invalid job or token.', 401);
 
         $in  = $this->input();
         $now = date('Y-m-d H:i:s');

@@ -14,6 +14,8 @@ $routes->post('api/nodes/enrol', 'Api\NodesController::enrol');
 
 // Training runners report progress with the job's report token.
 $routes->post('api/training/(:num)/progress', 'Api\TrainingProgressController::progress/$1');
+$routes->get('api/training/(:num)/files/(:segment)', 'Api\TrainingProgressController::file/$1/$2');
+$routes->put('api/training/(:num)/output/(:segment)', 'Api\TrainingProgressController::output/$1/$2');
 
 /*
  * Auth (guest entry points + token-protected profile/logout).
