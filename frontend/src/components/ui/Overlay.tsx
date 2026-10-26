@@ -1,24 +1,40 @@
 import { useState, type ComponentType, type ReactNode, type SVGProps } from 'react';
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle, Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
-import { EllipsisVerticalIcon, ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArrowsPointingInIcon, ArrowsPointingOutIcon, EllipsisVerticalIcon, ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { Button } from './Button';
 import { cx } from './cx';
 
 const widths = { sm: 'sm:max-w-md', md: 'sm:max-w-lg', lg: 'sm:max-w-2xl', xl: 'sm:max-w-4xl' };
 
-export function Modal({ open, onClose, title, description, children, footer, size = 'md' }: {
+/** Remembered per `expandKey`, so a window the user maximised opens maximised next time. */
+function useExpanded(key?: string): [boolean, (v: boolean) => void] {
+  const [v, setV] = useState(() => {
+    if (!key) return false;
+    try { return localStorage.getItem(`modal-expanded:${key}`) === '1'; } catch { return false; }
+  });
+  return [v, (next: boolean) => {
+    setV(next);
+    if (key) { try { localStorage.setItem(`modal-expanded:${key}`, next ? '1' : '0'); } catch { /* storage off */ } }
+  }];
+}
+
+export function Modal({ open, onClose, title, description, children, footer, size = 'md', expandKey }: {
   open: boolean; onClose: () => void; title: ReactNode; description?: ReactNode; children?: ReactNode; footer?: ReactNode; size?: keyof typeof widths;
+  /** Shows a full-window toggle; the choice is remembered under this key. */
+  expandKey?: string;
 }) {
+  const [expanded, setExpanded] = useExpanded(expandKey);
+  const full = !!expandKey && expanded;
   return (
     <Dialog open={open} onClose={onClose} className="relative z-50">
       <DialogBackdrop transition className="fixed inset-0 bg-slate-900/50 transition-opacity data-closed:opacity-0 data-enter:duration-200 data-enter:ease-out data-leave:duration-150 data-leave:ease-in dark:bg-slate-950/70" />
       <div className="fixed inset-0 z-10 w-screen overflow-y-auto">
-        <div className="flex min-h-full items-end justify-center p-4 sm:items-center sm:p-6">
+        <div className={cx('flex min-h-full justify-center', full ? 'items-stretch p-2 sm:p-3' : 'items-end p-4 sm:items-center sm:p-6')}>
           <DialogPanel
             transition
             className={cx(
               'relative w-full transform overflow-hidden rounded-xl bg-white text-left shadow-xl ring-1 ring-slate-900/5 transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-200 data-enter:ease-out data-leave:duration-150 data-leave:ease-in sm:data-closed:translate-y-0 sm:data-closed:scale-95 dark:bg-slate-900 dark:ring-white/10',
-              widths[size],
+              full ? 'flex max-w-none flex-col sm:h-[calc(100vh-1.5rem)]' : widths[size],
             )}
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 dark:border-white/10">
@@ -26,12 +42,21 @@ export function Modal({ open, onClose, title, description, children, footer, siz
                 <DialogTitle className="text-base font-semibold text-slate-900 dark:text-white">{title}</DialogTitle>
                 {description && <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{description}</p>}
               </div>
-              <button type="button" onClick={onClose} className="-m-1 rounded-md p-1 text-slate-400 hover:text-slate-600 focus-visible:outline-2 focus-visible:outline-brand-600 dark:hover:text-white">
-                <span className="sr-only">Close</span>
-                <XMarkIcon aria-hidden className="size-5" />
-              </button>
+              <div className="-m-1 flex shrink-0 items-center gap-1">
+                {expandKey && (
+                  <button type="button" onClick={() => setExpanded(!full)} title={full ? 'Restore window' : 'Full window'}
+                    className="hidden rounded-md p-1 text-slate-400 hover:text-slate-600 focus-visible:outline-2 focus-visible:outline-brand-600 sm:block dark:hover:text-white">
+                    <span className="sr-only">{full ? 'Restore window' : 'Full window'}</span>
+                    {full ? <ArrowsPointingInIcon aria-hidden className="size-5" /> : <ArrowsPointingOutIcon aria-hidden className="size-5" />}
+                  </button>
+                )}
+                <button type="button" onClick={onClose} className="rounded-md p-1 text-slate-400 hover:text-slate-600 focus-visible:outline-2 focus-visible:outline-brand-600 dark:hover:text-white">
+                  <span className="sr-only">Close</span>
+                  <XMarkIcon aria-hidden className="size-5" />
+                </button>
+              </div>
             </div>
-            {children && <div className="max-h-[70vh] overflow-y-auto px-5 py-5">{children}</div>}
+            {children && <div className={cx('overflow-y-auto px-5 py-5', full ? 'min-h-0 flex-1' : 'max-h-[70vh]')}>{children}</div>}
             {footer && <div className="flex flex-col-reverse gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3 sm:flex-row sm:justify-end dark:border-white/10 dark:bg-white/[0.02]">{footer}</div>}
           </DialogPanel>
         </div>

@@ -68,7 +68,7 @@ export default function TrainingLive({ id, onClose }: { id: number; onClose: () 
   const eta = j?.eta_seconds != null ? Number(j.eta_seconds) : null;
 
   return (
-    <Modal open onClose={onClose} size="xl"
+    <Modal open onClose={onClose} size="xl" expandKey="training-live"
       title={j ? <span className="flex flex-wrap items-center gap-2">{j.name}<StatusBadge status={j.status === 'kit_ready' ? 'ready' : j.status} />{j.stale && <Badge tone="amber">no report for 3+ min</Badge>}</span> : 'Training job'}
       description={j ? `${j.base_model}${j.dataset_name ? ` · ${j.dataset_name}` : ''}${j.server_name ? ` · on ${j.server_name}` : L.host ? ` · on ${L.host}` : ''}` : undefined}>
       {q.isLoading ? <SkeletonRows rows={6} cols={3} /> : q.error ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : j && (

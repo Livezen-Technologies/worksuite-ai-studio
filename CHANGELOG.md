@@ -2,6 +2,9 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.17.6] — 2026-10-27 — Full-window training view
+- The training job window (live progress, evaluation, charts, log) has a full-window toggle next to Close; the choice is remembered. Any modal can opt in with `expandKey`.
+
 ## [1.17.5] — 2026-10-27 — Tunnel-aware health; conda first
 - Health score: a node behind the reverse SSH tunnel answers across the internet (~450 ms is normal), so it loses points only above 1 s / 2 s / 4 s instead of 250 ms / 750 ms / 1.5 s. Tunnelled nodes now read 100 at normal latency; local and LAN nodes keep the strict thresholds.
 - Training agent 1.2.0 prefers conda whenever it is installed, so training never uses the system Python; python3-venv is the fallback, or forced with `--venv`.
