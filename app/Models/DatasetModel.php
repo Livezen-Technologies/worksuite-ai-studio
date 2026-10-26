@@ -13,5 +13,6 @@ class DatasetModel extends Model
     protected $allowedFields = [
         'name', 'description', 'language', 'item_count', 'token_estimate', 'created_by',
         'task', 'category', 'source_ref', 'permitted_use', 'rights_ref', 'consent_required', 'consent_ref', 'rights_status',
+        'visibility',
     ];
 }

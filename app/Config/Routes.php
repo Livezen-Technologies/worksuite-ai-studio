@@ -156,6 +156,31 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->post('training/(:num)/kit', 'TrainingController::generateKit/$1');
     $routes->get('training/(:num)/kit', 'TrainingController::downloadKit/$1');
 
+    // --- User portal + compute allocations ---
+    $routes->get('portal/overview', 'PortalController::overview');
+    $routes->get('portal/nodes', 'PortalController::nodes');
+    $routes->get('portal/datasets', 'PortalController::datasetsIndex');
+    $routes->post('portal/datasets', 'PortalController::datasetCreate');
+    $routes->get('portal/datasets/(:num)', 'PortalController::datasetShow/$1');
+    $routes->post('portal/datasets/(:num)/upload', 'PortalController::datasetUpload/$1');
+    $routes->delete('portal/datasets/(:num)', 'PortalController::datasetDelete/$1');
+    $routes->get('portal/jobs', 'PortalController::jobsIndex');
+    $routes->post('portal/jobs', 'PortalController::jobCreate');
+    $routes->get('portal/jobs/(:num)', 'PortalController::jobShow/$1');
+    $routes->put('portal/jobs/(:num)/nodes', 'PortalController::jobNodes/$1');
+    $routes->post('portal/jobs/(:num)/cancel', 'PortalController::jobCancel/$1');
+    $routes->post('portal/jobs/(:num)/kit', 'PortalController::jobKit/$1');
+    $routes->get('portal/jobs/(:num)/kit', 'PortalController::jobKitDownload/$1');
+    $routes->get('compute/overview', 'ComputeController::overview');
+    $routes->post('compute/allocations', 'ComputeController::allocationSave');
+    $routes->put('compute/allocations/(:num)', 'ComputeController::allocationUpdate/$1');
+    $routes->delete('compute/allocations/(:num)', 'ComputeController::allocationDelete/$1');
+    $routes->put('compute/nodes/(:num)', 'ComputeController::nodeUpdate/$1');
+    $routes->get('compute/usage', 'ComputeController::usage');
+    $routes->get('compute/jobs', 'ComputeController::jobs');
+    $routes->put('compute/jobs/(:num)/placement', 'ComputeController::placement/$1');
+    $routes->put('compute/jobs/(:num)/nodes/(:num)', 'ComputeController::nodeStatus/$1/$2');
+
     // --- Speech to text (Whisper Sinhala via the local aistudio-asr service) ---
     $routes->get('speech/status', 'SpeechController::status');
     $routes->post('speech/transcribe', 'SpeechController::transcribe');

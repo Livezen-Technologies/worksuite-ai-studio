@@ -2,7 +2,7 @@ import type { ComponentType, SVGProps } from 'react';
 import {
   BeakerIcon, BellIcon, BookOpenIcon, ChartBarIcon, ChatBubbleLeftRightIcon, Cog6ToothIcon, CpuChipIcon,
   CircleStackIcon, ClipboardDocumentListIcon, CommandLineIcon, DocumentTextIcon, HomeIcon, KeyIcon,
-  QueueListIcon, ServerStackIcon, MicrophoneIcon, CheckBadgeIcon, CubeIcon, ArrowsRightLeftIcon, PresentationChartLineIcon, ShieldCheckIcon, SignalIcon, SparklesIcon, TableCellsIcon, UsersIcon, AcademicCapIcon,
+  QueueListIcon, ServerStackIcon, MicrophoneIcon, CheckBadgeIcon, CubeIcon, ArrowsRightLeftIcon, PresentationChartLineIcon, ShieldCheckIcon, SignalIcon, SparklesIcon, TableCellsIcon, UsersIcon, AcademicCapIcon, Squares2X2Icon, ScaleIcon,
 } from '@heroicons/react/24/outline';
 
 export interface NavItem { label: string; to: string; icon: ComponentType<SVGProps<SVGSVGElement>>; perm: string; description: string }
@@ -18,7 +18,14 @@ export const NAV: NavSection[] = [
     { label: 'Node App', to: '/node-app', icon: CommandLineIcon, perm: 'servers.view', description: 'Download the node app and the setup guide' },
     { label: 'Models', to: '/models', icon: CpuChipIcon, perm: 'models.view', description: 'Pull, load and configure models' },
     { label: 'Monitoring', to: '/monitoring', icon: SignalIcon, perm: 'monitoring.view', description: 'Live CPU, memory, GPU and health' },
+    { label: 'Compute Allocations', to: '/compute', icon: ScaleIcon, perm: 'compute.manage', description: 'Give users CPU/GPU capacity on nodes' },
+    { label: 'Compute Usage', to: '/compute/usage', icon: ArrowsRightLeftIcon, perm: 'compute.manage', description: 'Who uses what; job placement' },
     { label: 'Queue', to: '/queue', icon: QueueListIcon, perm: 'queues.view', description: 'Background jobs and schedules' },
+  ] },
+  { heading: 'My Workspace', items: [
+    { label: 'My Workspace', to: '/portal', icon: Squares2X2Icon, perm: 'portal.use', description: 'Your allocations, datasets and jobs' },
+    { label: 'My Datasets', to: '/portal/datasets', icon: TableCellsIcon, perm: 'portal.use', description: 'Upload your own training data' },
+    { label: 'My Training Jobs', to: '/portal/jobs', icon: AcademicCapIcon, perm: 'portal.use', description: 'Train models on your allocated nodes' },
   ] },
   { heading: 'SinLama', items: [
     { label: 'Model Studio', to: '/studio', icon: SparklesIcon, perm: 'models.view', description: 'Build custom models from a base' },

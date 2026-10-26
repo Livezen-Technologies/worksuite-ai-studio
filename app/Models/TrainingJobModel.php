@@ -15,6 +15,7 @@ class TrainingJobModel extends Model
         // Sinhala AI Engine lineage (FR TRNPIPE 002)
         'task', 'dataset_manifest_hash', 'dataset_split_hash', 'base_digest', 'config_hash', 'code_commit',
         'container_digest', 'seed', 'hardware', 'output_digest',
+        'placement_status',
     ];
 
     /** Jobs joined with their dataset name/count. */

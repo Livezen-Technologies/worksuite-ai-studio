@@ -16,6 +16,11 @@ const pages = {
   '/studio': lazy(() => import('./pages/Studio')),
   '/datasets': lazy(() => import('./pages/Datasets')),
   '/training': lazy(() => import('./pages/Training')),
+  '/portal': lazy(() => import('./pages/portal/Overview')),
+  '/portal/datasets': lazy(() => import('./pages/portal/Datasets')),
+  '/portal/jobs': lazy(() => import('./pages/portal/Jobs')),
+  '/compute': lazy(() => import('./pages/compute/Allocations')),
+  '/compute/usage': lazy(() => import('./pages/compute/Usage')),
   '/engine': lazy(() => import('./pages/engine/Overview')),
   '/engine/evaluations': lazy(() => import('./pages/engine/Evaluations')),
   '/engine/approvals': lazy(() => import('./pages/engine/Approvals')),
@@ -38,7 +43,7 @@ const pages = {
 
 const perms: Record<keyof typeof pages, string> = {
   '/': 'dashboard.view', '/servers': 'servers.view', '/node-app': 'servers.view', '/models': 'models.view', '/monitoring': 'monitoring.view', '/queue': 'queues.view',
-  '/studio': 'models.view', '/datasets': 'models.view', '/training': 'models.view', '/engine': 'engine.view', '/engine/evaluations': 'engine.view', '/engine/approvals': 'engine.view', '/engine/packages': 'engine.view', '/engine/bindings': 'engine.view',
+  '/studio': 'models.view', '/datasets': 'models.view', '/training': 'models.view', '/portal': 'portal.use', '/portal/datasets': 'portal.use', '/portal/jobs': 'portal.use', '/compute': 'compute.manage', '/compute/usage': 'compute.manage', '/engine': 'engine.view', '/engine/evaluations': 'engine.view', '/engine/approvals': 'engine.view', '/engine/packages': 'engine.view', '/engine/bindings': 'engine.view',
   '/chat': 'chat.use', '/speech': 'chat.use', '/prompts': 'prompts.view',
   '/knowledge': 'knowledge.view', '/agents': 'agents.view', '/api-keys': 'apikeys.view', '/api-logs': 'logs.view', '/analytics': 'analytics.view',
   '/users': 'users.view', '/roles': 'roles.view', '/audit': 'audit.view', '/notifications': 'notifications.view', '/settings': 'settings.view',

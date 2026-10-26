@@ -31,6 +31,7 @@ class AuthSeeder extends Seeder
         'notifications' => [['notifications.view', 'View notifications'], ['notifications.manage', 'Manage notifications']],
         'settings'      => [['settings.view', 'View settings'], ['settings.manage', 'Manage settings']],
         'audit'         => [['audit.view', 'View audit log']],
+        'compute'       => [['portal.use', 'Use the training portal'], ['compute.manage', 'Manage compute allocations']],
     ];
 
     /** role slug => label, description, [permission slugs | '*' for all] */
@@ -41,13 +42,13 @@ class AuthSeeder extends Seeder
             'dashboard.view', 'servers.view', 'servers.manage', 'models.view', 'models.manage',
             'chat.use', 'apikeys.view', 'apikeys.manage', 'monitoring.view', 'logs.view',
             'analytics.view', 'prompts.view', 'prompts.manage', 'knowledge.view', 'knowledge.manage',
-            'agents.view', 'agents.manage', 'queues.view',
+            'agents.view', 'agents.manage', 'queues.view', 'portal.use',
         ]],
         'support'     => ['Support', 'Assist users; read-only on most modules', [
             'dashboard.view', 'chat.use', 'logs.view', 'monitoring.view', 'notifications.view',
         ]],
         'customer'    => ['Customer', 'Consume chat + API gateway', [
-            'chat.use', 'apikeys.view',
+            'chat.use', 'apikeys.view', 'portal.use',
         ]],
         'viewer'      => ['Viewer', 'Read-only dashboards and reports', [
             'dashboard.view', 'servers.view', 'models.view', 'monitoring.view', 'analytics.view', 'logs.view',
