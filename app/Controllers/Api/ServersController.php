@@ -41,14 +41,17 @@ class ServersController extends BaseApiController
         $known = 0;
         foreach ($rows as $s) {
             if (! empty($s['gpu_model'])) {
-                $gpus++;
+                $n = max(1, (int) ($s['gpu_count'] ?? 0));                  // a node can carry several GPUs
+                $gpus += $n;
                 if ($c = self::cudaCores($s['gpu_model'])) {
-                    $cuda += $c;
-                    $known++;
+                    $cuda  += $c * $n;
+                    $known += $n;
                 }
-                // Enrolled nodes record "Name, 4096 MiB".
-                if (preg_match('/([\d.]+)\s*MiB/i', $s['gpu_model'], $m)) {
-                    $vram += (float) $m[1] / 1024;
+                // VRAM: the node's recorded total, else the per-GPU "Name, 4096 MiB" × count.
+                if (! empty($s['gpu_vram_gb'])) {
+                    $vram += (float) $s['gpu_vram_gb'];
+                } elseif (preg_match('/([\d.]+)\s*MiB/i', $s['gpu_model'], $m)) {
+                    $vram += (float) $m[1] / 1024 * $n;
                 }
             }
         }

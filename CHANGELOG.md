@@ -2,6 +2,9 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.17.4] — 2026-10-27 — Servers summary counts every GPU
+- The CUDA cores, GPUs and VRAM cards counted one GPU per server. They now multiply by each node's GPU count (2 × Tesla T4 + Quadro T1000 = 6,016 CUDA cores across 3 GPUs, not 3,456 across 2), and use the node's recorded VRAM total when there is one.
+
 ## [1.17.3] — 2026-10-27 — Training agent fixes; training uses every GPU on a node
 - The installer's token check no longer claims a job: it is a probe (`probe=1`). Before, installing the agent while a job was queued handed that job to the installer, which never ran it, so the job sat at "starting" with no reports.
 - Reinstalling the agent restarts the service, so a new token takes effect. Before, the running agent kept its old token and every heartbeat was refused (401).
