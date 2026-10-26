@@ -17,6 +17,25 @@ interface LiveJob {
   progress_pct: string | null; phase: string | null; current_step: string | null; total_steps: string | null; epoch: string | null;
   eta_seconds: string | null; started_at: string | null; finished_at: string | null; last_report_at: string | null;
   live: Live | null; log_tail: string; has_token: boolean; stale: boolean;
+  hyperparams?: string | Record<string, unknown> | null; recipe?: string | null; trigger_reason?: string | null; error?: string | null;
+  attempt?: number | string | null; max_attempts?: number | string | null; hardware?: string | null; seed?: number | string | null; task?: string | null;
+}
+
+/** The job's assigned settings as label/value pairs (hyperparameters first, then how and where it runs). */
+function settings(j: LiveJob): [string, string][] {
+  let hp: Record<string, unknown> = {};
+  try { hp = typeof j.hyperparams === 'string' ? JSON.parse(j.hyperparams || '{}') : (j.hyperparams ?? {}); } catch { hp = {}; }
+  const label: Record<string, string> = { epochs: 'Epochs', batch: 'Batch per GPU', batch_size: 'Batch size', grad_accum: 'Gradient accumulation', lr: 'Learning rate',
+    learning_rate: 'Learning rate', lora_r: 'LoRA rank', lora_rank: 'LoRA rank', lora_alpha: 'LoRA alpha', max_len: 'Max sequence length', max_seq_len: 'Max sequence length',
+    max_rows: 'Max training rows', precision: 'Precision', encoder: 'Encoder' };
+  const rows: [string, string][] = Object.entries(hp).map(([k, v]) => [label[k] ?? k.replace(/_/g, ' '), String(v)]);
+  rows.push(['Base model', j.base_model], ['Method', j.method]);
+  if (j.recipe) rows.push(['Recipe', j.recipe]);
+  if (j.seed != null) rows.push(['Seed', String(j.seed)]);
+  if (j.hardware) rows.push(['Hardware', j.hardware]);
+  if (j.trigger_reason) rows.push(['Started because', j.trigger_reason]);
+  if (j.recipe && j.attempt != null) rows.push(['Attempt', `${j.attempt} of ${j.max_attempts ?? '—'}`]);
+  return rows;
 }
 interface Point { at: string; step: string | null; loss: string | null; lr: string | null; cpu_pct: string | null; gpu_pct: string | null; vram_pct: string | null; gpu_temp: string | null }
 
@@ -96,6 +115,20 @@ export default function TrainingLive({ id, onClose }: { id: number; onClose: () 
             <Fig label="VRAM" value={L.vram_pct != null ? `${Math.round(L.vram_pct)}%` : '—'} hint={L.vram_used_mb != null ? `${(L.vram_used_mb / 1024).toFixed(1)} of ${((L.vram_total_mb ?? 0) / 1024).toFixed(1)} GB` : undefined} />
           </div>
 
+          {j.error && j.status === 'failed' && <Alert tone="danger" title="Why it failed">{j.error}</Alert>}
+
+          <Card>
+            <CardHeader title="Settings" description="What this run was given." />
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-3 p-4 text-sm sm:grid-cols-2 sm:px-6 lg:grid-cols-3">
+              {settings(j).map(([k, v]) => (
+                <div key={k} className="min-w-0">
+                  <dt className="text-xs text-slate-500 dark:text-slate-400">{k}</dt>
+                  <dd className="mt-0.5 font-medium break-words text-slate-900 tabular-nums dark:text-white">{v}</dd>
+                </div>
+              ))}
+            </dl>
+          </Card>
+
           {L.metrics && Object.keys(L.metrics).length > 0 && (
             <Card>
               <CardHeader title="Evaluation" />
@@ -129,7 +162,7 @@ export default function TrainingLive({ id, onClose }: { id: number; onClose: () 
               : <EmptyState title="No log yet" description="Lines appear once the runner starts reporting." />}
           </Card>
 
-          <Card>
+          {!j.recipe && <Card>
             <CardHeader title="Report progress from a training machine" description={j.has_token ? 'This job has a report token. Creating a new one replaces it.' : 'Create a token, then run the reporter next to your training run.'}
               actions={manage && <Button size="sm" icon={KeyIcon} loading={issue.isPending} onClick={() => issue.mutate()}>Create report token</Button>} />
             <div className="space-y-2 p-4 text-sm sm:px-6">
@@ -143,7 +176,7 @@ python aistudio-train-report.py --url ${token.url} \\
               ) : <p className="text-slate-500 dark:text-slate-400">The reporter follows your training log and sends step, ETA, loss, evaluation results, GPU/CPU load and new log lines every 10 seconds.</p>}
               {j.started_at && <p className="text-xs text-slate-500 dark:text-slate-400">Started {dateTime(j.started_at)}{j.finished_at ? ` · finished ${dateTime(j.finished_at)}` : ''}</p>}
             </div>
-          </Card>
+          </Card>}
         </div>
       )}
     </Modal>

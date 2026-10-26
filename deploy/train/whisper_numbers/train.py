@@ -123,20 +123,49 @@ warm = max(20, steps // 20)
 sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1, (s + 1) / warm) * max(0.0, (steps - s) / max(1, steps - warm)))
 scaler = torch.cuda.amp.GradScaler(enabled=dev.type == 'cuda')
 step, t0, saved, after = 0, time.time(), False, before
-for ep in range(EPOCHS):
-    random.shuffle(train)
-    for p in model.model.encoder.parameters(): p.requires_grad = ep >= EPOCHS / 2
+
+
+def run_epoch(ep):
+    """One pass. While the encoder trains too (second half) gradients and optimizer state for it no longer fit at the
+    full batch on a 16 GB GPU, so each step is split into two half-batches (gradient accumulation; same effective
+    batch, same learning) with gradient checkpointing on."""
+    global step
+    enc = ep >= EPOCHS / 2
+    for p in model.model.encoder.parameters(): p.requires_grad = enc
+    if enc and not model.is_gradient_checkpointing:
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False}); model.config.use_cache = False
+    parts = 2 if enc else 1
+    torch.cuda.empty_cache()
     for i in range(0, len(train), STEP_BATCH):
-        f, d, l = batch(train[i:i + STEP_BATCH])
-        with torch.autocast('cuda', dtype=torch.float16, enabled=dev.type == 'cuda'):
-            loss = net(input_features=f, decoder_input_ids=d, labels=l).loss.mean()   # one loss per GPU → mean
-        scaler.scale(loss).backward(); scaler.unscale_(opt); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        scaler.step(opt); scaler.update(); sched.step(); opt.zero_grad(); step += 1
+        rows = train[i:i + STEP_BATCH]
+        size = math.ceil(len(rows) / parts)
+        total = 0.0
+        for k in range(0, len(rows), size):
+            f, d, l = batch(rows[k:k + size])
+            with torch.autocast('cuda', dtype=torch.float16, enabled=dev.type == 'cuda'):
+                loss = net(input_features=f, decoder_input_ids=d, labels=l).loss.mean() * len(rows[k:k + size]) / len(rows)
+            scaler.scale(loss).backward(); total += loss.item()
+        scaler.unscale_(opt); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        scaler.step(opt); scaler.update(); sched.step(); opt.zero_grad(set_to_none=True); step += 1
         if step % 10 == 0 or step == steps:
             el = time.time() - t0
-            say(f'ep {ep + 1} step {step}/{steps} loss {loss.item():.4f}')
-            report(step=step, total_steps=steps, epoch=round(ep + (i + STEP_BATCH) / len(train), 3), loss=round(loss.item(), 4),
+            say(f'ep {ep + 1} step {step}/{steps} loss {total:.4f}')
+            report(step=step, total_steps=steps, epoch=round(ep + (i + STEP_BATCH) / len(train), 3), loss=round(total, 4),
                    lr=sched.get_last_lr()[0], sec_per_step=round(el / step, 2), eta_seconds=int(el / step * (steps - step)))
+
+
+stopped = None
+for ep in range(EPOCHS):
+    random.shuffle(train)
+    try:
+        run_epoch(ep)
+    except torch.OutOfMemoryError as e:
+        # Keep what was learned: a model saved at an earlier epoch is uploaded instead of being lost with the run.
+        stopped = f'stopped in epoch {ep + 1}: GPU out of memory'
+        say(f'{stopped} ({str(e).splitlines()[0][:160]})')
+        torch.cuda.empty_cache()
+        if not saved: raise
+        break
     report(phase=f'evaluating epoch {ep + 1}')
     r = evaluate(devset, f'epoch {ep + 1}')
     if r['dev_loss'] < best:
@@ -148,6 +177,7 @@ for ep in range(EPOCHS):
 if not saved:
     say('No epoch beat the base model on dev loss; nothing to upload.')
     report(status='failed', phase='no improvement', metrics={'after': after}); sys.exit(1)
+if stopped: say(f'Uploading the best model saved before that ({stopped}).')
 report(phase='uploading', metrics={'after': after})
 with tarfile.open('whisper-sinhala-numbers.tar.gz', 'w:gz') as t:
     t.add(OUT, arcname='whisper-sinhala-numbers')
@@ -156,6 +186,6 @@ req = urllib.request.Request(up, data=open('whisper-sinhala-numbers.tar.gz', 'rb
                              headers={'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/octet-stream'})
 res = json.load(urllib.request.urlopen(req, timeout=1800))
 say(f'uploaded {res["data"]["size_bytes"]} bytes, sha256 {res["data"]["sha256"]}')
-say('REPORT ' + json.dumps({'base': BASE, 'train_utts': len(train), 'dev_utts': len(devset), 'epochs': EPOCHS,
+say('REPORT ' + json.dumps({'stopped_early': stopped, 'base': BASE, 'train_utts': len(train), 'dev_utts': len(devset), 'epochs': EPOCHS,
                             'train_minutes': round((time.time() - t0) / 60, 1), 'before': before, 'after': after}))
 report(status='completed', phase='done', metrics={'after': after, 'output_sha256': res['data']['sha256']})

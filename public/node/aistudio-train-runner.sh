@@ -9,7 +9,8 @@ JD="${AISTUDIO_JOB_DIR:-$PWD}"; cd "$JD"
 FILES="${AISTUDIO_JOB_URL%/progress}/files"
 auth=(-H "Authorization: Bearer ${AISTUDIO_JOB_TOKEN}")
 post() { curl -s -m 20 "${auth[@]}" -H 'Content-Type: application/json' -d "$1" "$AISTUDIO_JOB_URL" >/dev/null || true; }
-fail() { echo "error: $1" >&2; post "{\"status\":\"failed\",\"phase\":\"setup failed\",\"log\":[\"$(printf '%s' "$1" | tr -d '"\\')\"]}"; exit 1; }
+STAGE=setup
+fail() { echo "error: $1" >&2; post "{\"status\":\"failed\",\"phase\":\"${STAGE} failed\",\"log\":[\"$(printf '%s' "$1" | tr -d '"\\')\"]}"; exit 1; }
 
 post '{"phase":"fetching job files","log":["runner: fetching job files"]}'
 curl -fsS "${auth[@]}" -o manifest.txt "${FILES}/manifest.txt" || fail "could not fetch the job manifest"
@@ -43,6 +44,7 @@ if command -v nvidia-smi >/dev/null; then
 fi
 set -a; . ./job.env; set +a
 post '{"phase":"training","log":["runner: starting train.py"]}'
+STAGE=training
 "${VENV}/bin/python" train.py 2>&1 | tee train.log
 RC=${PIPESTATUS[0]}
 if [ "$RC" != 0 ] && ! grep -q 'nothing to upload' train.log; then

@@ -2,6 +2,12 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.17.7] — 2026-10-27 — Whisper fine-tune fits a 16 GB GPU; settings and failure reason on the job
+- Whisper numbers recipe: once the encoder joins (second half), each step runs as two half-batches with gradient accumulation and non-reentrant gradient checkpointing — same effective batch, far less memory. Job #5 ran out of GPU memory there (14.56 GiB on GPU 0 of 2 × T4).
+- A run that crashes after an epoch was saved now uploads that best model instead of losing it ("stopped early" in its report).
+- The runner labels a failure by stage ("training failed" instead of always "setup failed"), and the failure reason is stored on the job.
+- Training job window: a **Settings** card with what the run was given (epochs, batch per GPU, learning rate, LoRA rank, …, base model, method, recipe, seed, hardware, why it started, attempt) and a **Why it failed** box. The manual "report token" card is hidden for pipeline jobs, whose agent handles reporting.
+
 ## [1.17.6] — 2026-10-27 — Full-window training view
 - The training job window (live progress, evaluation, charts, log) has a full-window toggle next to Close; the choice is remembered. Any modal can opt in with `expandKey`.
 

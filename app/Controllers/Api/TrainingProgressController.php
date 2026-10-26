@@ -137,6 +137,11 @@ class TrainingProgressController extends BaseApiController
             $logs  = ($job['logs'] ?? '') . implode("\n", $lines) . "\n";
             $set['logs'] = mb_strlen($logs) > self::LOG_LIMIT ? mb_substr($logs, -self::LOG_LIMIT) : $logs;
         }
+        if (($set['status'] ?? null) === 'failed') {                     // keep the reason where the Training page shows it
+            $why = trim((string) ($in['error'] ?? ''));
+            if ($why === '' && ! empty($in['log']) && is_array($in['log'])) $why = (string) end($in['log']);
+            if ($why !== '') $set['error'] = mb_substr($why, 0, 2000);
+        }
         $jobs->update((int) $id, $set);
         if (isset($set['status']) && in_array($set['status'], ['completed', 'failed'], true) && $job['status'] === 'running') {
             (new \App\Services\TrainingPipelineService())->finished($job, $set['status']); // notifications for pipeline jobs
