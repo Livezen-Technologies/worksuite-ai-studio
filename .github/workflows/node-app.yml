@@ -8,6 +8,9 @@ on:
   push:
     tags: ['node-app-v*']
 
+permissions:
+  contents: write  # tauri-action creates the draft release for tags
+
 jobs:
   build:
     strategy:
