@@ -1,6 +1,6 @@
 [package]
 name = "aistudio-node"
-version = "1.0.0"
+version = "1.0.1"
 description = "WorkSuite AI Studio Node — connect this computer to AI Studio as an Ollama node"
 authors = ["Livezen Technologies"]
 edition = "2021"

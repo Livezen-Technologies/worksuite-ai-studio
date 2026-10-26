@@ -61,7 +61,12 @@ impl Meter {
     }
 }
 
-pub async fn run(listen_port: u16, ollama: String, meter: SharedMeter) {
+/// Latest machine metrics as JSON, refreshed every few seconds by the app. AI Studio reads it through the tunnel at
+/// `GET /aistudio-node/metrics` for its Monitoring page.
+pub type LiveMetrics = Arc<Mutex<String>>;
+pub const METRICS_PATH: &str = "/aistudio-node/metrics";
+
+pub async fn run(listen_port: u16, ollama: String, meter: SharedMeter, live: LiveMetrics) {
     let listener = match TcpListener::bind(("127.0.0.1", listen_port)).await {
         Ok(l) => l,
         Err(e) => {
@@ -73,18 +78,17 @@ pub async fn run(listen_port: u16, ollama: String, meter: SharedMeter) {
         let Ok((client, _)) = listener.accept().await else { continue };
         let ollama = ollama.clone();
         let meter = meter.clone();
+        let live = live.clone();
         tokio::spawn(async move {
-            let _ = handle(client, &ollama, meter).await;
+            let _ = handle(client, &ollama, meter, live).await;
         });
     }
 }
 
 /// One client connection. Requests on a keep-alive connection are metered from the first request's head;
 /// AI Studio opens a connection per call, so that is the common case.
-async fn handle(mut client: TcpStream, ollama: &str, meter: SharedMeter) -> std::io::Result<()> {
+async fn handle(mut client: TcpStream, ollama: &str, meter: SharedMeter, live: LiveMetrics) -> std::io::Result<()> {
     let started = Instant::now();
-    let mut upstream = TcpStream::connect(ollama).await?;
-
     let mut first = vec![0u8; 16 * 1024];
     let n = client.read(&mut first).await?;
     if n == 0 {
@@ -92,6 +96,19 @@ async fn handle(mut client: TcpStream, ollama: &str, meter: SharedMeter) -> std:
     }
     first.truncate(n);
     let (method, path, model) = parse_head(&first);
+
+    if method == "GET" && path == METRICS_PATH {
+        let body = live.lock().map(|s| s.clone()).unwrap_or_default();
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        client.write_all(resp.as_bytes()).await?;
+        return client.shutdown().await;
+    }
+
+    let mut upstream = TcpStream::connect(ollama).await?;
     upstream.write_all(&first).await?;
 
     let (mut cr, mut cw) = client.into_split();

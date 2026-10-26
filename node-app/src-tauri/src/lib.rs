@@ -252,9 +252,36 @@ pub fn run() {
             let settings = Settings::load();
             config::log("app started");
 
+            // Live metrics for AI Studio's Monitoring page, refreshed every 5 s.
+            let live: proxy::LiveMetrics = Default::default();
+            let live_w = live.clone();
+            std::thread::spawn(move || {
+                let mut sampler = stats::Sampler::new();
+                loop {
+                    let m = sampler.machine();
+                    let g = m.gpus.first();
+                    let pct = |a: f32, b: f32| if b > 0.0 { (a / b * 1000.0).round() / 10.0 } else { 0.0 };
+                    let json = serde_json::json!({
+                        "ts": chrono::Utc::now().timestamp(),
+                        "cpu_pct": (m.cpu * 10.0).round() / 10.0,
+                        "mem_pct": pct(m.ram_used_gb, m.ram_total_gb),
+                        "disk_pct": pct(m.disk_total_gb - m.disk_free_gb, m.disk_total_gb),
+                        "gpu_pct": g.map(|g| g.util),
+                        "vram_pct": g.map(|g| pct(g.mem_used_mb, g.mem_total_mb)),
+                        "gpu_temp_c": g.map(|g| g.temp_c),
+                        "gpu_power_w": g.map(|g| g.power_w),
+                        "cpu_cores": m.cpu_cores,
+                        "ram_gb": (m.ram_total_gb * 10.0).round() / 10.0,
+                        "gpus": m.gpus,
+                    });
+                    *live_w.lock().unwrap() = json.to_string();
+                    std::thread::sleep(Duration::from_secs(5));
+                }
+            });
+
             // Metering proxy in front of Ollama.
             let (port, ollama, m) = (settings.proxy_port, settings.ollama_addr(), meter.clone());
-            tauri::async_runtime::spawn(async move { proxy::run(port, ollama, m).await });
+            tauri::async_runtime::spawn(async move { proxy::run(port, ollama, m, live).await });
 
             if Enrolment::load().is_some() {
                 cli::take_over();

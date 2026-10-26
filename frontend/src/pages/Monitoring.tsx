@@ -18,14 +18,15 @@ import { SERIES, scoreText, scoreTone } from './Dashboard/charts';
 interface NodeMetric {
   server_id: number; name: string; status: string;
   cpu_pct: number | null; mem_pct: number | null; disk_pct: number | null; gpu_pct: number | null; available: boolean;
+  vram_pct?: number | null; gpu_temp_c?: number | null; source?: 'node-app' | 'prometheus';
 }
 interface HealthSummary { total: number; online: number; degraded: number; offline: number; unknown: number; avg_score: number }
 interface ServerRow { id: number; name: string; status: string; health_score: number; last_heartbeat_at: string | null; ip_address?: string | null; api_url?: string; kind?: string; ollama_version?: string | null }
 interface CheckResult { server_id: number; name: string; ok: boolean; status: string; health_score: number; latency_ms: number | null; models_total?: number; models_running?: number; error?: string | null }
 
-type Interval = 'off' | '10' | '15' | '30' | '60';
+type Interval = 'off' | '5' | '10' | '15' | '30' | '60';
 const INTERVALS: { value: Interval; label: string }[] = [
-  { value: 'off', label: 'Off' }, { value: '10', label: '10s' }, { value: '15', label: '15s' }, { value: '30', label: '30s' }, { value: '60', label: '1m' },
+  { value: 'off', label: 'Off' }, { value: '5', label: '5s' }, { value: '10', label: '10s' }, { value: '15', label: '15s' }, { value: '30', label: '30s' }, { value: '60', label: '1m' },
 ];
 const IKEY = 'aistudio.monitoring.interval';
 const HISTORY = 30;
@@ -36,7 +37,7 @@ export default function Monitoring() {
   const qc = useQueryClient();
   const toast = useToast();
   const [interval, setIntervalState] = useState<Interval>(() => {
-    try { return (localStorage.getItem(IKEY) as Interval) || '15'; } catch { return '15'; }
+    try { return (localStorage.getItem(IKEY) as Interval) || '5'; } catch { return '5'; }
   });
   const setInterval = (v: Interval) => { setIntervalState(v); try { localStorage.setItem(IKEY, v); } catch { /* ignore */ } };
   const every = interval === 'off' ? false : Number(interval) * 1000;
@@ -158,7 +159,8 @@ function NodeCard({ node, server, check, history, linkable }: { node: NodeMetric
           <Gauge icon={CpuChipIcon} label="CPU" value={node.cpu_pct} />
           <Gauge icon={RectangleStackIcon} label="Memory" value={node.mem_pct} />
           <Gauge icon={CircleStackIcon} label="Disk" value={node.disk_pct} />
-          <Gauge icon={Squares2X2Icon} label="GPU" value={node.gpu_pct} />
+          <Gauge icon={Squares2X2Icon} label={node.gpu_temp_c != null ? `GPU · ${Math.round(node.gpu_temp_c)} °C` : 'GPU'} value={node.gpu_pct} />
+          {node.vram_pct != null && <Gauge icon={Squares2X2Icon} label="VRAM" value={node.vram_pct} />}
         </div>
 
         {hasTrend && (

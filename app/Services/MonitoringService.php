@@ -153,12 +153,31 @@ class MonitoringService
         $servers = $this->db->table('servers')->where('deleted_at', null)->get()->getResultArray();
         $out = [];
         foreach ($servers as $s) {
+            // Nodes enrolled with the AI Studio Node app report their own metrics through their tunnel.
+            if (! empty($s['tunnel_port']) && ($m = $this->nodeAppMetrics($s['api_url'])) !== null) {
+                $out[] = [
+                    'server_id' => (int) $s['id'],
+                    'name'      => $s['name'],
+                    'status'    => $s['status'],
+                    'cpu_pct'   => $this->round($m['cpu_pct'] ?? null),
+                    'mem_pct'   => $this->round($m['mem_pct'] ?? null),
+                    'disk_pct'  => $this->round($m['disk_pct'] ?? null),
+                    'gpu_pct'   => $this->round($m['gpu_pct'] ?? null),
+                    'vram_pct'  => $this->round($m['vram_pct'] ?? null),
+                    'gpu_temp_c'=> $this->round($m['gpu_temp_c'] ?? null),
+                    'source'    => 'node-app',
+                    'available' => true,
+                ];
+                continue;
+            }
             $instance = $s['ip_address'] ?: parse_url($s['api_url'], PHP_URL_HOST);
             $out[] = [
                 'server_id' => (int) $s['id'],
                 'name'      => $s['name'],
                 'status'    => $s['status'],
-                'cpu_pct'   => $this->promInstant("100 - (avg by(instance)(rate(node_cpu_seconds_total{mode=\"idle\",instance=~\"{$instance}.*\"}[5m]))*100)"),
+                'source'    => 'prometheus',
+                // 1-minute window so the figure follows the load instead of a 5-minute average.
+                'cpu_pct'   => $this->promInstant("100 - (avg by(instance)(rate(node_cpu_seconds_total{mode=\"idle\",instance=~\"{$instance}.*\"}[1m]))*100)"),
                 'mem_pct'   => $this->promInstant("(1 - node_memory_MemAvailable_bytes{instance=~\"{$instance}.*\"} / node_memory_MemTotal_bytes{instance=~\"{$instance}.*\"})*100"),
                 'disk_pct'  => $this->promInstant("(1 - node_filesystem_avail_bytes{instance=~\"{$instance}.*\",mountpoint=\"/\"} / node_filesystem_size_bytes{instance=~\"{$instance}.*\",mountpoint=\"/\"})*100"),
                 'gpu_pct'   => $this->promInstant("nvidia_smi_utilization_gpu_ratio{instance=~\"{$instance}.*\"}*100"),
@@ -166,6 +185,25 @@ class MonitoringService
             ];
         }
         return $out;
+    }
+
+    /** GET {api_url}/aistudio-node/metrics from a node app (null when it doesn't answer, e.g. a CLI-script node). */
+    private function nodeAppMetrics(string $apiUrl): ?array
+    {
+        try {
+            $res = \Config\Services::curlrequest([], null, null, false)->get(rtrim($apiUrl, '/') . '/aistudio-node/metrics', [
+                'http_errors' => false, 'connect_timeout' => 2, 'timeout' => 3,
+            ]);
+            $json = $res->getStatusCode() === 200 ? json_decode((string) $res->getBody(), true) : null;
+            return is_array($json) && isset($json['cpu_pct']) ? $json : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function round($v): ?float
+    {
+        return is_numeric($v) ? round((float) $v, 1) : null;
     }
 
     // ---- Prometheus helpers (all null-safe) -------------------------------
