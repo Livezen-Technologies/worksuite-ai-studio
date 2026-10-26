@@ -12,6 +12,9 @@ $routes->get('api/ping', 'Api\HealthController::ping');
 // Node enrolment by the aistudio-node tool; the one-time token in the body is the credential.
 $routes->post('api/nodes/enrol', 'Api\NodesController::enrol');
 
+// Training runners report progress with the job's report token.
+$routes->post('api/training/(:num)/progress', 'Api\TrainingProgressController::progress/$1');
+
 /*
  * Auth (guest entry points + token-protected profile/logout).
  */
@@ -155,6 +158,8 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->delete('training/(:num)', 'TrainingController::delete/$1');
     $routes->post('training/(:num)/kit', 'TrainingController::generateKit/$1');
     $routes->get('training/(:num)/kit', 'TrainingController::downloadKit/$1');
+    $routes->post('training/(:num)/report-token', 'TrainingProgressController::reportToken/$1');
+    $routes->get('training/(:num)/live', 'TrainingProgressController::live/$1');
 
     // --- User portal + compute allocations ---
     $routes->get('portal/overview', 'PortalController::overview');

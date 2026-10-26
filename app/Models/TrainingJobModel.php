@@ -16,6 +16,9 @@ class TrainingJobModel extends Model
         'task', 'dataset_manifest_hash', 'dataset_split_hash', 'base_digest', 'config_hash', 'code_commit',
         'container_digest', 'seed', 'hardware', 'output_digest',
         'placement_status',
+        // Live progress (TrainingProgressController)
+        'server_id', 'progress_pct', 'phase', 'current_step', 'total_steps', 'epoch', 'eta_seconds', 'live',
+        'started_at', 'finished_at', 'last_report_at', 'report_token_hash',
     ];
 
     /** Jobs joined with their dataset name/count. */

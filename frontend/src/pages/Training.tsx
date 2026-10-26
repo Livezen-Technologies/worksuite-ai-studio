@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AcademicCapIcon, ArchiveBoxArrowDownIcon, BeakerIcon, ArrowDownTrayIcon, CpuChipIcon, PencilSquareIcon, PlusIcon, TrashIcon,
+  AcademicCapIcon, ArchiveBoxArrowDownIcon, BeakerIcon, ChartBarIcon, ArrowDownTrayIcon, CpuChipIcon, PencilSquareIcon, PlusIcon, TrashIcon,
 } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Alert, Badge, Button, Card, ConfirmDialog, DataTable, EmptyState, FormModal, FormSection, Input,
@@ -11,6 +11,7 @@ import { ApiError, del, download, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ago, dateTime, num } from '../lib/format';
 import TrainingLineage, { type LineageJob } from './SinLama/TrainingLineage';
+import TrainingLive, { JobProgress } from './Training/TrainingLive';
 
 type Status = 'draft' | 'kit_ready' | 'running' | 'completed' | 'failed' | 'imported';
 interface Hyper {
@@ -19,8 +20,10 @@ interface Hyper {
 }
 interface Job extends LineageJob {
   id: number; name: string; dataset_id: number | null; dataset_name: string | null; dataset_items: number | null;
-  base_model: string; method: 'lora' | 'qlora'; hyperparams: string | Partial<Hyper> | null; status: Status;
+  base_model: string; method: 'lora' | 'qlora' | 'finetune'; hyperparams: string | Partial<Hyper> | null; status: Status;
   notes: string | null; logs: string | null; created_at: string; updated_at: string | null;
+  progress_pct?: string | number | null; eta_seconds?: number | string | null; current_step?: number | string | null;
+  total_steps?: number | string | null; phase?: string | null; last_report_at?: string | null;
 }
 interface ListResponse { jobs: Job[]; base_models: string[]; defaults: Hyper }
 interface Dataset { id: number; name: string; item_count: number | string }
@@ -58,7 +61,12 @@ export default function Training() {
   /** The server's kit refusal (e.g. dataset not frozen / withdrawn), shown verbatim. */
   const [kitRefusal, setKitRefusal] = useState<{ job: Job; message: string } | null>(null);
 
-  const list = useQuery({ queryKey: ['training'], queryFn: () => get<ListResponse>('/training') });
+  const [liveJob, setLiveJob] = useState<number | null>(null);
+  // Refresh while anything is running so progress moves without a reload.
+  const list = useQuery({
+    queryKey: ['training'], queryFn: () => get<ListResponse>('/training'),
+    refetchInterval: (query) => (query.state.data?.jobs.some((j) => j.status === 'running') ? 10_000 : false),
+  });
   const jobs = list.data?.jobs ?? [];
   const rows = jobs.filter((j) => (tab === 'all' || j.status === tab)
     && (!q || `${j.name} ${j.base_model} ${j.dataset_name ?? ''}`.toLowerCase().includes(q.toLowerCase())));
@@ -111,7 +119,7 @@ export default function Training() {
         const h = parseHyper(j.hyperparams);
         return (
           <div>
-            <Badge tone="purple">{j.method === 'lora' ? 'LoRA' : 'QLoRA'}</Badge>
+            <Badge tone="purple">{j.method === 'lora' ? 'LoRA' : j.method === 'finetune' ? 'Fine-tune' : 'QLoRA'}</Badge>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               {h.epochs ?? list.data?.defaults.epochs} ep · r{h.lora_rank ?? list.data?.defaults.lora_rank} · {h.quant_export ?? list.data?.defaults.quant_export}
             </p>
@@ -120,6 +128,7 @@ export default function Training() {
       },
     },
     { key: 'status', header: 'Status', cell: (j) => <StatusBadge status={j.status === 'kit_ready' || j.status === 'imported' ? 'ready' : j.status} label={statusLabel(j.status)} /> },
+    { key: 'progress', header: 'Progress', hideBelow: 'sm', cell: (j) => <JobProgress job={j} /> },
     { key: 'updated', header: 'Updated', hideBelow: 'sm', cell: (j) => <span title={dateTime(j.updated_at ?? j.created_at)}>{ago(j.updated_at ?? j.created_at)}</span> },
     {
       key: 'actions', header: <span className="sr-only">Actions</span>, align: 'right', cell: (j) => (
@@ -138,6 +147,7 @@ export default function Training() {
             </Button>
           )}
           <ActionMenu actions={[
+            { label: 'Live progress & logs', icon: ChartBarIcon, onClick: () => setLiveJob(j.id) },
             { label: 'Download kit', icon: ArrowDownTrayIcon, disabled: !HAS_KIT.includes(j.status), onClick: () => downloadKit(j) },
             { label: 'Lineage', icon: BeakerIcon, onClick: () => setLineageJob(j) },
             { label: 'Edit', icon: PencilSquareIcon, hidden: !canManage, onClick: () => { setEditing(j); form.onOpen(); } },
@@ -183,7 +193,7 @@ export default function Training() {
           loading={list.isLoading}
           error={list.error}
           onRetry={() => list.refetch()}
-          onRowClick={canManage ? (j) => { setEditing(j); form.onOpen(); } : undefined}
+          onRowClick={(j) => setLiveJob(j.id)}
           empty={
             <EmptyState
               icon={AcademicCapIcon}
@@ -205,6 +215,7 @@ export default function Training() {
           defaults={list.data.defaults}
         />
       )}
+      {liveJob !== null && <TrainingLive id={liveJob} onClose={() => setLiveJob(null)} />}
       <TrainingLineage
         open={lineageJob !== null}
         onClose={() => setLineageJob(null)}
@@ -246,7 +257,7 @@ function JobForm({ open, onClose, job, baseModels, defaults }: {
   const [name, setName] = useState(job?.name ?? '');
   const [datasetId, setDatasetId] = useState(job?.dataset_id ? String(job.dataset_id) : '');
   const [base, setBase] = useState(job?.base_model ?? baseModels[0] ?? '');
-  const [method, setMethod] = useState<'lora' | 'qlora'>(job?.method ?? 'qlora');
+  const [method, setMethod] = useState<'lora' | 'qlora'>(job?.method === 'lora' ? 'lora' : 'qlora');
   const [status, setStatus] = useState<Status>(job?.status ?? 'draft');
   const [notes, setNotes] = useState(job?.notes ?? '');
   const [logs, setLogs] = useState(job?.logs ?? '');
