@@ -198,16 +198,35 @@ class TrainingPipelineService
             'agent_seen_at' => $now, 'agent_version' => mb_substr((string) ($in['version'] ?? ''), 0, 20) ?: null, 'agent_job_id' => $busy,
         ]);
         if (! empty($in['probe'])) return ['action' => 'idle', 'why' => 'probe'];   // the installer's token check never takes work
+        $speech = $this->speech($server, $in);                              // GPU speech service on the node (NodeSpeech)
         if ($busy) {
             $job = $this->db->table('training_jobs')->where('id', $busy)->get()->getRowArray();
-            if (! $job || (int) $job['cancel_requested'] === 1 || in_array($job['status'], ['cancelled', 'failed'], true)) return ['action' => 'stop', 'job_id' => $busy];
+            if (! $job || (int) $job['cancel_requested'] === 1 || in_array($job['status'], ['cancelled', 'failed'], true)) return ['action' => 'stop', 'job_id' => $busy] + $speech;
             // the process is alive on the node: that counts as a sign of life (first-run setup can be long and quiet)
             if ($job['status'] === 'running') $this->db->table('training_jobs')->where('id', $busy)->update(['last_report_at' => $now]);
-            return ['action' => 'continue', 'job_id' => $busy];
+            return ['action' => 'continue', 'job_id' => $busy] + $speech;
         }
-        if (! (int) ($server['is_enabled'] ?? 1) || ! (int) ($server['allow_training'] ?? 0)) return ['action' => 'idle', 'why' => 'training is off for this node'];
+        if (! (int) ($server['is_enabled'] ?? 1) || ! (int) ($server['allow_training'] ?? 0)) return ['action' => 'idle', 'why' => 'training is off for this node'] + $speech;
         $job = $this->claim($server);
-        return $job ?: ['action' => 'idle'];
+        return ($job ?: ['action' => 'idle']) + $speech;
+    }
+
+    /**
+     * The node's GPU speech service: record what the agent reports, and tell it whether to run one and on which port.
+     * Wanted when the node has an NVIDIA GPU, a tunnel and speech switched on. Port = tunnel port + 1000.
+     */
+    private function speech(array $server, array $in): array
+    {
+        $gpu  = TrainingRecipes::fits(['needs_gpu' => true], $server);
+        $want = $gpu && ! empty($server['tunnel_port']) && (int) ($server['asr_enabled'] ?? 1) === 1 && (int) ($server['is_enabled'] ?? 1) === 1;
+        $port = $want ? (int) $server['tunnel_port'] + 1000 : null;
+        $upd  = ['asr_port' => $port];
+        if (($in['asr_state'] ?? '') === 'ok' && $want) {
+            $upd['asr_seen_at'] = date('Y-m-d H:i:s');
+            $upd['asr_device']  = mb_substr((string) ($in['asr_device'] ?? ''), 0, 120) ?: null;
+        }
+        $this->db->table('servers')->where('id', $server['id'])->update($upd);
+        return ['asr_wanted' => $want ? 1 : 0, 'asr_port' => $port ?? ''];
     }
 
     private function claim(array $server): ?array

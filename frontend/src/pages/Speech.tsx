@@ -11,8 +11,8 @@ import { LiveRecorder } from './Speech/LiveRecorder';
 import { CaptionEditor, CaptionPreview } from './Speech/CaptionTools';
 import { buildCues, clock, DEFAULT_RULES, toSrt, toVtt, type Cue, type CueRules, type Segment } from './Speech/cues';
 
-interface Status { available: boolean; model: string | null; busy: boolean; max_mb: number; languages: { value: string; label: string }[]; models?: { value: string; label: string; note: string; installed: boolean }[] }
-interface Result { text: string; segments: Segment[]; language: string; duration: number; processing_seconds: number; model: string }
+interface Status { available: boolean; model: string | null; busy: boolean; max_mb: number; languages: { value: string; label: string }[]; models?: { value: string; label: string; note: string; installed: boolean }[]; run_on?: { value: string; label: string; device: string | null }[] }
+interface Result { text: string; segments: Segment[]; language: string; duration: number; processing_seconds: number; model: string; ran_on?: { name: string; device: string } }
 
 const ACCEPT = 'audio/*,video/*,.wav,.mp3,.m4a,.ogg,.oga,.opus,.webm,.flac,.aac,.mp4,.mov,.mkv';
 
@@ -58,6 +58,9 @@ export default function Speech() {
   const [model, setModel] = useState('sinhala');
   const modelRef = useRef(model);
   modelRef.current = model;
+  const [runOn, setRunOn] = useState('auto');
+  const runOnRef = useRef(runOn);
+  runOnRef.current = runOn;
   const [segments, setSegments] = useState<Segment[]>([]);
   const [text, setText] = useState('');
   const [textEdited, setTextEdited] = useState(false);
@@ -66,7 +69,7 @@ export default function Speech() {
   const [media, setMedia] = useState<{ url: string; name: string; video: boolean } | null>(null);
   const [busy, setBusy] = useState<false | 'live' | 'upload'>(false);
   const [progress, setProgress] = useState<number | null>(null);
-  const [meta, setMeta] = useState<{ duration: number; seconds: number } | null>(null);
+  const [meta, setMeta] = useState<{ duration: number; seconds: number; where?: string } | null>(null);
   const [playerTime, setPlayerTime] = useState(0);
   const [seekTo, setSeekTo] = useState<number | null>(null);
   const langRef = useRef(language);
@@ -90,6 +93,7 @@ export default function Speech() {
     fd.append('audio', wav, 'chunk.wav');
     fd.append('language', langRef.current);
     fd.append('model', modelRef.current);
+    fd.append('run_on', runOnRef.current);
     fd.append('fast', '1');
     fd.append('words', '1');
     const r = await api<Result>('/speech/transcribe', { method: 'POST', body: fd });
@@ -106,11 +110,12 @@ export default function Speech() {
     fd.append('audio', f);
     fd.append('language', language);
     fd.append('model', model);
+    fd.append('run_on', runOn);
     fd.append('words', '1');
     try {
       const { data } = await uploadWithProgress<Result>('/speech/transcribe', fd, setProgress);
       setSegments(data.segments.filter((g) => /[\p{L}\p{N}]/u.test(g.text)));
-      setMeta({ duration: data.duration, seconds: data.processing_seconds });
+      setMeta({ duration: data.duration, seconds: data.processing_seconds, where: data.ran_on ? `${data.ran_on.name} (${data.ran_on.device})` : undefined });
       if (!data.text) toast.info('No speech found', 'Try a clearer or longer recording.');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Transcription failed.');
@@ -179,6 +184,11 @@ export default function Speech() {
                 options={(status.data?.models ?? []).filter((m) => m.installed).map((m) => ({ value: m.value, label: m.label }))}
                 hint={status.data?.models?.find((m) => m.value === model)?.note} />
             )}
+            {(status.data?.run_on?.length ?? 0) > 1 && (
+              <Select label="Run on" wrapperClassName="mt-4" value={runOn} disabled={!!busy} onChange={(e) => setRunOn(e.target.value)}
+                options={(status.data?.run_on ?? []).map((t) => ({ value: t.value, label: t.device && t.value.startsWith('node:') ? `${t.label} (${t.device})` : t.label }))}
+                hint="A GPU node transcribes several times faster; Auto falls back to this server when no node is free." />
+            )}
           </div>
           {media && (
             <div className="border-t border-slate-200 px-4 py-4 sm:px-6 dark:border-white/10">
@@ -191,7 +201,7 @@ export default function Speech() {
         <Card className="lg:col-span-3">
           <CardHeader
             title={<span className="inline-flex items-center gap-2">Result {busy === 'live' && <Badge tone="red" dot>Live</Badge>}</span>}
-            description={meta ? `${clock(meta.duration)} of media · transcribed in ${meta.seconds.toFixed(1)} s · ${words} words · ${cues.length} captions`
+            description={meta ? `${clock(meta.duration)} of media · transcribed in ${meta.seconds.toFixed(1)} s${meta.where ? ` on ${meta.where}` : ''} · ${words} words · ${cues.length} captions`
               : hasResult ? `${words} words · ${cues.length} captions` : undefined}
             actions={hasResult && !busy && (
               <>

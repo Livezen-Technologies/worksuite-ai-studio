@@ -2,6 +2,12 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.18.0] — 2026-10-27 — Speech to text on GPU nodes
+- A GPU node's training agent (1.3.0) also runs the speech service on its GPU: it sets up once in the background (faster-whisper with NVIDIA's cuBLAS/cuDNN wheels and a bundled ffmpeg, in conda or venv), downloads the speech code and the Sinhala models (run11, the numbers fine-tune, and Whisper base/small for mixed speech) with its agent token, keeps the service running and forwards it to the Studio on its tunnel port + 1000 with the node's existing tunnel key. New or changed models are picked up every 30 minutes. `/api/agent/asr/manifest` and `/api/agent/asr/file` serve only those files.
+- Speech page: **Run on** — Auto (a GPU node whose speech service reported healthy in the last 90 s, else this server), a specific GPU node, or this server's CPU. A node that is unreachable, lacks the chosen model or fails hands over to the next target. Each result says where it ran. The chat voice input uses Auto.
+- Fixed: a model key with an underscore (`sinhala_numbers`) was replaced by the default, so choosing the numbers fine-tune ran the original model.
+- Node tunnel keys may also listen on tunnel port + 1000; the server's own speech service reports its device and reads ASR_DEVICE / ASR_COMPUTE / ASR_FFMPEG.
+
 ## [1.17.10] — 2026-10-27 — The numbers fine-tune is selectable
 - Speech to text → Model offers **Whisper Small · Sinhala — numbers (new)**: run11 fine-tuned on number-heavy speech by training job #5 on 2 × Tesla T4, converted to CTranslate2 int8. Not the default while its benchmark against run11 runs.
 

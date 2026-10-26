@@ -14,12 +14,65 @@ use App\Services\TrainingPipelineService;
  */
 class AgentController extends BaseApiController
 {
-    public function heartbeat()
+    /** Speech models a GPU node runs (catalog key => folder under the models root) and the service code it needs. */
+    public const ASR_MODELS = [
+        'sinhala'         => 'whisper-small-sinhala-ct2-int8',
+        'sinhala_numbers' => 'whisper-small-sinhala-numbers-ct2-int8',
+        'base'            => 'faster-whisper-base',    // language of each phrase in mixed speech
+        'small'           => 'faster-whisper-small',   // English phrases in mixed speech
+    ];
+    private const ASR_ROOT = '/srv/sinhala-data/models/';
+
+    private function agentServer(): ?array
     {
         $auth = (string) $this->request->getHeaderLine('Authorization');
         $tok  = str_starts_with($auth, 'Bearer ') ? substr($auth, 7) : '';
-        $server = $tok === '' ? null : \Config\Database::connect()->table('servers')
+        return $tok === '' ? null : \Config\Database::connect()->table('servers')
             ->where('agent_token_hash', hash('sha256', $tok))->where('deleted_at', null)->get()->getRowArray();
+    }
+
+    /** GET /api/agent/asr/manifest — lines "path size sha256-or-dash" for the speech service and its models. */
+    public function asrManifest()
+    {
+        if (! $this->agentServer()) return $this->failure('Invalid agent token.', 401);
+        $lines = [];
+        foreach (['asr_service.py', 'numfix.py'] as $f) {
+            $p = ROOTPATH . 'deploy/asr/' . $f;
+            $lines[] = "code/{$f} " . filesize($p) . ' ' . hash_file('sha256', $p);
+        }
+        foreach (self::ASR_MODELS as $key => $dir) {
+            foreach (glob(self::ASR_ROOT . $dir . '/*') ?: [] as $p) {
+                if (! is_file($p) || str_ends_with($p, '.md')) continue;
+                $lines[] = "models/{$dir}/" . basename($p) . ' ' . filesize($p) . ' -';   // size identifies a model file version
+            }
+        }
+        return $this->response->setContentType('text/plain')->setBody(implode("\n", $lines) . "\n");
+    }
+
+    /** GET /api/agent/asr/file?path=code/asr_service.py | models/<dir>/<file> — only manifest entries. */
+    public function asrFile()
+    {
+        if (! $this->agentServer()) return $this->failure('Invalid agent token.', 401);
+        $path = (string) ($this->request->getGet('path') ?? '');
+        if (preg_match('#^code/(asr_service\.py|numfix\.py)$#', $path, $m)) {
+            $file = ROOTPATH . 'deploy/asr/' . $m[1];
+        } elseif (preg_match('#^models/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)$#', $path, $m) && in_array($m[1], self::ASR_MODELS, true)) {
+            $file = self::ASR_ROOT . $m[1] . '/' . $m[2];
+        } else {
+            return $this->failure('Not a speech file.', 404);
+        }
+        if (! is_file($file)) return $this->failure('Not found.', 404);
+        @set_time_limit(0);
+        while (ob_get_level() > 0) { ob_end_clean(); }
+        header('Content-Type: application/octet-stream');
+        header('Content-Length: ' . filesize($file));
+        readfile($file);
+        exit;
+    }
+
+    public function heartbeat()
+    {
+        $server = $this->agentServer();
         if (! $server) return $this->failure('Invalid agent token.', 401);
 
         $in = $this->request->getPost() ?: [];

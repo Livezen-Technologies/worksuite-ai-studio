@@ -18,6 +18,8 @@ $routes->get('api/training/(:num)/files/(:segment)', 'Api\TrainingProgressContro
 $routes->put('api/training/(:num)/output/(:segment)', 'Api\TrainingProgressController::output/$1/$2');
 // Node training agents poll for work with their agent token.
 $routes->post('api/agent/heartbeat', 'Api\AgentController::heartbeat');
+$routes->get('api/agent/asr/manifest', 'Api\AgentController::asrManifest');
+$routes->get('api/agent/asr/file', 'Api\AgentController::asrFile');
 
 /*
  * Auth (guest entry points + token-protected profile/logout).

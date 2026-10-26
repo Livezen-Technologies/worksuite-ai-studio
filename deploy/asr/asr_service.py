@@ -18,17 +18,21 @@ from faster_whisper import WhisperModel
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 from numfix import normalise as numerals  # spoken Sinhala numbers → digits
 
+# Device: the AI Studio server runs on CPU (int8); a GPU node's agent sets ASR_DEVICE=cuda (int8 weights, fp16 compute).
+DEVICE = os.environ.get('ASR_DEVICE', 'cpu')
+COMPUTE = os.environ.get('ASR_COMPUTE', 'int8_float16' if DEVICE == 'cuda' else 'int8')
+FFMPEG = os.environ.get('ASR_FFMPEG', 'ffmpeg')
 MODEL_DIR = os.environ.get('ASR_MODEL', '/srv/sinhala-data/models/whisper-small-sinhala-ct2-int8')
 MODEL_NAME = 'Whisper Sinhala (SinhaSpeech whisper-small run11, int8)'
 MAX_BYTES = 500 * 1024 * 1024  # video uploads for captions
 THREADS = int(os.environ.get('ASR_THREADS', '4'))
-model = WhisperModel(MODEL_DIR, device='cpu', compute_type='int8', cpu_threads=THREADS)
+model = WhisperModel(MODEL_DIR, device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS)
 # Multilingual Whisper small (OpenAI, MIT) — language identification and English phrases in mixed speech.
 MULTI_DIR = os.environ.get('ASR_MULTI_MODEL', '/srv/sinhala-data/models/faster-whisper-small')
-multi = WhisperModel(MULTI_DIR, device='cpu', compute_type='int8', cpu_threads=THREADS) if os.path.isdir(MULTI_DIR) else None
+multi = WhisperModel(MULTI_DIR, device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS) if os.path.isdir(MULTI_DIR) else None
 # A smaller multilingual model only tells Sinhala from English per phrase — the same answer for a quarter of the work.
 LID_DIR = os.environ.get('ASR_LID_MODEL', '/srv/sinhala-data/models/faster-whisper-base')
-lid = WhisperModel(LID_DIR, device='cpu', compute_type='int8', cpu_threads=THREADS) if os.path.isdir(LID_DIR) else multi
+lid = WhisperModel(LID_DIR, device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS) if os.path.isdir(LID_DIR) else multi
 RATE = 16000
 
 # Other Whisper sizes (multilingual, OpenAI MIT, CTranslate2 int8), loaded on first use. One of them stays in memory at a
@@ -61,7 +65,7 @@ def get_model(name):
         return lid
     if name not in _extra:
         _extra.clear()  # free the previous extra model first
-        _extra[name] = WhisperModel(_dir(name), device='cpu', compute_type='int8', cpu_threads=THREADS)
+        _extra[name] = WhisperModel(_dir(name), device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS)
     return _extra[name]
 
 
@@ -128,7 +132,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if urlparse(self.path).path == '/health':
-            return self._send(200, {'ok': True, 'model': MODEL_NAME, 'busy': lock.locked(), 'mixed': multi is not None, 'models': catalog()})
+            return self._send(200, {'ok': True, 'model': MODEL_NAME, 'busy': lock.locked(), 'mixed': multi is not None, 'models': catalog(), 'device': DEVICE})
         self._send(404, {'error': 'not found'})
 
     def do_POST(self):
@@ -165,7 +169,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(503, {'error': f"{CATALOG[name]['label']} is not installed on this server yet."})
         t0 = time.time()
         # ffmpeg decodes anything a browser or phone produces (WebM/Opus, M4A, MP3, OGG, WAV, FLAC) to 16 kHz mono.
-        dec = subprocess.run(['ffmpeg', '-nostdin', '-loglevel', 'error', '-i', path, '-vn', '-f', 'f32le', '-ac', '1', '-ar', '16000', 'pipe:1'],
+        dec = subprocess.run([FFMPEG, '-nostdin', '-loglevel', 'error', '-i', path, '-vn', '-f', 'f32le', '-ac', '1', '-ar', '16000', 'pipe:1'],
                              capture_output=True)
         pcm = np.frombuffer(dec.stdout, dtype=np.float32)
         if dec.returncode != 0 or pcm.size < 1600:

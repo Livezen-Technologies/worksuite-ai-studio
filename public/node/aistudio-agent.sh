@@ -9,7 +9,7 @@
 # it is alive, stops the run if the job is cancelled, and reports how the process ended. Get the token on the Servers
 # page: ⋯ → Install training agent. Run as your normal user (not root); it asks for sudo once to keep running after logout.
 set -euo pipefail
-VERSION="1.2.0"
+VERSION="1.3.0"
 DIR="${HOME}/.aistudio-agent"
 SERVER="" TOKEN="" UNINSTALL=0 FORCE_VENV=0
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -60,10 +60,10 @@ printf 'SERVER=%s\nTOKEN=%s\nAISTUDIO_PYENV=%s\nAISTUDIO_CONDA=%s\n' "$SERVER" "
 cat > "$DIR/agent-loop.sh" <<'LOOP'
 #!/usr/bin/env bash
 # AI Studio training agent loop (installed by aistudio-agent.sh).
-VERSION="1.2.0"
+VERSION="1.3.0"
 DIR="${HOME}/.aistudio-agent"
 . "$DIR/agent.env"
-JOB="" PID="" EXITED="" CODE="" TAIL=""
+JOB="" PID="" EXITED="" CODE="" TAIL="" ASR_STATE="" ASR_DEVICE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
 log() { echo "$(date '+%F %T') $*" >> "$DIR/agent.log"; }
 log "agent ${VERSION} started"
 trap '[ -n "$PID" ] && kill -TERM -- "-$PID" 2>/dev/null; exit 0' TERM INT
@@ -78,9 +78,15 @@ while true; do
   R="$(curl -s -m 30 -X POST -H "Authorization: Bearer ${TOKEN}" \
         --data-urlencode "version=${VERSION}" --data-urlencode "job_id=${JOB}" --data-urlencode "gpus=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU')" \
         --data-urlencode "exited_job_id=${EXITED}" --data-urlencode "exit_code=${CODE}" --data-urlencode "tail=${TAIL}" \
+        --data-urlencode "asr_state=${ASR_STATE}" --data-urlencode "asr_device=${ASR_DEVICE}" \
         "${SERVER}/api/agent/heartbeat?format=env" 2>>"$DIR/agent.log")" || { sleep 30; continue; }
   EXITED="" CODE="" TAIL=""
   get() { printf '%s\n' "$R" | sed -n "s/^$1=//p" | head -1; }
+  # GPU speech service (transcription for the Studio's Speech page) — set up once, then kept running.
+  if [ -x "$DIR/aistudio-asr-node.sh" ]; then
+    if [ "$(get ASR_WANTED)" = 1 ]; then ASR_STATE="$(bash "$DIR/aistudio-asr-node.sh" ensure "$(get ASR_PORT)" 2>>"$DIR/agent.log")"
+    elif [ -n "$ASR_STATE" ] && [ "$ASR_STATE" != off ]; then ASR_STATE="$(bash "$DIR/aistudio-asr-node.sh" stop 2>>"$DIR/agent.log")"; fi
+  fi
   case "$(get ACTION)" in
     run)
       JOB="$(get JOB_ID)"; JD="$DIR/jobs/$JOB"; mkdir -p "$JD"
@@ -101,6 +107,8 @@ while true; do
 done
 LOOP
 chmod 700 "$DIR/agent-loop.sh"
+curl -fsS -m 60 -o "$DIR/aistudio-asr-node.sh" "${SERVER}/node/aistudio-asr-node.sh" && chmod 700 "$DIR/aistudio-asr-node.sh" \
+  || say "Could not fetch the GPU speech helper; training still works."
 
 say "Installing the agent service"
 mkdir -p "${HOME}/.config/systemd/user"

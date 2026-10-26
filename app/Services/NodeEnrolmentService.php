@@ -112,7 +112,9 @@ class NodeEnrolmentService
             ->where('ssh_public_key IS NOT NULL')->where('tunnel_port IS NOT NULL')->findAll();
         $lines = [];
         foreach ($rows as $r) {
-            $lines[] = sprintf('restrict,port-forwarding,permitlisten="127.0.0.1:%d" %s aistudio-node-%d', $r['tunnel_port'], $r['ssh_public_key'], $r['id']);
+            // Ollama on the tunnel port; the node's GPU speech service on tunnel port + 1000 (NodeSpeech).
+            $lines[] = sprintf('restrict,port-forwarding,permitlisten="127.0.0.1:%d",permitlisten="127.0.0.1:%d" %s aistudio-node-%d',
+                $r['tunnel_port'], (int) $r['tunnel_port'] + 1000, $r['ssh_public_key'], $r['id']);
         }
         return $lines;
     }
