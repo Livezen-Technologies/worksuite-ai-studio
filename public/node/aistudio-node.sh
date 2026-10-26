@@ -11,10 +11,18 @@
 #   aistudio-node.sh --status       show the connection
 #   aistudio-node.sh --uninstall    stop the tunnel and remove the autostart entry (then remove the node in Studio)
 #
+# Linux servers (Ubuntu, Debian, RHEL/Rocky/Alma, Fedora, openSUSE, Arch, Alpine) — one command as root sets up
+# everything: missing packages, Ollama as a service, optional models, enrolment and the tunnel as a system service:
+#
+#   curl -fsSL https://aistudio.livezentech.com/node/aistudio-node.sh | sudo bash -s -- \
+#     --server https://aistudio.livezentech.com --token aisn_... --model helalm:4b
+#
+#   --model NAME    pull an Ollama model after installing (repeat for more)
+#
 set -euo pipefail
 
 DIR="${HOME}/.aistudio-node"
-SERVER="" TOKEN="" NAME="" ACTION=install
+SERVER="" TOKEN="" NAME="" ACTION=install MODELS=()
 LABEL=com.livezen.aistudio-node
 
 while [ $# -gt 0 ]; do
@@ -22,6 +30,7 @@ while [ $# -gt 0 ]; do
     --server) SERVER="${2%/}"; shift 2 ;;
     --token) TOKEN="$2"; shift 2 ;;
     --name) NAME="$2"; shift 2 ;;
+    --model) MODELS+=("$2"); shift 2 ;;
     --status) ACTION=status; shift ;;
     --uninstall) ACTION=uninstall; shift ;;
     -h|--help) sed -n '2,13p' "$0" 2>/dev/null || true; exit 0 ;;
@@ -64,6 +73,26 @@ if [ "$ACTION" = status ]; then
 fi
 
 [ -n "$SERVER" ] && [ -n "$TOKEN" ] || die "Usage: aistudio-node.sh --server https://aistudio.example.com --token aisn_..."
+
+# --- Packages (Linux) ---------------------------------------------------------
+# curl, the OpenSSH client and the tools the Ollama installer needs. Installed only when missing, only as root.
+need=()
+for c in curl ssh ssh-keygen awk pgrep; do command -v "$c" >/dev/null || need+=("$c"); done
+if [ "$OS" = Linux ] && ! command -v zstd >/dev/null && ! command -v ollama >/dev/null; then need+=(zstd); fi
+if [ ${#need[@]} -gt 0 ]; then
+  [ "$OS" = Linux ] && [ "$(id -u)" = 0 ] || die "Missing: ${need[*]}. Install them (or run this with sudo on Linux) and try again."
+  say "Installing packages: ${need[*]}"
+  if command -v apt-get >/dev/null; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq && apt-get install -y -qq curl openssh-client gawk procps zstd ca-certificates >/dev/null
+  elif command -v dnf >/dev/null; then dnf install -y -q curl openssh-clients gawk procps-ng zstd
+  elif command -v yum >/dev/null; then yum install -y -q curl openssh-clients gawk procps-ng zstd
+  elif command -v zypper >/dev/null; then zypper -nq install curl openssh-clients gawk procps zstd
+  elif command -v pacman >/dev/null; then pacman -Sy --noconfirm --needed curl openssh gawk procps-ng zstd
+  elif command -v apk >/dev/null; then apk add -q curl openssh-client gawk procps zstd bash
+  else die "Unknown package manager. Install: ${need[*]}"
+  fi
+fi
 command -v curl >/dev/null || die "curl is required."
 command -v ssh >/dev/null || die "OpenSSH client (ssh) is required."
 [ -f "${DIR}/node.env" ] && die "Already enrolled (${DIR}/node.env). Run --uninstall and remove the node in Studio first."
@@ -86,7 +115,7 @@ if ! ollama_up; then
   elif [ "$OS" = Darwin ] && [ -d /Applications/Ollama.app ]; then
     open -a Ollama
   elif command -v systemctl >/dev/null && systemctl list-unit-files ollama.service >/dev/null 2>&1; then
-    sudo systemctl enable --now ollama
+    if [ "$(id -u)" = 0 ]; then systemctl enable --now ollama; else sudo systemctl enable --now ollama; fi
   else
     nohup ollama serve >/dev/null 2>&1 &
   fi
@@ -94,6 +123,10 @@ if ! ollama_up; then
   ollama_up || die "Ollama is not answering on 127.0.0.1:11434."
 fi
 OLLAMA_VERSION="$(curl -fsS http://127.0.0.1:11434/api/version | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+for m in "${MODELS[@]+"${MODELS[@]}"}"; do
+  say "Pulling model ${m}"
+  ollama pull "$m" || say "Could not pull ${m}; continuing."
+done
 
 # --- Machine facts ------------------------------------------------------------
 HOST="$(hostname)"

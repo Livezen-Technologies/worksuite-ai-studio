@@ -59,13 +59,32 @@ export default function NodeApp() {
       </div>
 
       <Card className="mt-6">
-        <CardHeader title="Servers and machines without a desktop" description="Windows Server, Linux servers and headless machines use the command-line tool instead. It does the same enrolment and keeps the tunnel running as a service." />
-        <div className="space-y-3 p-4 text-sm sm:px-6">
-          <p>Create the command on <a className="font-medium text-brand-600 dark:text-blue-400" href="/servers">Servers → Connect a node</a>, then run it on the machine:</p>
-          <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Linux / macOS</div>
-          <CodeBlock>{`curl -fsSL ${base}/node/aistudio-node.sh | bash -s -- --server ${base} --token aisn_…`}</CodeBlock>
-          <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Windows / Windows Server (PowerShell)</div>
-          <CodeBlock>{`& ([scriptblock]::Create((irm ${base}/node/aistudio-node.ps1))) -Server ${base} -Token aisn_…`}</CodeBlock>
+        <CardHeader title="Server setup — single installation" description="Windows Server, Linux servers and headless machines use the command-line installer. One command does everything; no desktop needed." />
+        <div className="space-y-5 p-4 text-sm text-slate-700 sm:px-6 dark:text-slate-300">
+          <Step n={1} title="Create a token">
+            On <a className="font-medium text-brand-600 dark:text-blue-400" href="/servers">Servers → Connect a node</a>, name the server and click <b>Create command</b>. Copy the token (<code>aisn_…</code>).
+          </Step>
+          <Step n={2} title="Ubuntu, Debian and other Linux servers">
+            <p>Sign in to the server over SSH and run, as a user with sudo:</p>
+            <CodeBlock className="mt-2">{`curl -fsSL ${base}/node/aistudio-node.sh | sudo bash -s -- \\\n  --server ${base} \\\n  --token aisn_… \\\n  --name "GPU server 1" \\\n  --model helalm:4b`}</CodeBlock>
+            <p className="mt-2">It installs any missing packages (curl, OpenSSH client, zstd — with apt, dnf, yum, zypper, pacman or apk), installs Ollama as a
+              system service, pulls the models you list with <code>--model</code> (optional, repeatable), registers the server and installs the tunnel as the
+              <code> aistudio-node</code> systemd service, so it starts at boot and restarts by itself. Works on Ubuntu 20.04+, Debian 11+, RHEL/Rocky/Alma 8+,
+              Fedora, openSUSE, Arch and Alpine.</p>
+            <p className="mt-2">For an NVIDIA GPU, install the NVIDIA driver first (Ubuntu: <code>sudo ubuntu-drivers install</code>, then reboot) — Ollama uses it automatically.</p>
+          </Step>
+          <Step n={3} title="Windows Server">
+            <p>Open PowerShell as the account that should run the node and run:</p>
+            <CodeBlock className="mt-2">{`& ([scriptblock]::Create((irm ${base}/node/aistudio-node.ps1))) -Server ${base} -Token aisn_…`}</CodeBlock>
+            <p className="mt-2">It installs Ollama with winget if needed and keeps the tunnel up with the <code>AIStudioNode</code> scheduled task, started at sign-in.</p>
+          </Step>
+          <Step n={4} title="Check and manage">
+            <CodeBlock>{`sudo systemctl status aistudio-node        # tunnel service
+sudo bash -c "$(curl -fsSL ${base}/node/aistudio-node.sh)" -- --status
+sudo journalctl -u aistudio-node -f          # follow its log
+ollama list                                  # installed models`}</CodeBlock>
+            <p className="mt-2">To remove the node: run the same command with <code>--uninstall</code> (Windows: <code>-Uninstall</code>), then remove it on the Servers page.</p>
+          </Step>
         </div>
       </Card>
 
