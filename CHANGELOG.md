@@ -2,6 +2,9 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.17.2] — 2026-10-27 — Training agent works with conda
+- The training agent accepts a node with conda / mamba (Anaconda, Miniconda, Miniforge) instead of python3-venv. The installer finds conda (also in the usual install folders, since the service does not load your shell's conda setup) and remembers its path; the runner then builds one conda env (Python 3.11) per requirements set under `~/.aistudio-agent/conda/`. Nodes with python3-venv keep using venv. Agent 1.1.0 — rerun the install command to switch.
+
 ## [1.17.1] — 2026-10-26 — Administrators can place jobs without an allocation
 - In My jobs → Placement, an administrator (compute.manage) is offered every node that is enabled and open for training, at full capacity, and the placement is saved as an admin override. Before, the dialog said "You have no node allocations yet" and nothing could be chosen unless an allocation had been made to the admin first. Regular users still see only their allocations.
 

@@ -19,12 +19,23 @@ while read -r f; do
 done < manifest.txt
 
 REQ_HASH="$(sha256sum requirements.txt | cut -c1-16)"
-VENV="${HOME}/.aistudio-agent/venvs/${REQ_HASH}"
+# One environment per requirements set: python3-venv, or a conda env when the node uses conda (AISTUDIO_PYENV=conda).
+PYENV="${AISTUDIO_PYENV:-venv}"
+if [ "$PYENV" = conda ]; then
+  CONDA="${AISTUDIO_CONDA:-$(command -v conda || true)}"; [ -x "$CONDA" ] || fail "conda not found at '${CONDA}'; reinstall the agent"
+  VENV="${HOME}/.aistudio-agent/conda/${REQ_HASH}"
+else
+  VENV="${HOME}/.aistudio-agent/venvs/${REQ_HASH}"
+fi
 if [ ! -x "${VENV}/bin/python" ]; then
-  post '{"phase":"installing Python packages (first run on this node)","log":["runner: building the Python environment; the first run takes a few minutes"]}'
-  python3 -m venv "$VENV" || fail "python3 -m venv failed (install python3-venv)"
-  "${VENV}/bin/pip" install -q --upgrade pip >/dev/null 2>&1
-  "${VENV}/bin/pip" install -q -r requirements.txt > pip.log 2>&1 || { rm -rf "$VENV"; fail "pip install failed: $(tail -n 3 pip.log | tr '\n' ' ')"; }
+  post '{"phase":"installing Python packages (first run on this node)","log":["runner: building the Python environment ('"$PYENV"'); the first run takes a few minutes"]}'
+  if [ "$PYENV" = conda ]; then
+    "$CONDA" create -y -q -p "$VENV" python=3.11 pip > env.log 2>&1 || { rm -rf "$VENV"; fail "conda create failed: $(tail -n 3 env.log | tr '\n' ' ')"; }
+  else
+    python3 -m venv "$VENV" || fail "python3 -m venv failed (install python3-venv, or install the agent with conda)"
+  fi
+  "${VENV}/bin/python" -m pip install -q --upgrade pip >/dev/null 2>&1
+  "${VENV}/bin/python" -m pip install -q -r requirements.txt > pip.log 2>&1 || { rm -rf "$VENV"; fail "pip install failed: $(tail -n 3 pip.log | tr '\n' ' ')"; }
 fi
 if command -v nvidia-smi >/dev/null; then
   "${VENV}/bin/python" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null \

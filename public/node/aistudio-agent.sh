@@ -9,7 +9,7 @@
 # it is alive, stops the run if the job is cancelled, and reports how the process ended. Get the token on the Servers
 # page: ⋯ → Install training agent. Run as your normal user (not root); it asks for sudo once to keep running after logout.
 set -euo pipefail
-VERSION="1.0.0"
+VERSION="1.1.0"
 DIR="${HOME}/.aistudio-agent"
 SERVER="" TOKEN="" UNINSTALL=0
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -34,20 +34,31 @@ fi
 [ -n "$SERVER" ] && [ -n "$TOKEN" ] || die "usage: --server URL --token aisa_..."
 [ "$(id -u)" != 0 ] || die "run this as your normal user, not root (training runs as that user)"
 command -v curl >/dev/null || die "curl is required"
-command -v python3 >/dev/null || die "python3 is required (sudo apt install python3 python3-venv)"
-python3 -c "import venv, ensurepip" 2>/dev/null || die "python3-venv is missing (sudo apt install python3-venv)"
+# Python environments: python3-venv, or conda / mamba (Anaconda, Miniconda, Miniforge). The service does not load
+# your shell's conda setup, so the conda path found now is remembered for the runner.
+CONDA="${CONDA_EXE:-$(command -v mamba || command -v conda || true)}"
+for c in "$HOME/miniconda3/bin/conda" "$HOME/anaconda3/bin/conda" "$HOME/miniforge3/bin/conda" "$HOME/mambaforge/bin/conda" /opt/conda/bin/conda; do
+  [ -n "$CONDA" ] || { [ -x "$c" ] && CONDA="$c"; }
+done
+if command -v python3 >/dev/null && python3 -c "import venv, ensurepip" 2>/dev/null; then
+  PYENV=venv
+elif [ -n "$CONDA" ]; then
+  PYENV=conda; say "Using conda for training environments: ${CONDA}"
+else
+  die "need python3-venv (sudo apt install python3-venv) or conda (Miniconda / Anaconda)"
+fi
 
 say "Checking the token with ${SERVER}"
 CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 20 -X POST -H "Authorization: Bearer ${TOKEN}" -d "version=${VERSION}" "${SERVER}/api/agent/heartbeat?format=env")"
 [ "$CODE" = 200 ] || die "the server refused the agent token (HTTP ${CODE}). Create a new one on the Servers page."
 
 mkdir -p "$DIR/jobs"; chmod 700 "$DIR"
-printf 'SERVER=%s\nTOKEN=%s\n' "$SERVER" "$TOKEN" > "$DIR/agent.env"; chmod 600 "$DIR/agent.env"
+printf 'SERVER=%s\nTOKEN=%s\nAISTUDIO_PYENV=%s\nAISTUDIO_CONDA=%s\n' "$SERVER" "$TOKEN" "$PYENV" "$CONDA" > "$DIR/agent.env"; chmod 600 "$DIR/agent.env"
 
 cat > "$DIR/agent-loop.sh" <<'LOOP'
 #!/usr/bin/env bash
 # AI Studio training agent loop (installed by aistudio-agent.sh).
-VERSION="1.0.0"
+VERSION="1.1.0"
 DIR="${HOME}/.aistudio-agent"
 . "$DIR/agent.env"
 JOB="" PID="" EXITED="" CODE="" TAIL=""
@@ -74,6 +85,7 @@ while true; do
       log "job $JOB: starting"
       if curl -fsS -m 60 -o "$JD/runner.sh" "$(get RUNNER_URL)"; then
         AISTUDIO_JOB_URL="$(get JOB_URL)" AISTUDIO_JOB_TOKEN="$(get TOKEN)" AISTUDIO_JOB_DIR="$JD" \
+          AISTUDIO_PYENV="${AISTUDIO_PYENV:-venv}" AISTUDIO_CONDA="${AISTUDIO_CONDA:-}" \
           setsid bash "$JD/runner.sh" > "$JD/runner.log" 2>&1 < /dev/null &
         PID=$!
       else
