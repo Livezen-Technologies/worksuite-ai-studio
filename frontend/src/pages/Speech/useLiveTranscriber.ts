@@ -3,13 +3,14 @@ import { encodeWav, resample, rms } from './audio';
 import type { Segment } from './cues';
 
 const RATE = 16000;
-const MIN_CHUNK = 4, MAX_CHUNK = 12, PAUSE_MS = 350;
+// The first piece goes out after 2 s so words appear quickly; later pieces wait for a natural pause (4–12 s).
+const FIRST_CHUNK = 2, MIN_CHUNK = 4, MAX_CHUNK = 12, PAUSE_MS = 350, SILENT_RMS = 0.012;
 
 export type MicError = 'blocked' | 'unavailable' | null;
 
 /**
  * Microphone → text while you speak. Audio is cut into short pieces at natural pauses (4–12 s); each piece is
- * transcribed while recording continues and its lines come back with times on the recording's clock. The whole
+ * transcribed while recording continues (the first after ~2 s; a piece that is all silence is never uploaded) and its lines come back with times on the recording's clock. The whole
  * recording is returned on stop. Shared by the Speech page and the Chat composer.
  */
 export function useLiveTranscriber({ transcribe, onSegments, maxSeconds = 600 }: {
@@ -29,8 +30,8 @@ export function useLiveTranscriber({ transcribe, onSegments, maxSeconds = 600 }:
   const r = useRef<{
     stream?: MediaStream; ctx?: AudioContext; proc?: ScriptProcessorNode; rec?: MediaRecorder; chunks: Blob[];
     buf: Float32Array[]; bufLen: number; offset: number; quietMs: number; started: number; timer?: number;
-    queue: Promise<void>; stopping: boolean; gen: number; heard: boolean; peak: number;
-  }>({ chunks: [], buf: [], bufLen: 0, offset: 0, quietMs: 0, started: 0, queue: Promise.resolve(), stopping: false, gen: 0, heard: false, peak: 0 });
+    queue: Promise<void>; stopping: boolean; gen: number; heard: boolean; peak: number; piecePeak: number;
+  }>({ chunks: [], buf: [], bufLen: 0, offset: 0, quietMs: 0, started: 0, queue: Promise.resolve(), stopping: false, gen: 0, heard: false, peak: 0, piecePeak: 0 });
 
   const sendChunk = (final = false) => {
     const s = r.current;
@@ -40,7 +41,9 @@ export function useLiveTranscriber({ transcribe, onSegments, maxSeconds = 600 }:
     for (const b of s.buf) { pcm.set(b, o); o += b.length; }
     const offset = s.offset;
     s.offset += s.bufLen / RATE;
-    s.buf = []; s.bufLen = 0; s.quietMs = 0;
+    const silent = s.piecePeak < SILENT_RMS;
+    s.buf = []; s.bufLen = 0; s.quietMs = 0; s.piecePeak = 0;
+    if (silent) return;                                   // nothing said: no upload, no wait
     const wav = encodeWav(pcm, RATE);
     const gen = s.gen;
     setPending((n) => n + 1);
@@ -91,15 +94,17 @@ export function useLiveTranscriber({ transcribe, onSegments, maxSeconds = 600 }:
       const proc = ctx.createScriptProcessor(4096, 1, 1);
       src.connect(proc); proc.connect(ctx.destination);
       const s = r.current;
-      Object.assign(s, { stream, ctx, proc, chunks: [], buf: [], bufLen: 0, offset: 0, quietMs: 0, started: Date.now(), queue: Promise.resolve(), stopping: false, gen: s.gen + 1, heard: false, peak: 0 });
+      Object.assign(s, { stream, ctx, proc, chunks: [], buf: [], bufLen: 0, offset: 0, quietMs: 0, started: Date.now(), queue: Promise.resolve(), stopping: false, gen: s.gen + 1, heard: false, peak: 0, piecePeak: 0 });
       proc.onaudioprocess = (e) => {
         const frame = resample(new Float32Array(e.inputBuffer.getChannelData(0)), ctx.sampleRate, RATE);
         s.buf.push(frame); s.bufLen += frame.length;
         const level = rms(frame);
         s.peak = Math.max(s.peak, level);
+        s.piecePeak = Math.max(s.piecePeak, level);
         s.quietMs = level < 0.012 ? s.quietMs + (frame.length / RATE) * 1000 : 0;
         const secs = s.bufLen / RATE;
-        if ((secs >= MIN_CHUNK && s.quietMs >= PAUSE_MS) || secs >= MAX_CHUNK) sendChunk();
+        const min = s.offset === 0 && s.piecePeak >= SILENT_RMS ? FIRST_CHUNK : MIN_CHUNK;
+        if ((secs >= min && s.quietMs >= PAUSE_MS) || secs >= MAX_CHUNK) sendChunk();
       };
       const type = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((t) => MediaRecorder.isTypeSupported(t)) ?? '';
       const rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);

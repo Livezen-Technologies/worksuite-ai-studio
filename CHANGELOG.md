@@ -2,6 +2,11 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.18.2] — 2026-10-27 — Lower speech latency
+- Models stay loaded: chosen models are kept in memory (the 3 most recently used, `ASR_KEEP`), and `ASR_PRELOAD` (default the numbers fine-tune) loads at start, so the first piece no longer waits several seconds for a model to load.
+- Parallel transcriptions: up to `ASR_PARALLEL` at once (2 on CPU, 3 on a GPU) with as many CTranslate2 workers per model, instead of one global lock where every user queued behind every other. "Busy" now means all slots are in use.
+- Live recording: the first piece goes out after ~2 s (words appear sooner), later pieces still wait for a natural pause (4–12 s), and a piece that is all silence is not uploaded at all. Audio was already resampled to 16 kHz mono in the browser.
+
 ## [1.18.1] — 2026-10-27 — Every node in Run on; CPU nodes run speech too
 - Speech → Run on lists every node. Ready ones can be chosen; the others say why not (training agent not running, agent too old — reinstall to add speech, setting up, disabled, no tunnel). Auto prefers GPU nodes (most GPUs first), then CPU nodes, then this server.
 - A node without a GPU runs the speech service on all its CPU cores (agent 1.3.1); the NVIDIA libraries are only installed where there is a GPU.

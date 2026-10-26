@@ -26,13 +26,16 @@ MODEL_DIR = os.environ.get('ASR_MODEL', '/srv/sinhala-data/models/whisper-small-
 MODEL_NAME = 'Whisper Sinhala (SinhaSpeech whisper-small run11, int8)'
 MAX_BYTES = 500 * 1024 * 1024  # video uploads for captions
 THREADS = int(os.environ.get('ASR_THREADS', '4'))
-model = WhisperModel(MODEL_DIR, device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS)
+# Transcriptions that may run at once: a GPU handles several streams; on CPU two jobs of 4 threads fill 8 cores.
+# Each model gets as many CTranslate2 workers, so two people on the same model run side by side instead of queueing.
+PARALLEL = int(os.environ.get('ASR_PARALLEL', '3' if DEVICE == 'cuda' else '2'))
+model = WhisperModel(MODEL_DIR, device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS, num_workers=PARALLEL)
 # Multilingual Whisper small (OpenAI, MIT) — language identification and English phrases in mixed speech.
 MULTI_DIR = os.environ.get('ASR_MULTI_MODEL', '/srv/sinhala-data/models/faster-whisper-small')
-multi = WhisperModel(MULTI_DIR, device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS) if os.path.isdir(MULTI_DIR) else None
+multi = WhisperModel(MULTI_DIR, device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS, num_workers=PARALLEL) if os.path.isdir(MULTI_DIR) else None
 # A smaller multilingual model only tells Sinhala from English per phrase — the same answer for a quarter of the work.
 LID_DIR = os.environ.get('ASR_LID_MODEL', '/srv/sinhala-data/models/faster-whisper-base')
-lid = WhisperModel(LID_DIR, device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS) if os.path.isdir(LID_DIR) else multi
+lid = WhisperModel(LID_DIR, device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS, num_workers=PARALLEL) if os.path.isdir(LID_DIR) else multi
 RATE = 16000
 
 # Other Whisper sizes (multilingual, OpenAI MIT, CTranslate2 int8), loaded on first use. One of them stays in memory at a
@@ -48,7 +51,11 @@ CATALOG = {
     'medium':  {'label': 'Whisper Medium', 'dir': 'faster-whisper-medium', 'note': 'Higher accuracy, slower.'},
     'turbo':   {'label': 'Whisper Large v3 Turbo', 'dir': 'faster-whisper-large-v3-turbo', 'note': 'Best multilingual accuracy; slow on this CPU, best for uploads.'},
 }
-_extra = {}  # name -> WhisperModel (at most one)
+# Other models stay loaded once used (least recently used is dropped beyond ASR_KEEP), and ASR_PRELOAD ones are loaded
+# at start, so nobody waits seconds for a model to load from disk on their first piece.
+KEEP = int(os.environ.get('ASR_KEEP', '3'))
+_extra = {}  # name -> WhisperModel, in use order
+_load_lock = threading.Lock()
 
 
 def _dir(name):
@@ -63,10 +70,23 @@ def get_model(name):
         return multi
     if name == 'base' and lid is not None and lid is not multi:
         return lid
-    if name not in _extra:
-        _extra.clear()  # free the previous extra model first
-        _extra[name] = WhisperModel(_dir(name), device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS)
-    return _extra[name]
+    with _load_lock:
+        if name in _extra:
+            _extra[name] = _extra.pop(name)                     # most recently used last
+        else:
+            while len(_extra) >= KEEP:
+                _extra.pop(next(iter(_extra)))                  # drop the least recently used
+            _extra[name] = WhisperModel(_dir(name), device=DEVICE, compute_type=COMPUTE, cpu_threads=THREADS, num_workers=PARALLEL)
+        return _extra[name]
+
+
+def _preload():
+    for name in filter(None, os.environ.get('ASR_PRELOAD', 'sinhala_numbers').split(',')):
+        try:
+            if name in CATALOG and os.path.exists(os.path.join(_dir(name), 'model.bin')):
+                get_model(name); print(f'preloaded {name}', flush=True)
+        except Exception as e:
+            print(f'preload {name} failed: {e}', flush=True)
 
 
 def catalog():
@@ -115,7 +135,9 @@ def transcribe_mixed(pcm, words, fast):
         counts[lang] += (b - a) / RATE
     main = max(counts, key=counts.get) if any(counts.values()) else 'si'
     return rows, main, round(sum(counts.values()) and counts[main] / sum(counts.values()), 3)
-lock = threading.Lock()  # one transcription at a time keeps the CPU for the rest of the box
+slots = threading.BoundedSemaphore(PARALLEL)  # at most PARALLEL transcriptions at once
+_active = [0]
+_active_lock = threading.Lock()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -132,7 +154,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if urlparse(self.path).path == '/health':
-            return self._send(200, {'ok': True, 'model': MODEL_NAME, 'busy': lock.locked(), 'mixed': multi is not None, 'models': catalog(), 'device': DEVICE})
+            return self._send(200, {'ok': True, 'model': MODEL_NAME, 'busy': _active[0] >= PARALLEL, 'active': _active[0], 'parallel': PARALLEL, 'mixed': multi is not None, 'models': catalog(), 'device': DEVICE})
         self._send(404, {'error': 'not found'})
 
     def do_POST(self):
@@ -183,7 +205,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(503, {'error': 'Mixed Sinhala + English needs the multilingual model, which is not installed on this server.'})
         try:
             t_wait = time.time()
-            with lock:
+            with slots:
+                with _active_lock: _active[0] += 1
                 waited = time.time() - t_wait
                 t_run = time.time()
                 if lang == 'mix':
@@ -195,7 +218,9 @@ class Handler(BaseHTTPRequestHandler):
                                                   vad_filter=True, word_timestamps=words)  # VAD also for live chunks: silence otherwise yields '.' lines
                     segments = _rows(segs, words)
                     detected, prob, duration = info.language, info.language_probability, info.duration
+                with _active_lock: _active[0] -= 1
         except Exception as e:  # undecodable or empty audio
+            with _active_lock: _active[0] = max(0, _active[0] - 1)
             return self._send(422, {'error': f'Could not read this audio: {type(e).__name__}. Try WAV, MP3, M4A, OGG, WebM or FLAC.'})
         if q.get('numerals', ['1'])[0] == '1':  # on by default; numerals=0 keeps numbers as spoken words
             for sg in segments:
@@ -211,4 +236,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
+    threading.Thread(target=_preload, daemon=True).start()
     ThreadingHTTPServer(('127.0.0.1', int(os.environ.get('ASR_PORT', '8096'))), Handler).serve_forever()
