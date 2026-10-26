@@ -2,6 +2,12 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.17.3] — 2026-10-27 — Training agent fixes; training uses every GPU on a node
+- The installer's token check no longer claims a job: it is a probe (`probe=1`). Before, installing the agent while a job was queued handed that job to the installer, which never ran it, so the job sat at "starting" with no reports.
+- Reinstalling the agent restarts the service, so a new token takes effect. Before, the running agent kept its old token and every heartbeat was refused (401).
+- Both recipes train on every visible GPU (DataParallel: each step's batch is split across the GPUs; batch is per GPU). GPU figures on the Training page cover all GPUs (average load, total memory, hottest GPU).
+- The agent reports how many GPUs nvidia-smi sees, and the node's GPU count follows it (enrolment recorded only the first GPU).
+
 ## [1.17.2] — 2026-10-27 — Training agent works with conda
 - The training agent accepts a node with conda / mamba (Anaconda, Miniconda, Miniforge) instead of python3-venv. The installer finds conda (also in the usual install folders, since the service does not load your shell's conda setup) and remembers its path; the runner then builds one conda env (Python 3.11) per requirements set under `~/.aistudio-agent/conda/`. Nodes with python3-venv keep using venv. Agent 1.1.0 — rerun the install command to switch.
 

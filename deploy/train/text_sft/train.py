@@ -31,10 +31,12 @@ def say(msg):
 
 def gpu():
     try:
-        q = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name',
-                            '--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=5).stdout.splitlines()[0].split(', ')
-        return {'gpu_pct': float(q[0]), 'vram_used_mb': float(q[1]), 'vram_total_mb': float(q[2]),
-                'vram_pct': round(float(q[1]) / float(q[2]) * 100, 1), 'gpu_temp_c': float(q[3]), 'gpu_name': q[4]}
+        rows = [l.split(', ') for l in subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name',
+                '--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=5).stdout.strip().splitlines()]
+        used, total = sum(float(r[1]) for r in rows), sum(float(r[2]) for r in rows)
+        return {'gpu_pct': round(sum(float(r[0]) for r in rows) / len(rows), 1), 'vram_used_mb': used, 'vram_total_mb': total,
+                'vram_pct': round(used / total * 100, 1), 'gpu_temp_c': max(float(r[3]) for r in rows),
+                'gpu_name': (f'{len(rows)} × ' if len(rows) > 1 else '') + rows[0][4]}
     except Exception:
         return {}
 
@@ -92,6 +94,11 @@ model = get_peft_model(model, LoraConfig(r=RANK, lora_alpha=RANK * 2, lora_dropo
 for p in model.parameters():
     if p.requires_grad: p.data = p.data.float()                               # fp32 adapters for the grad scaler
 say('trainable parameters: ' + str(sum(p.numel() for p in model.parameters() if p.requires_grad)))
+N_GPU = max(1, torch.cuda.device_count())
+net = torch.nn.DataParallel(model) if N_GPU > 1 else model      # every visible GPU takes a share of each batch
+if N_GPU > 1:
+    batches = [train[i:i + BATCH * N_GPU] for i in range(0, len(train), BATCH * N_GPU)]   # BATCH is per GPU
+    say(f'{N_GPU} GPUs: {BATCH * N_GPU} rows per step')
 
 
 def dev_loss():
@@ -119,7 +126,7 @@ for ep in range(EPOCHS):
     for b, part in enumerate(batches):
         ids, att, lab = collate(part)
         with torch.autocast('cuda', dtype=torch.float16, enabled=dev.type == 'cuda'):
-            loss = model(input_ids=ids, attention_mask=att, labels=lab).loss / ACCUM
+            loss = net(input_ids=ids, attention_mask=att, labels=lab).loss.mean() / ACCUM   # one loss per GPU → mean
         scaler.scale(loss).backward()
         if (b + 1) % ACCUM == 0 or b == len(batches) - 1:
             scaler.unscale_(opt); torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.0)

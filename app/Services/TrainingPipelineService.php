@@ -190,9 +190,14 @@ class TrainingPipelineService
                 $this->fail($exited, "The training process on {$server['name']} exited with code {$code} without reporting a result. " . mb_substr((string) ($in['tail'] ?? ''), -500), true);
             }
         }
+        $gpus = (int) ($in['gpus'] ?? 0);                                    // the agent counts what nvidia-smi sees
+        if ($gpus > 0 && $gpus !== (int) ($server['gpu_count'] ?? 0)) {
+            $this->db->table('servers')->where('id', $server['id'])->update(['gpu_count' => $gpus]);
+        }
         $this->db->table('servers')->where('id', $server['id'])->update([
             'agent_seen_at' => $now, 'agent_version' => mb_substr((string) ($in['version'] ?? ''), 0, 20) ?: null, 'agent_job_id' => $busy,
         ]);
+        if (! empty($in['probe'])) return ['action' => 'idle', 'why' => 'probe'];   // the installer's token check never takes work
         if ($busy) {
             $job = $this->db->table('training_jobs')->where('id', $busy)->get()->getRowArray();
             if (! $job || (int) $job['cancel_requested'] === 1 || in_array($job['status'], ['cancelled', 'failed'], true)) return ['action' => 'stop', 'job_id' => $busy];

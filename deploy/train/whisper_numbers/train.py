@@ -31,10 +31,12 @@ def say(msg):
 
 def gpu():
     try:
-        q = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,name',
-                            '--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=5).stdout.splitlines()[0].split(', ')
-        return {'gpu_pct': float(q[0]), 'vram_used_mb': float(q[1]), 'vram_total_mb': float(q[2]), 'vram_pct': round(float(q[1]) / float(q[2]) * 100, 1),
-                'gpu_temp_c': float(q[3]), 'gpu_power_w': float(q[4]) if q[4] not in ('[N/A]', '') else None, 'gpu_name': q[5]}
+        rows = [l.split(', ') for l in subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name',
+                '--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=5).stdout.strip().splitlines()]
+        used, total = sum(float(r[1]) for r in rows), sum(float(r[2]) for r in rows)
+        return {'gpu_pct': round(sum(float(r[0]) for r in rows) / len(rows), 1), 'vram_used_mb': used, 'vram_total_mb': total,
+                'vram_pct': round(used / total * 100, 1), 'gpu_temp_c': max(float(r[3]) for r in rows),
+                'gpu_name': (f'{len(rows)} × ' if len(rows) > 1 else '') + rows[0][4]}
     except Exception:
         return {}
 
@@ -58,6 +60,9 @@ proc = WhisperProcessor.from_pretrained(BASE)
 model = WhisperForConditionalGeneration.from_pretrained(BASE).to(dev)
 model.config.forced_decoder_ids = None
 model.generation_config.forced_decoder_ids = None
+N_GPU = max(1, torch.cuda.device_count())
+net = torch.nn.DataParallel(model) if N_GPU > 1 else model      # every visible GPU takes a share of each batch
+STEP_BATCH = BATCH * N_GPU                                       # BATCH is per GPU
 prefix = proc.tokenizer.convert_tokens_to_ids(['<|startoftranscript|>', '<|si|>', '<|transcribe|>', '<|notimestamps|>'])
 
 
@@ -107,8 +112,8 @@ def evaluate(rows, label):
 
 
 train, devset = load('train'), load('dev')
-say(f'train {len(train)}  dev {len(devset)}  device {dev}  base {BASE}  epochs {EPOCHS}  batch {BATCH}')
-steps = EPOCHS * math.ceil(len(train) / BATCH)
+say(f'train {len(train)}  dev {len(devset)}  device {dev} × {N_GPU}  base {BASE}  epochs {EPOCHS}  batch {BATCH} per GPU ({STEP_BATCH} per step)')
+steps = EPOCHS * math.ceil(len(train) / STEP_BATCH)
 report(status='running', phase='evaluating base', total_steps=steps, step=0)
 before = evaluate(devset, 'before')
 report(phase='training', metrics={'before': before})
@@ -121,16 +126,16 @@ step, t0, saved, after = 0, time.time(), False, before
 for ep in range(EPOCHS):
     random.shuffle(train)
     for p in model.model.encoder.parameters(): p.requires_grad = ep >= EPOCHS / 2
-    for i in range(0, len(train), BATCH):
-        f, d, l = batch(train[i:i + BATCH])
+    for i in range(0, len(train), STEP_BATCH):
+        f, d, l = batch(train[i:i + STEP_BATCH])
         with torch.autocast('cuda', dtype=torch.float16, enabled=dev.type == 'cuda'):
-            loss = model(input_features=f, decoder_input_ids=d, labels=l).loss
+            loss = net(input_features=f, decoder_input_ids=d, labels=l).loss.mean()   # one loss per GPU → mean
         scaler.scale(loss).backward(); scaler.unscale_(opt); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         scaler.step(opt); scaler.update(); sched.step(); opt.zero_grad(); step += 1
         if step % 10 == 0 or step == steps:
             el = time.time() - t0
             say(f'ep {ep + 1} step {step}/{steps} loss {loss.item():.4f}')
-            report(step=step, total_steps=steps, epoch=round(ep + (i + BATCH) / len(train), 3), loss=round(loss.item(), 4),
+            report(step=step, total_steps=steps, epoch=round(ep + (i + STEP_BATCH) / len(train), 3), loss=round(loss.item(), 4),
                    lr=sched.get_last_lr()[0], sec_per_step=round(el / step, 2), eta_seconds=int(el / step * (steps - step)))
     report(phase=f'evaluating epoch {ep + 1}')
     r = evaluate(devset, f'epoch {ep + 1}')

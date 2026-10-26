@@ -9,7 +9,7 @@
 # it is alive, stops the run if the job is cancelled, and reports how the process ended. Get the token on the Servers
 # page: ⋯ → Install training agent. Run as your normal user (not root); it asks for sudo once to keep running after logout.
 set -euo pipefail
-VERSION="1.1.0"
+VERSION="1.1.1"
 DIR="${HOME}/.aistudio-agent"
 SERVER="" TOKEN="" UNINSTALL=0
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -49,7 +49,7 @@ else
 fi
 
 say "Checking the token with ${SERVER}"
-CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 20 -X POST -H "Authorization: Bearer ${TOKEN}" -d "version=${VERSION}" "${SERVER}/api/agent/heartbeat?format=env")"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 20 -X POST -H "Authorization: Bearer ${TOKEN}" -d "version=${VERSION}&probe=1" "${SERVER}/api/agent/heartbeat?format=env")"
 [ "$CODE" = 200 ] || die "the server refused the agent token (HTTP ${CODE}). Create a new one on the Servers page."
 
 mkdir -p "$DIR/jobs"; chmod 700 "$DIR"
@@ -58,7 +58,7 @@ printf 'SERVER=%s\nTOKEN=%s\nAISTUDIO_PYENV=%s\nAISTUDIO_CONDA=%s\n' "$SERVER" "
 cat > "$DIR/agent-loop.sh" <<'LOOP'
 #!/usr/bin/env bash
 # AI Studio training agent loop (installed by aistudio-agent.sh).
-VERSION="1.1.0"
+VERSION="1.1.1"
 DIR="${HOME}/.aistudio-agent"
 . "$DIR/agent.env"
 JOB="" PID="" EXITED="" CODE="" TAIL=""
@@ -74,7 +74,7 @@ while true; do
     JOB="" PID=""
   fi
   R="$(curl -s -m 30 -X POST -H "Authorization: Bearer ${TOKEN}" \
-        --data-urlencode "version=${VERSION}" --data-urlencode "job_id=${JOB}" \
+        --data-urlencode "version=${VERSION}" --data-urlencode "job_id=${JOB}" --data-urlencode "gpus=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU')" \
         --data-urlencode "exited_job_id=${EXITED}" --data-urlencode "exit_code=${CODE}" --data-urlencode "tail=${TAIL}" \
         "${SERVER}/api/agent/heartbeat?format=env" 2>>"$DIR/agent.log")" || { sleep 30; continue; }
   EXITED="" CODE="" TAIL=""
@@ -124,7 +124,8 @@ if ! loginctl show-user "$(id -un)" -p Linger 2>/dev/null | grep -q yes; then
   for _ in 1 2 3 4 5; do [ -S "${XDG_RUNTIME_DIR}/bus" ] && break; sleep 1; done
 fi
 systemctl --user daemon-reload
-systemctl --user enable --now aistudio-agent.service
+systemctl --user enable aistudio-agent.service
+systemctl --user restart aistudio-agent.service   # a reinstall must load the new token into a running agent
 sleep 3
 if systemctl --user is-active --quiet aistudio-agent.service; then
   say "Training agent running. It picks up queued jobs this node can run (log: ${DIR}/agent.log)."
