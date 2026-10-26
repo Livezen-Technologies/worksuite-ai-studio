@@ -134,10 +134,12 @@ export default function Servers() {
           {manage && <Button variant="primary" icon={PlusIcon} onClick={() => setEditing(null)}>Add server</Button>}
         </>}
       />
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <StatCard name="Servers" icon={ServerStackIcon} loading={summary.isLoading} value={t ? num(t.servers) : '—'} hint={t ? `${t.online} online` : undefined} />
-        <StatCard name="CPU" icon={CpuChipIcon} loading={summary.isLoading} value={t ? `${num(t.cpu_cores)} cores` : '—'} hint={t ? `${num(t.ram_gb)} GB RAM in total` : undefined} />
-        <StatCard name="GPU" icon={Squares2X2Icon} loading={summary.isLoading} value={t ? num(t.gpus) : '—'} hint={t ? (t.vram_gb ? `${num(t.vram_gb)} GB VRAM in total` : 'No GPU nodes yet') : undefined} />
+        <StatCard name="CPU cores" icon={CpuChipIcon} loading={summary.isLoading} value={t ? num(t.cpu_cores) : '—'} hint={t ? `${num(t.ram_gb)} GB RAM in total` : undefined} />
+        <StatCard name="GPUs" icon={Squares2X2Icon} loading={summary.isLoading} value={t ? num(t.gpus) : '—'} hint={t ? (t.vram_gb ? `${num(t.vram_gb)} GB VRAM in total` : 'No GPU nodes yet') : undefined} />
+        <StatCard name="CUDA cores" icon={Squares2X2Icon} loading={summary.isLoading} value={t ? num(t.cuda_cores) : '—'}
+          hint={t ? (t.gpus ? `${t.cuda_known} of ${t.gpus} GPU${t.gpus === 1 ? '' : 's'} identified` : 'No GPU nodes yet') : undefined} />
         <StatCard name="Requests (24 h)" icon={ChartBarIcon} loading={summary.isLoading} value={t ? num(t.requests_24h) : '—'} hint={t ? `${compact(t.tokens_24h)} tokens` : undefined} />
       </div>
       <Card>
@@ -198,7 +200,7 @@ export default function Servers() {
 }
 
 interface FleetSummary {
-  servers: number; online: number; cpu_cores: number; ram_gb: number; gpus: number; vram_gb: number; requests_24h: number; tokens_24h: number;
+  servers: number; online: number; cpu_cores: number; ram_gb: number; gpus: number; vram_gb: number; cuda_cores: number; cuda_known: number; requests_24h: number; tokens_24h: number;
 }
 
 const CONTROL_LABEL: Record<ControlAction, string> = { restart: 'Restart Ollama', update: 'Update Ollama', shutdown: 'Shut down' };
