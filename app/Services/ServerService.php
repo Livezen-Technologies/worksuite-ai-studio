@@ -39,7 +39,7 @@ class ServerService
         $probe    = $provider->isExternal($server['kind'] ?? 'ollama')
             ? $provider->probe($server)
             : $this->clientFor($server)->probe();
-        $score = $this->score($probe);
+        $score = $this->score($probe, ! empty($server['tunnel_port']));
         $status = $this->statusFromScore($probe['ok'], $score);
         $now   = date('Y-m-d H:i:s');
 
@@ -82,17 +82,20 @@ class ServerService
      * Derive a 0–100 health score from a probe:
      *  - unreachable => 0
      *  - reachable   => base 100, penalised for latency.
+     * A node behind the reverse SSH tunnel answers across the internet (~450 ms is normal), so its thresholds are
+     * higher: −10 over 1 s, −15 more over 2 s, −25 more over 4 s. Local / LAN nodes keep 250 ms / 750 ms / 1.5 s.
      */
-    protected function score(array $probe): int
+    protected function score(array $probe, bool $tunnel = false): int
     {
         if (! $probe['ok']) {
             return 0;
         }
         $latency = (int) $probe['latency_ms'];
+        [$a, $b, $c] = $tunnel ? [1000, 2000, 4000] : [250, 750, 1500];
         $penalty = 0;
-        if ($latency > 250)  $penalty += 10;
-        if ($latency > 750)  $penalty += 15;
-        if ($latency > 1500) $penalty += 25;
+        if ($latency > $a) $penalty += 10;
+        if ($latency > $b) $penalty += 15;
+        if ($latency > $c) $penalty += 25;
         return max(40, 100 - $penalty);
     }
 

@@ -9,9 +9,9 @@
 # it is alive, stops the run if the job is cancelled, and reports how the process ended. Get the token on the Servers
 # page: ⋯ → Install training agent. Run as your normal user (not root); it asks for sudo once to keep running after logout.
 set -euo pipefail
-VERSION="1.1.1"
+VERSION="1.2.0"
 DIR="${HOME}/.aistudio-agent"
-SERVER="" TOKEN="" UNINSTALL=0
+SERVER="" TOKEN="" UNINSTALL=0 FORCE_VENV=0
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
@@ -19,6 +19,7 @@ while [ $# -gt 0 ]; do
     --server) SERVER="${2%/}"; shift 2 ;;
     --token) TOKEN="$2"; shift 2 ;;
     --uninstall) UNINSTALL=1; shift ;;
+    --venv) FORCE_VENV=1; shift ;;   # use python3-venv even when conda is installed
     *) die "unknown option $1" ;;
   esac
 done
@@ -40,10 +41,11 @@ CONDA="${CONDA_EXE:-$(command -v mamba || command -v conda || true)}"
 for c in "$HOME/miniconda3/bin/conda" "$HOME/anaconda3/bin/conda" "$HOME/miniforge3/bin/conda" "$HOME/mambaforge/bin/conda" /opt/conda/bin/conda; do
   [ -n "$CONDA" ] || { [ -x "$c" ] && CONDA="$c"; }
 done
-if command -v python3 >/dev/null && python3 -c "import venv, ensurepip" 2>/dev/null; then
-  PYENV=venv
-elif [ -n "$CONDA" ]; then
+# conda first when it is installed (training then never touches the system Python); python3-venv otherwise.
+if [ -n "$CONDA" ] && [ "$FORCE_VENV" = 0 ]; then
   PYENV=conda; say "Using conda for training environments: ${CONDA}"
+elif command -v python3 >/dev/null && python3 -c "import venv, ensurepip" 2>/dev/null; then
+  PYENV=venv; say "Using python3-venv for training environments"
 else
   die "need python3-venv (sudo apt install python3-venv) or conda (Miniconda / Anaconda)"
 fi
@@ -58,7 +60,7 @@ printf 'SERVER=%s\nTOKEN=%s\nAISTUDIO_PYENV=%s\nAISTUDIO_CONDA=%s\n' "$SERVER" "
 cat > "$DIR/agent-loop.sh" <<'LOOP'
 #!/usr/bin/env bash
 # AI Studio training agent loop (installed by aistudio-agent.sh).
-VERSION="1.1.1"
+VERSION="1.2.0"
 DIR="${HOME}/.aistudio-agent"
 . "$DIR/agent.env"
 JOB="" PID="" EXITED="" CODE="" TAIL=""

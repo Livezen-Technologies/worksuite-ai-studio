@@ -2,6 +2,10 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.17.5] — 2026-10-27 — Tunnel-aware health; conda first
+- Health score: a node behind the reverse SSH tunnel answers across the internet (~450 ms is normal), so it loses points only above 1 s / 2 s / 4 s instead of 250 ms / 750 ms / 1.5 s. Tunnelled nodes now read 100 at normal latency; local and LAN nodes keep the strict thresholds.
+- Training agent 1.2.0 prefers conda whenever it is installed, so training never uses the system Python; python3-venv is the fallback, or forced with `--venv`.
+
 ## [1.17.4] — 2026-10-27 — Servers summary counts every GPU
 - The CUDA cores, GPUs and VRAM cards counted one GPU per server. They now multiply by each node's GPU count (2 × Tesla T4 + Quadro T1000 = 6,016 CUDA cores across 3 GPUs, not 3,456 across 2), and use the node's recorded VRAM total when there is one.
 
