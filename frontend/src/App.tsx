@@ -7,6 +7,12 @@ import { Button, EmptyState, Spinner } from './components/ui';
 import Login from './pages/Login';
 
 const Account = lazy(() => import('./pages/Account'));
+// Public site (Radiant): landing for signed-out visitors at /, plus pricing, company and the release blog.
+const SiteHome = lazy(() => import('./site/pages/Home'));
+const SitePricing = lazy(() => import('./site/pages/Pricing'));
+const SiteCompany = lazy(() => import('./site/pages/Company'));
+const SiteBlog = lazy(() => import('./site/pages/Blog'));
+const SiteBlogPost = lazy(() => import('./site/pages/Blog').then((m) => ({ default: m.BlogPost })));
 
 const pages = {
   '/': lazy(() => import('./pages/Dashboard')),
@@ -91,10 +97,16 @@ function Guard({ perm, children }: { perm: string; children: ReactNode }) {
   return <PageBoundary><Suspense fallback={<PageLoading />}>{children}</Suspense></PageBoundary>;
 }
 
+/** Public pages render outside the app shell, with their own loading state. */
+function Public({ children }: { children: ReactNode }) {
+  return <PageBoundary><Suspense fallback={<div className="min-h-full bg-white" />}>{children}</Suspense></PageBoundary>;
+}
+
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
   if (loading) return <div className="flex h-full items-center justify-center text-slate-400"><Spinner className="size-7" /></div>;
+  if (!user && location.pathname === '/') return <Public><SiteHome /></Public>;   // visitors get the landing page
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   return <>{children}</>;
 }
@@ -103,6 +115,10 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/pricing" element={<Public><SitePricing /></Public>} />
+      <Route path="/company" element={<Public><SiteCompany /></Public>} />
+      <Route path="/blog" element={<Public><SiteBlog /></Public>} />
+      <Route path="/blog/:slug" element={<Public><SiteBlogPost /></Public>} />
       {/* Old URLs from OllamaHub 1.x */}
       <Route path="/apikeys" element={<Navigate to="/api-keys" replace />} />
       <Route path="/apilogs" element={<Navigate to="/api-logs" replace />} />

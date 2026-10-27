@@ -2,6 +2,14 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.20.0] — 2026-10-27 — A public website for AI Studio
+- Public pages in the Tailwind Plus Radiant design: **Home** (shown at / to visitors who are not signed in; signed-in users still get the dashboard), **Pricing**, **Company** and **Blog**. Ported to the app's React Router instead of a second Next.js server, with Switzer as the site font; the app's own look is untouched.
+- Home: the hero, live figures from the system (training rows, speech recordings, model packages, chat models), an app preview and feature sections for speech, custom LLMs, datasets, the API gateway, languages, nodes, automated training, release gates and privacy — drawn in code from real features, with no stock screenshots, made-up customer logos or testimonials.
+- Pricing: Starter, Team and Enterprise plans with a feature comparison and FAQ; prices read "Talk to us" until list prices are set in `src/site/pages/Pricing.tsx`.
+- Company: mission, figures, values and a contact section; contact details go in `src/site/config.ts` (none are invented).
+- Blog: every release from CHANGELOG.md, read at build time — latest three featured, category filter, paging, and a page per release with previous/next.
+- The sign-in page uses Radiant's card on the site gradient, keeping password, passkey, two-factor and recovery-code sign-in; it follows dark mode.
+
 ## [1.19.0] — 2026-10-27 — Create a custom LLM
 - Training page → **Create custom LLM**: name it, pick a base model (Qwen2.5 0.5B / 1.5B / 3B Instruct, SmolLM2 1.7B, or any Hugging Face id), an approved dataset, a node (or any GPU node), training settings, the model's name in Ollama, quantization (Q4_K_M, Q5_K_M, Q8_0, F16) and a system prompt. **Run now** starts it; Automatic retrains when the dataset changes.
 - A GPU node trains the LoRA adapter (recipe `text_sft`) and uploads it; the server then builds the model in the background (`spark training:finalize <job>`): merge into the base → GGUF f16 → quantize → `ollama create` with the system prompt → the local node's model list → an Engine text package (downloadable with an API key). Progress shows in the job's phase and log; the result goes to Notifications; the pipeline shows **ready** with **Try in Chat** (Chat honours `?model=`).

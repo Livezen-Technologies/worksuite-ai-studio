@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { GradientBackground } from '../site/ui';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/20/solid';
 import { FingerPrintIcon } from '@heroicons/react/24/outline';
 import { useAuth, type Session } from '../lib/auth';
@@ -93,11 +94,14 @@ export default function Login() {
   }[step.kind];
 
   return (
-    <div className="flex min-h-full">
-      <div className="flex flex-1 flex-col justify-center px-4 py-12 sm:px-6 lg:flex-none lg:px-20 xl:px-24">
-        <div className="mx-auto w-full max-w-sm lg:w-96">
-          <Logo />
-          <h1 className="mt-8 text-2xl/9 font-bold tracking-tight text-slate-900 dark:text-white">{heading}</h1>
+    // Radiant sign-in: a card on the site's gradient. The forms inside are the app's (password, passkey, 2FA, codes).
+    <main className="min-h-full overflow-hidden bg-gray-50 font-[Switzer,_ui-sans-serif,_system-ui,_sans-serif] dark:bg-slate-950">
+      <GradientBackground />
+      <div className="isolate flex min-h-dvh items-center justify-center p-6 lg:p-8">
+        <div className="w-full max-w-md rounded-xl bg-white shadow-md ring-1 ring-black/5 dark:bg-slate-900 dark:ring-white/10">
+        <div className="p-7 sm:p-11">
+          <RouterLink to="/" title="AI Studio home" className="inline-flex"><Logo /></RouterLink>
+          <h1 className="mt-8 text-base/6 font-medium text-slate-900 dark:text-white">{heading}</h1>
           <p className="mt-2 text-sm/6 text-slate-500 dark:text-slate-400">{sub}</p>
 
           {step.kind === 'password' && (
@@ -166,22 +170,13 @@ export default function Login() {
             </div>
           )}
 
-          <p className="mt-10 text-xs text-slate-400">© 2026 Livezen Technologies</p>
+        </div>
+        <div className="m-1.5 flex items-center justify-between rounded-lg bg-gray-50 px-5 py-4 text-sm/5 ring-1 ring-black/5 dark:bg-white/5 dark:ring-white/10">
+          <span className="text-slate-500 dark:text-slate-400">© 2026 Livezen Technologies</span>
+          <RouterLink to="/" className="font-medium text-slate-900 hover:text-slate-700 dark:text-white">About AI Studio</RouterLink>
+        </div>
         </div>
       </div>
-      <div className="relative hidden w-0 flex-1 overflow-hidden lg:block">
-        <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-blue-700 to-slate-900" />
-        <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(circle_at_1px_1px,white_1px,transparent_0)] [background-size:24px_24px]" />
-        <div className="relative flex h-full flex-col justify-end p-16 text-white">
-          <p className="text-sm font-semibold tracking-wide text-blue-200 uppercase">WorkSuite AI Studio</p>
-          <p className="mt-3 max-w-md text-3xl/tight font-semibold">Your models, nodes and AI gateway — in one control plane.</p>
-          <ul className="mt-6 space-y-2 text-sm text-blue-100">
-            <li>• Run and monitor Ollama nodes</li>
-            <li>• Build SinLama models, datasets and training kits</li>
-            <li>• Issue gateway keys and watch every call</li>
-          </ul>
-        </div>
-      </div>
-    </div>
+    </main>
   );
 }
