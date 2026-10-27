@@ -2,6 +2,13 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.22.0] — 2026-10-27 — Custom speech models; an AI model training page
+- **Speech datasets**: Datasets → New dataset → Speech recordings: a zip of audio files (WAV, MP3, M4A, OGG, FLAC, WebM, Opus) with their transcripts in a `metadata.csv` (file, transcript) or a `.txt` beside each file. Recordings are kept in `/srv/aistudio-models/speech-data/<dataset>`; large sets can be imported on the server with `spark datasets:import-speech <dataset> <zip>`.
+- Training page → **Create speech model** (recipe `whisper_custom`): fine-tunes Whisper Sinhala (or Whisper Small / Base / Medium) on your recordings with the gentle recipe from the numbers report — encoder frozen, low learning rate, ordinary SinhaSpeech clips mixed in. Staging packs the recordings into one archive and checks there are enough (at least 50). After every epoch it measures word and character error on your recordings and on general Sinhala, keeps the best epoch whose general word error has not risen by more than 3 points, and does not upload a model that is no better than the base.
+- A finished speech model is converted to CTranslate2 int8 and added to the speech catalog (`/srv/aistudio-models/asr/catalog.json`): it appears in the Speech page's Model list without a restart (the service re-reads the catalog), and GPU nodes receive the model and catalog with their next sync.
+- Public site: an **AI model training** page (`/ai-model-training`) — what you can train, how a run goes from data to a working model, why train with AI Studio, FAQ — written for AI Studio with figures from real runs; linked in the site navigation and footer.
+- Tested end to end on the server CPU with 70 SinhaSpeech clips: import, staging, training (the no-improvement guard correctly refused to upload), conversion and install (14 s), transcription with the new model; the test data was removed.
+
 ## [1.21.1] — 2026-10-27 — The original WorkSuite logo and icons
 - The app, the sign-in page and the public site use the original WorkSuite logo with "AI Studio" beside it; the wordmark swaps to its light-text version in dark mode, and a collapsed sidebar shows the four-square mark. The supplied PNGs had solid backgrounds, so transparent versions were cut from them (`public/brand/worksuite-wordmark*.png`).
 - Favicon and app icons drawn from the mark's exact geometry and colours (from the brand motion source): `worksuite-mark.svg` for browsers, pixel-exact 16/32 px PNGs and a multi-size `favicon.ico`, the Apple touch icon (180 px) and 192/512 px icons; theme colour #0A6CFF.

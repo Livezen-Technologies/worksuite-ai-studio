@@ -48,6 +48,24 @@ class TrainingRecipes
                     ['id' => 'FacebookAI/xlm-roberta-large', 'label' => 'XLM-RoBERTa large — most accurate, needs a GPU', 'vram_gb' => 12],
                 ],
             ],
+            'whisper_custom' => [
+                'label'       => 'Custom speech model — Whisper on your recordings',
+                'task'        => 'asr',
+                'needs_gpu'   => true,
+                'base_model'  => 'SinhaSpeech/whisper-small-sinhala-run11',
+                // The gentle recipe from the numbers fine-tune report: encoder frozen, low learning rate, ordinary
+                // Sinhala clips mixed in so everyday accuracy does not fall.
+                'hyperparams' => ['epochs' => 2, 'batch' => 16, 'lr' => 5e-6, 'general_ratio' => 1, 'freeze_encoder' => 1],
+                'data'        => ['type' => 'speech', 'general' => '/srv/sinhala-data/prepared/asr_numbers'],
+                'extra'       => ['deploy/asr/numfix.py'],
+                'output'      => 'a speech model in the Speech page\'s Model list (and on GPU nodes)',
+                'base_options' => [
+                    ['id' => 'SinhaSpeech/whisper-small-sinhala-run11', 'label' => 'Whisper Small · Sinhala (run11) — for Sinhala, recommended', 'vram_gb' => 8],
+                    ['id' => 'openai/whisper-small', 'label' => 'Whisper Small — multilingual', 'vram_gb' => 8],
+                    ['id' => 'openai/whisper-base', 'label' => 'Whisper Base — small and fast', 'vram_gb' => 4],
+                    ['id' => 'openai/whisper-medium', 'label' => 'Whisper Medium — most accurate, slower', 'vram_gb' => 14],
+                ],
+            ],
             'whisper_numbers' => [
                 'label'       => 'Whisper Sinhala — numbers fine-tune',
                 'task'        => 'asr',

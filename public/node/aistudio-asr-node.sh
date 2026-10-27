@@ -67,7 +67,7 @@ start_service() {
   cd "$S/code" || return 1
   LD_LIBRARY_PATH="${LIBS}:${LD_LIBRARY_PATH:-}" ASR_DEVICE=$DEV ASR_PORT=$LOCAL_PORT ASR_THREADS=$THR ASR_FFMPEG="${FF:-ffmpeg}" \
     ASR_MODELS_DIR="$S/models" ASR_MODEL="$S/models/whisper-small-sinhala-ct2-int8" \
-    ASR_MULTI_MODEL="$S/models/faster-whisper-small" ASR_LID_MODEL="$S/models/faster-whisper-base" \
+    ASR_MULTI_MODEL="$S/models/faster-whisper-small" ASR_LID_MODEL="$S/models/faster-whisper-base" ASR_CATALOG="$S/code/catalog.json" \
     setsid "$PY" asr_service.py >> "$S/service.log" 2>&1 < /dev/null &
   echo $! > "$S/service.pid"
   cd - >/dev/null

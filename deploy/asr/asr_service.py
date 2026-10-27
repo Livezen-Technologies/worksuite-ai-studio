@@ -55,12 +55,37 @@ CATALOG = {
 # at start, so nobody waits seconds for a model to load from disk on their first piece.
 KEEP = int(os.environ.get('ASR_KEEP', '3'))
 _extra = {}  # name -> WhisperModel, in use order
+# Custom models trained in the Studio (recipe whisper_custom) are listed in a JSON catalog that the Studio rewrites;
+# it is re-read whenever it changes, so a new model appears without a restart. On a node it arrives with the code.
+CUSTOM = os.environ.get('ASR_CATALOG', '/srv/aistudio-models/asr/catalog.json')
+_custom_mtime = [0.0]
+
+
+def _refresh_catalog():
+    try:
+        m = os.path.getmtime(CUSTOM)
+    except OSError:
+        return
+    if m == _custom_mtime[0]:
+        return
+    _custom_mtime[0] = m
+    try:
+        extra = json.load(open(CUSTOM, encoding='utf-8'))
+    except Exception as e:
+        print(f'catalog unreadable: {e}', flush=True); return
+    for k, v in extra.items():
+        if k in ('sinhala', 'tiny', 'base', 'small', 'medium', 'turbo'):
+            continue   # never shadow a built-in
+        CATALOG[k] = {'label': v.get('label', k), 'dir': v['dir'], 'note': v.get('note', 'Custom speech model.')}
+        _extra.pop(k, None)   # a retrained model replaces the loaded one
 _load_lock = threading.Lock()
 
 
 def _dir(name):
     d = CATALOG[name]['dir']
-    return d if os.path.isabs(d) else os.path.join(MODELS_DIR, d)
+    if os.path.isabs(d) and os.path.isdir(d):
+        return d
+    return os.path.join(MODELS_DIR, os.path.basename(d))   # on a node, models live under ASR_MODELS_DIR by folder name
 
 
 def get_model(name):
@@ -90,6 +115,7 @@ def _preload():
 
 
 def catalog():
+    _refresh_catalog()
     return [{'value': k, 'label': v['label'], 'note': v['note'], 'installed': k == 'sinhala' or os.path.exists(os.path.join(_dir(k), 'model.bin'))}
             for k, v in CATALOG.items()]
 
@@ -185,6 +211,7 @@ class Handler(BaseHTTPRequestHandler):
         words = q.get('words', ['0'])[0] == '1'
         fast = q.get('fast', ['0'])[0] == '1'
         name = (q.get('model', ['sinhala'])[0] or 'sinhala').lower()
+        _refresh_catalog()
         if name not in CATALOG:
             return self._send(422, {'error': f'Unknown model {name}. Choose one of: ' + ', '.join(CATALOG)})
         if not next(m for m in catalog() if m['value'] == name)['installed']:

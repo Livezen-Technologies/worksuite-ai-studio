@@ -123,6 +123,23 @@ class DatasetsController extends BaseApiController
             "{$result['imported']} rows imported, {$result['skipped']} skipped.");
     }
 
+    /** POST /api/datasets/{id}/speech — a zip of recordings + transcripts (see SpeechDatasetService). */
+    public function speechUpload($id = null)
+    {
+        if ($r = $this->requirePermission('models.manage')) return $r;
+        if (! $this->datasets()->find((int) $id)) return $this->failure('Dataset not found.', 404);
+        $file = $this->request->getFile('file');
+        if (! $file || ! $file->isValid()) return $this->failure('No zip received.', 422);
+        @set_time_limit(0);
+        try {
+            $r = (new \App\Services\SpeechDatasetService())->importZip((int) $id, $file->getTempName());
+        } catch (\Throwable $e) {
+            return $this->failure('Import failed: ' . $e->getMessage(), 422);
+        }
+        return $this->ok($r + ['dataset' => $this->datasets()->find((int) $id)],
+            "{$r['imported']} recordings imported" . ($r['skipped'] ? ", {$r['skipped']} skipped" : '') . '.');
+    }
+
     public function dedupe($id = null)
     {
         if ($r = $this->requirePermission('models.manage')) return $r;

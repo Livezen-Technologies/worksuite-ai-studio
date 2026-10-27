@@ -4,6 +4,7 @@ namespace App\Commands;
 
 use App\Services\LlmFinalizeService;
 use App\Services\MlModelService;
+use App\Services\SpeechModelService;
 use CodeIgniter\CLI\BaseCommand;
 use CodeIgniter\CLI\CLI;
 
@@ -23,6 +24,11 @@ class TrainingFinalize extends BaseCommand
         $svc = new LlmFinalizeService();
         $recipe = \Config\Database::connect()->table('training_jobs')->select('recipe')->where('id', $id)->get()->getRow()?->recipe;
         try {
+            if ($recipe === 'whisper_custom') {                           // convert + add to the speech catalog
+                $r = (new SpeechModelService())->install($id);
+                CLI::write("Ready: {$r['key']} ({$r['dir']})", 'green');
+                return EXIT_SUCCESS;
+            }
             if ($recipe === 'text_classifier') {                         // unpack + register; the ML service loads it on first use
                 $r = (new MlModelService())->installClassifier($id);
                 CLI::write("Ready: {$r['name']} ({$r['path']})", 'green');

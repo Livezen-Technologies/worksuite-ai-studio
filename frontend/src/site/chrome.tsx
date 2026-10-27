@@ -19,6 +19,7 @@ export function SiteLogo({ className = '' }: { className?: string }) {
 function useLinks() {
   const { user } = useAuth();
   return [
+    { href: '/ai-model-training', label: 'Model training' },
     { href: '/pricing', label: 'Pricing' },
     { href: '/company', label: 'Company' },
     { href: '/blog', label: 'Blog' },
@@ -111,7 +112,7 @@ export function Footer() {
                   <PlusGridItem className="pt-6 lg:pb-6"><SiteLogo /></PlusGridItem>
                 </div>
                 <div className="col-span-2 grid grid-cols-2 gap-x-8 gap-y-12 lg:col-span-4 lg:grid-cols-subgrid lg:pt-6">
-                  <SitemapColumn title="Product" links={[['Pricing', '/pricing'], ['Chat', '/chat'], ['Speech to text', '/speech'], ['Training', '/training']]} />
+                  <SitemapColumn title="Product" links={[['Model training', '/ai-model-training'], ['Pricing', '/pricing'], ['Chat', '/chat'], ['Speech to text', '/speech'], ['Training', '/training']]} />
                   <SitemapColumn title="Company" links={[['About', '/company'], ['Blog', '/blog']]} />
                   <SitemapColumn title="Developers" links={[['API keys', '/api-keys'], ['Engine', '/engine']]} />
                   <SitemapColumn title="Account" links={user ? [['Open the app', '/']] : [['Sign in', '/login']]} />

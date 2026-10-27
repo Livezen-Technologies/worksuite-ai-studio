@@ -23,6 +23,17 @@ class AgentController extends BaseApiController
     ];
     private const ASR_ROOT = '/srv/sinhala-data/models/';
 
+    /** Model folders a node may fetch: the built-ins plus custom models in the speech catalog (folder name → path). */
+    private function asrDirs(): array
+    {
+        $dirs = [];
+        foreach (self::ASR_MODELS as $d) $dirs[$d] = self::ASR_ROOT . $d;
+        foreach (\App\Services\SpeechModelService::catalog() as $m) {
+            if (! empty($m['dir']) && str_starts_with($m['dir'], \App\Services\SpeechModelService::ROOT . '/')) $dirs[basename($m['dir'])] = $m['dir'];
+        }
+        return $dirs;
+    }
+
     private function agentServer(): ?array
     {
         $auth = (string) $this->request->getHeaderLine('Authorization');
@@ -40,8 +51,12 @@ class AgentController extends BaseApiController
             $p = ROOTPATH . 'deploy/asr/' . $f;
             $lines[] = "code/{$f} " . filesize($p) . ' ' . hash_file('sha256', $p);
         }
-        foreach (self::ASR_MODELS as $key => $dir) {
-            foreach (glob(self::ASR_ROOT . $dir . '/*') ?: [] as $p) {
+        if (is_file(\App\Services\SpeechModelService::CATALOG)) {
+            $c = \App\Services\SpeechModelService::CATALOG;
+            $lines[] = 'code/catalog.json ' . filesize($c) . ' ' . hash_file('sha256', $c);
+        }
+        foreach ($this->asrDirs() as $dir => $path) {
+            foreach (glob($path . '/*') ?: [] as $p) {
                 if (! is_file($p) || str_ends_with($p, '.md')) continue;
                 $lines[] = "models/{$dir}/" . basename($p) . ' ' . filesize($p) . ' -';   // size identifies a model file version
             }
@@ -54,10 +69,13 @@ class AgentController extends BaseApiController
     {
         if (! $this->agentServer()) return $this->failure('Invalid agent token.', 401);
         $path = (string) ($this->request->getGet('path') ?? '');
+        $dirs = $this->asrDirs();
         if (preg_match('#^code/(asr_service\.py|numfix\.py)$#', $path, $m)) {
             $file = ROOTPATH . 'deploy/asr/' . $m[1];
-        } elseif (preg_match('#^models/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)$#', $path, $m) && in_array($m[1], self::ASR_MODELS, true)) {
-            $file = self::ASR_ROOT . $m[1] . '/' . $m[2];
+        } elseif ($path === 'code/catalog.json') {
+            $file = \App\Services\SpeechModelService::CATALOG;
+        } elseif (preg_match('#^models/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)$#', $path, $m) && isset($dirs[$m[1]])) {
+            $file = $dirs[$m[1]] . '/' . $m[2];
         } else {
             return $this->failure('Not a speech file.', 404);
         }

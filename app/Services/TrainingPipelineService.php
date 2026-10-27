@@ -129,6 +129,9 @@ class TrainingPipelineService
                 $names[] = $f; $rows[] = $f . ' ' . round(filesize($src) / 1048576) . ' MB';
             }
             $summary = 'data: ' . implode(', ', $rows);
+        } elseif ($recipe['data']['type'] === 'speech') {
+            [$summary, $files] = $this->stageSpeech($dir, (int) $p['dataset_id'], (int) $p['min_rows'], (float) ($hp['general_ratio'] ?? 1), $recipe['data']['general'] ?? null);
+            array_push($names, ...$files);
         } else {
             $summary = $this->stageDataset($dir, (int) $p['dataset_id'], (int) $p['min_rows'], (int) ($hp['max_rows'] ?? 0), ! empty($recipe['data']['classifier']));
             array_push($names, 'train.jsonl', 'dev.jsonl');
@@ -137,6 +140,49 @@ class TrainingPipelineService
         $names[] = 'job.env';
         file_put_contents($dir . 'manifest.txt', implode("\n", $names) . "\n");
         return $summary;
+    }
+
+    /**
+     * A speech dataset (your recordings): train/dev lists of {audio, text}, the recordings in one audio.tar (one
+     * download for the node), and — unless general_ratio is 0 — ordinary SinhaSpeech clips to mix in and to measure
+     * everyday accuracy on, so a fine-tune that forgets general Sinhala shows it.
+     */
+    private function stageSpeech(string $dir, int $datasetId, int $minRows, float $generalRatio, ?string $general): array
+    {
+        $d = $this->db->table('datasets')->where('id', $datasetId)->get()->getRowArray();
+        if (! $d) throw new \RuntimeException('the dataset no longer exists');
+        if ($d['rights_status'] !== 'approved') throw new \RuntimeException("dataset #{$datasetId} is not rights-approved ({$d['rights_status']})");
+        $frozen = ! empty($d['manifest_hash']);
+        $q = $this->db->table('dataset_items')->select('instruction, output, hash, split')->where('dataset_id', $datasetId)->like('instruction', 'audio:custom/', 'after');
+        if ($frozen) $q->whereIn('split', ['train', 'dev']);
+        $fh = ['train' => fopen($dir . 'train.jsonl', 'wb'), 'dev' => fopen($dir . 'dev.jsonl', 'wb')];
+        $n = ['train' => 0, 'dev' => 0]; $missing = 0; $list = [];
+        foreach ($q->get()->getResultArray() as $r) {
+            $path = SpeechDatasetService::audioPath($r['instruction']);
+            if (! $path || ! is_file($path)) { $missing++; continue; }
+            $split = $frozen ? $r['split'] : (hexdec(substr($r['hash'], 0, 4)) % 10 === 0 ? 'dev' : 'train');
+            fwrite($fh[$split], json_encode(['audio' => basename($path), 'text' => trim($r['output'])], JSON_UNESCAPED_UNICODE) . "\n");
+            $n[$split]++; $list[] = basename($path);
+        }
+        fclose($fh['train']); fclose($fh['dev']);
+        if ($n['train'] + $n['dev'] === 0) throw new \RuntimeException("dataset #{$datasetId} has no uploaded recordings (upload a zip of audio + transcripts on the Datasets page)");
+        if ($n['train'] < max(20, min($minRows, 50))) throw new \RuntimeException("only {$n['train']} training recordings — record at least 50 (more is better: a few hundred makes a real difference)");
+        if ($n['dev'] < 3) throw new \RuntimeException('too few recordings to check against (need at least 3 in the dev split; add more recordings)');
+        file_put_contents($dir . 'audio.list', implode("\n", $list) . "\n");
+        exec('tar -cf ' . escapeshellarg($dir . 'audio.tar') . ' -C ' . escapeshellarg(SpeechDatasetService::ROOT . '/' . $datasetId) . ' -T ' . escapeshellarg($dir . 'audio.list') . ' 2>&1', $o, $rc);
+        @unlink($dir . 'audio.list');
+        if ($rc !== 0) throw new \RuntimeException('packing the recordings failed: ' . implode(' ', $o));
+        $files = ['train.jsonl', 'dev.jsonl', 'audio.tar'];
+        $mix = '';
+        if ($generalRatio > 0 && $general && is_file("{$general}/train.parquet")) {
+            foreach (['train' => 'general_train.parquet', 'dev' => 'general_dev.parquet'] as $src => $dst) {
+                if (! copy("{$general}/{$src}.parquet", $dir . $dst)) throw new \RuntimeException("cannot stage {$dst}");
+                $files[] = $dst;
+            }
+            $mix = sprintf(' + ordinary SinhaSpeech clips (%s per recording) to keep everyday accuracy', rtrim(rtrim(number_format($generalRatio, 1), '0'), '.'));
+        }
+        return [sprintf('dataset #%d: %s train / %s dev recordings (%.0f MB)%s%s', $datasetId, number_format($n['train']), number_format($n['dev']),
+            filesize($dir . 'audio.tar') / 1048576, $mix, $missing ? ", {$missing} rows without their audio file skipped" : ''), $files];
     }
 
     /** Export a dataset to train.jsonl / dev.jsonl with validation. */
@@ -331,6 +377,11 @@ class TrainingPipelineService
     public function finished(array $job, string $status): void
     {
         if (! $job['recipe']) return;
+        if ($status === 'completed' && $job['recipe'] === 'whisper_custom') {
+            LlmFinalizeService::spawn((int) $job['id']);                    // convert and add to the speech catalog
+            $this->notify("Training completed: {$job['name']}", "Job #{$job['id']} finished; the speech model is being installed.", 'success', true);
+            return;
+        }
         if ($status === 'completed' && $job['recipe'] === 'text_classifier') {
             LlmFinalizeService::spawn((int) $job['id']);                    // unpack and register the classifier
             $this->notify("Training completed: {$job['name']}", "Job #{$job['id']} finished; the classifier is being installed.", 'success', true);

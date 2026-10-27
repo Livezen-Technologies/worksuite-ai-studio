@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BoltIcon, ChatBubbleLeftRightIcon, ClipboardDocumentIcon, CpuChipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, TagIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { BoltIcon, ChatBubbleLeftRightIcon, ClipboardDocumentIcon, CpuChipIcon, MicrophoneIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, TagIcon, TrashIcon } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Alert, Badge, Button, Card, CardHeader, CodeBlock, ConfirmDialog, EmptyState, FormModal, Input, Modal, Select,
   StatusBadge, Textarea, Toggle, useToast,
@@ -8,7 +8,7 @@ import {
 import { del, get, post, put } from '../../lib/api';
 import { ago, num } from '../../lib/format';
 
-interface Recipe { key: string; label: string; task: string; needs_gpu: boolean; base_model: string; hyperparams: Record<string, number>; data: 'dataset' | 'prepared'; output: string; base_options?: { id: string; label: string; vram_gb: number }[] }
+interface Recipe { key: string; label: string; task: string; needs_gpu: boolean; base_model: string; hyperparams: Record<string, number>; data: 'dataset' | 'prepared' | 'speech'; output: string; base_options?: { id: string; label: string; vram_gb: number }[] }
 interface LlmOutput { ollama_name: string; quant: string; system_prompt: string; name?: string }
 interface Pipeline {
   id: number; name: string; recipe: string; recipe_label: string; dataset_id: number | null; dataset_name: string | null;
@@ -38,7 +38,7 @@ export default function TrainingPipelines({ canManage }: { canManage: boolean })
     queryKey: ['training', 'pipelines'], queryFn: () => get<Overview>('/training/pipelines'),
     refetchInterval: 15_000,
   });
-  const [editing, setEditing] = useState<Pipeline | 'new' | 'llm' | 'classifier' | null>(null);
+  const [editing, setEditing] = useState<Pipeline | 'new' | 'llm' | 'classifier' | 'speech' | null>(null);
   const [removing, setRemoving] = useState<Pipeline | null>(null);
   const [agent, setAgent] = useState<{ node: Node; command: string } | null>(null);
   const refresh = () => { qc.invalidateQueries({ queryKey: ['training'] }); };
@@ -78,6 +78,7 @@ export default function TrainingPipelines({ canManage }: { canManage: boolean })
             <div className="flex gap-2">
               <Button size="sm" icon={SparklesIcon} onClick={() => setEditing('llm')}>Create custom LLM</Button>
               <Button size="sm" variant="secondary" icon={TagIcon} onClick={() => setEditing('classifier')}>Create text classifier</Button>
+              <Button size="sm" variant="secondary" icon={MicrophoneIcon} onClick={() => setEditing('speech')}>Create speech model</Button>
               <Button size="sm" variant="secondary" icon={PlusIcon} onClick={() => setEditing('new')}>New pipeline</Button>
             </div>
           )}
@@ -168,7 +169,7 @@ export default function TrainingPipelines({ canManage }: { canManage: boolean })
       </Card>
 
       {editing && data && (
-        <PipelineForm pipeline={typeof editing === 'string' ? null : editing} preset={editing === 'llm' ? 'text_sft' : editing === 'classifier' ? 'text_classifier' : undefined} recipes={data.recipes} nodes={data.nodes}
+        <PipelineForm pipeline={typeof editing === 'string' ? null : editing} preset={editing === 'llm' ? 'text_sft' : editing === 'classifier' ? 'text_classifier' : editing === 'speech' ? 'whisper_custom' : undefined} recipes={data.recipes} nodes={data.nodes}
           onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refresh(); }} />
       )}
       <ConfirmDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={() => { if (removing) remove.mutate(removing); }}
@@ -196,6 +197,7 @@ function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
 }) {
   const llm = preset === 'text_sft' || pipeline?.recipe === 'text_sft';
   const classifier = preset === 'text_classifier' || pipeline?.recipe === 'text_classifier';
+  const speech = preset === 'whisper_custom' || pipeline?.recipe === 'whisper_custom';
   const [clsName, setClsName] = useState(pipeline?.output?.name ?? '');
   const [modelName, setModelName] = useState(pipeline?.output?.ollama_name ?? '');
   const [quant, setQuant] = useState(pipeline?.output?.quant ?? 'Q4_K_M');
@@ -206,12 +208,13 @@ function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
   const [datasetId, setDatasetId] = useState(String(pipeline?.dataset_id ?? ''));
   const [serverId, setServerId] = useState(String(pipeline?.server_id ?? ''));
   const [base, setBase] = useState(pipeline?.base_model ?? '');
-  const [auto, setAuto] = useState(pipeline ? on(pipeline.auto_trigger) : !llm && !classifier);   // a model you name starts with Run now
+  const [auto, setAuto] = useState(pipeline ? on(pipeline.auto_trigger) : !llm && !classifier && !speech);   // a model you name starts with Run now
   const [minRows, setMinRows] = useState(String(pipeline?.min_rows ?? 200));
   const r = recipes.find((x) => x.key === recipe);
   const [hp, setHp] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(pipeline?.hyperparams ?? {}).map(([k, v]) => [k, String(v)])));
-  const datasets = useQuery({ queryKey: ['datasets'], queryFn: () => get<Dataset[]>('/datasets'), enabled: r?.data === 'dataset' });
-  const usable = (datasets.data ?? []).filter((d) => d.rights_status === 'approved' && !['speech', 'evaluation', 'reference'].includes(d.category ?? ''));
+  const datasets = useQuery({ queryKey: ['datasets'], queryFn: () => get<Dataset[]>('/datasets'), enabled: r?.data === 'dataset' || r?.data === 'speech' });
+  const usable = (datasets.data ?? []).filter((d) => d.rights_status === 'approved'
+    && (r?.data === 'speech' ? d.category === 'speech' : !['speech', 'evaluation', 'reference'].includes(d.category ?? '')));
   const capable = nodes.filter((n) => !r?.needs_gpu || !!n.gpu_model);
 
   const save = useMutation({
@@ -221,7 +224,7 @@ function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
         base_model: base.trim() || null, auto_trigger: auto, min_rows: Number(minRows) || 200,
         hyperparams: Object.fromEntries(Object.entries(hp).filter(([, v]) => v.trim() !== '').map(([k, v]) => [k, Number(v)])),
         ...(recipe === 'text_sft' ? { output: { ollama_name: modelName.trim().toLowerCase(), quant, system_prompt: system } } : {}),
-        ...(recipe === 'text_classifier' ? { output: { name: clsName.trim().toLowerCase() } } : {}),
+        ...(recipe === 'text_classifier' || recipe === 'whisper_custom' ? { output: { name: clsName.trim().toLowerCase() } } : {}),
       };
       return pipeline ? put(`/training/pipelines/${pipeline.id}`, body) : post('/training/pipelines', body);
     },
@@ -230,21 +233,23 @@ function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
   });
 
   return (
-    <FormModal open onClose={onClose} size="lg" title={pipeline ? `Edit ${pipeline.name}` : llm ? 'Create a custom LLM' : classifier ? 'Create a text classifier' : 'New training pipeline'}
+    <FormModal open onClose={onClose} size="lg" title={pipeline ? `Edit ${pipeline.name}` : llm ? 'Create a custom LLM' : classifier ? 'Create a text classifier' : speech ? 'Create a custom speech model' : 'New training pipeline'}
       description={llm
         ? 'A GPU node fine-tunes the base model on your dataset (LoRA); this server merges it, converts it to GGUF and adds it to Ollama — it then appears in Models and Chat.'
+        : speech
+          ? 'A GPU node fine-tunes Whisper on your recordings — gently, with ordinary Sinhala mixed in so everyday accuracy holds — and it appears in the Speech page\'s Model list.'
         : classifier
           ? 'A node fine-tunes a multilingual model to sort text into your dataset\'s labels; the classifier is then served here, with a Try box and POST /api/v1/classify.'
           : 'When Automatic is on, a run is queued whenever the data changes (and once at the start).'}
-      submitLabel={pipeline ? 'Save' : llm || classifier ? 'Create' : 'Create pipeline'} submitting={save.isPending} onSubmit={() => save.mutate()}>
+      submitLabel={pipeline ? 'Save' : llm || classifier || speech ? 'Create' : 'Create pipeline'} submitting={save.isPending} onSubmit={() => save.mutate()}>
       <div className="grid gap-4 sm:grid-cols-2">
         <Input label="Name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="WorkSuite Sinhala chat — v2 mix" wrapperClassName="sm:col-span-2" />
         <Select label="Recipe" value={recipe} onChange={(e) => { setRecipe(e.target.value); setHp({}); }}
           options={recipes.map((x) => ({ value: x.key, label: x.label }))} hint={r ? `Output: ${r.output}${r.needs_gpu ? ' · needs an NVIDIA GPU' : ''}` : undefined} />
-        {r?.data === 'dataset' ? (
+        {r?.data === 'dataset' || r?.data === 'speech' ? (
           <Select label="Dataset" required value={datasetId} onChange={(e) => setDatasetId(e.target.value)} placeholder={datasets.isLoading ? 'Loading…' : 'Choose a dataset'}
             options={usable.map((d) => ({ value: String(d.id), label: `${d.name} (${num(d.item_count)} rows)` }))}
-            hint="Rights-approved text datasets; a change to it starts a new run." />
+            hint={r?.data === 'speech' ? 'Speech datasets — create one on the Datasets page from a zip of your recordings.' : 'Rights-approved text datasets; a change to it starts a new run.'} />
         ) : (
           <Input label="Data" value="Prepared on the server (recipe data)" disabled hint="A change to the prepared files starts a new run." />
         )}
@@ -258,6 +263,10 @@ function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
         {(!r?.base_options?.length || (base && !r.base_options.some((o) => o.id === base))) && (
           <Input label={r?.base_options?.length ? 'Hugging Face model id' : 'Base model'} value={base.trim()} onChange={(e) => setBase(e.target.value)} placeholder={r?.base_model}
             hint="Hugging Face id; empty uses the recipe default. Gated models (Llama, Gemma) need the node to be logged in to Hugging Face." />
+        )}
+        {recipe === 'whisper_custom' && (
+          <Input label="Model name" value={clsName} onChange={(e) => setClsName(e.target.value)} placeholder="sinhala-office"
+            hint="Its key in the Speech page's Model list. Empty uses the pipeline name." />
         )}
         {recipe === 'text_classifier' && <>
           <Input label="Classifier name" value={clsName} onChange={(e) => setClsName(e.target.value)} placeholder="news-categories"
@@ -281,7 +290,7 @@ function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
           <Input key={k} label={k.replace(/_/g, ' ')} type="number" step="any" value={hp[k] ?? ''} placeholder={String(v)}
             onChange={(e) => setHp((h) => ({ ...h, [k]: e.target.value }))} />
         ))}
-        {r?.data === 'dataset' && <Input label="Minimum training rows" type="number" value={minRows} onChange={(e) => setMinRows(e.target.value)} />}
+        {(r?.data === 'dataset' || r?.data === 'speech') && <Input label={r?.data === 'speech' ? 'Minimum recordings' : 'Minimum training rows'} type="number" value={minRows} onChange={(e) => setMinRows(e.target.value)} />}
         <div className="sm:col-span-2"><Toggle checked={auto} onChange={setAuto} label="Automatic" description="Queue a run whenever the data changes." /></div>
       </div>
     </FormModal>
