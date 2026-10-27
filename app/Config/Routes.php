@@ -191,6 +191,9 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->post('training/(:num)/cancel', 'TrainingPipelinesController::cancel/$1');
     $routes->post('training/(:num)/retry', 'TrainingPipelinesController::retry/$1');
     $routes->get('training/pipelines', 'TrainingPipelinesController::index');
+    $routes->get('ml-models', 'MlModelsController::index');
+    $routes->post('ml-models/(:num)/predict', 'MlModelsController::predict/$1');
+    $routes->delete('ml-models/(:num)', 'MlModelsController::delete/$1');
     $routes->post('training/pipelines', 'TrainingPipelinesController::create');
     $routes->put('training/pipelines/(:num)', 'TrainingPipelinesController::update/$1');
     $routes->delete('training/pipelines/(:num)', 'TrainingPipelinesController::delete/$1');
@@ -260,7 +263,9 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\Gateway', 'filter'
     $routes->post('embeddings', 'GatewayController::embeddings');
     $routes->post('translate', 'GatewayController::translate');   // SinLama (v1.3)
     $routes->post('summarize', 'GatewayController::summarize');   // SinLama (v1.3)
-    $routes->get('catalog', 'DownloadsController::catalog');                      // downloads (v1.14)
+    $routes->get('catalog', 'DownloadsController::catalog');
+    $routes->get('classifiers', 'ClassifyController::index');
+    $routes->post('classify', 'ClassifyController::classify');                      // downloads (v1.14)
     $routes->get('packages/(:segment)/files', 'DownloadsController::file/$1');
     $routes->get('datasets/(:num)/download', 'DownloadsController::dataset/$1');
 });

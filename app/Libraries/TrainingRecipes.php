@@ -33,6 +33,21 @@ class TrainingRecipes
                     ['id' => 'HuggingFaceTB/SmolLM2-1.7B-Instruct', 'label' => 'SmolLM2 1.7B Instruct — English-first', 'vram_gb' => 8],
                 ],
             ],
+            'text_classifier' => [
+                'label'       => 'Text classifier — sort text into your labels',
+                'task'        => 'classification',
+                'needs_gpu'   => false,              // fast on a GPU; a CPU node is fine for a few thousand rows
+                'base_model'  => 'FacebookAI/xlm-roberta-base',
+                'hyperparams' => ['epochs' => 4, 'batch' => 16, 'lr' => 2e-5, 'max_len' => 256, 'max_rows' => 200000],
+                'data'        => ['type' => 'dataset', 'classifier' => true],
+                'extra'       => [],
+                'output'      => 'a classifier with an API (POST /api/v1/classify) and a Try box',
+                'base_options' => [
+                    ['id' => 'FacebookAI/xlm-roberta-base', 'label' => 'XLM-RoBERTa base — Sinhala + English, recommended', 'vram_gb' => 4],
+                    ['id' => 'distilbert/distilbert-base-multilingual-cased', 'label' => 'DistilBERT multilingual — smaller and faster', 'vram_gb' => 3],
+                    ['id' => 'FacebookAI/xlm-roberta-large', 'label' => 'XLM-RoBERTa large — most accurate, needs a GPU', 'vram_gb' => 12],
+                ],
+            ],
             'whisper_numbers' => [
                 'label'       => 'Whisper Sinhala — numbers fine-tune',
                 'task'        => 'asr',

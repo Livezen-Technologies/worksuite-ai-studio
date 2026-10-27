@@ -17,7 +17,7 @@ use App\Models\ApiLogModel;
 class ApiKeysController extends BaseApiController
 {
     /** Gateway scopes a key can carry. download_* open /api/v1/catalog and the file / dataset downloads. */
-    public const SCOPES = ['chat', 'generate', 'embeddings', 'models', 'download_models', 'download_datasets'];
+    public const SCOPES = ['chat', 'generate', 'embeddings', 'models', 'download_models', 'download_datasets', 'classify'];
 
     private function keys(): ApiKeyModel { return new ApiKeyModel(); }
 

@@ -13,6 +13,7 @@ import { ago, dateTime, num } from '../lib/format';
 import TrainingLineage, { type LineageJob } from './SinLama/TrainingLineage';
 import TrainingLive, { JobProgress } from './Training/TrainingLive';
 import TrainingPipelines from './Training/Pipelines';
+import MlModels from './Training/MlModels';
 
 type Status = 'draft' | 'kit_ready' | 'preparing' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'imported';
 interface Hyper {
@@ -194,6 +195,7 @@ export default function Training() {
       />
 
       <TrainingPipelines canManage={canManage} />
+      <MlModels canManage={canManage} />
 
       {kitRefusal && (
         <Alert tone="danger" title={`Kit not generated for “${kitRefusal.job.name}”`} className="mb-6">{kitRefusal.message}</Alert>

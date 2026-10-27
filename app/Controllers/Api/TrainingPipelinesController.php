@@ -70,7 +70,9 @@ class TrainingPipelinesController extends BaseApiController
             }
             $quant = strtoupper((string) ($o['quant'] ?? 'Q4_K_M'));
             if (! in_array($quant, ['Q4_K_M', 'Q5_K_M', 'Q8_0', 'F16'], true)) $quant = 'Q4_K_M';
-            $out['output'] = json_encode(['ollama_name' => $name, 'quant' => $quant, 'system_prompt' => mb_substr(trim((string) ($o['system_prompt'] ?? '')), 0, 4000)]);
+            $cname = strtolower(trim((string) ($o['name'] ?? '')));            // classifier: the name apps call it by
+            if ($cname !== '' && ! preg_match('/^[a-z0-9][a-z0-9._-]{0,60}$/', $cname)) throw new \InvalidArgumentException('Classifier name: lowercase letters, digits, . _ - (e.g. news-categories).');
+            $out['output'] = json_encode(['ollama_name' => $name, 'quant' => $quant, 'system_prompt' => mb_substr(trim((string) ($o['system_prompt'] ?? '')), 0, 4000), 'name' => $cname]);
         }
         if ($create && empty($out['name'])) throw new \InvalidArgumentException('Give the pipeline a name.');
         if (isset($out['recipe']) && ! TrainingRecipes::get($out['recipe'])) throw new \InvalidArgumentException('Unknown recipe.');

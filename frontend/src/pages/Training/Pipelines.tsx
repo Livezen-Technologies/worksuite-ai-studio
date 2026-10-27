@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BoltIcon, ChatBubbleLeftRightIcon, ClipboardDocumentIcon, CpuChipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { BoltIcon, ChatBubbleLeftRightIcon, ClipboardDocumentIcon, CpuChipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, TagIcon, TrashIcon } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Alert, Badge, Button, Card, CardHeader, CodeBlock, ConfirmDialog, EmptyState, FormModal, Input, Modal, Select,
   StatusBadge, Textarea, Toggle, useToast,
@@ -9,7 +9,7 @@ import { del, get, post, put } from '../../lib/api';
 import { ago, num } from '../../lib/format';
 
 interface Recipe { key: string; label: string; task: string; needs_gpu: boolean; base_model: string; hyperparams: Record<string, number>; data: 'dataset' | 'prepared'; output: string; base_options?: { id: string; label: string; vram_gb: number }[] }
-interface LlmOutput { ollama_name: string; quant: string; system_prompt: string }
+interface LlmOutput { ollama_name: string; quant: string; system_prompt: string; name?: string }
 interface Pipeline {
   id: number; name: string; recipe: string; recipe_label: string; dataset_id: number | null; dataset_name: string | null;
   server_id: number | null; server_name: string | null; base_model: string | null; hyperparams: Record<string, number>;
@@ -38,7 +38,7 @@ export default function TrainingPipelines({ canManage }: { canManage: boolean })
     queryKey: ['training', 'pipelines'], queryFn: () => get<Overview>('/training/pipelines'),
     refetchInterval: 15_000,
   });
-  const [editing, setEditing] = useState<Pipeline | 'new' | 'llm' | null>(null);
+  const [editing, setEditing] = useState<Pipeline | 'new' | 'llm' | 'classifier' | null>(null);
   const [removing, setRemoving] = useState<Pipeline | null>(null);
   const [agent, setAgent] = useState<{ node: Node; command: string } | null>(null);
   const refresh = () => { qc.invalidateQueries({ queryKey: ['training'] }); };
@@ -77,6 +77,7 @@ export default function TrainingPipelines({ canManage }: { canManage: boolean })
           actions={canManage && (
             <div className="flex gap-2">
               <Button size="sm" icon={SparklesIcon} onClick={() => setEditing('llm')}>Create custom LLM</Button>
+              <Button size="sm" variant="secondary" icon={TagIcon} onClick={() => setEditing('classifier')}>Create text classifier</Button>
               <Button size="sm" variant="secondary" icon={PlusIcon} onClick={() => setEditing('new')}>New pipeline</Button>
             </div>
           )}
@@ -167,7 +168,7 @@ export default function TrainingPipelines({ canManage }: { canManage: boolean })
       </Card>
 
       {editing && data && (
-        <PipelineForm pipeline={editing === 'new' || editing === 'llm' ? null : editing} preset={editing === 'llm' ? 'text_sft' : undefined} recipes={data.recipes} nodes={data.nodes}
+        <PipelineForm pipeline={typeof editing === 'string' ? null : editing} preset={editing === 'llm' ? 'text_sft' : editing === 'classifier' ? 'text_classifier' : undefined} recipes={data.recipes} nodes={data.nodes}
           onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refresh(); }} />
       )}
       <ConfirmDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={() => { if (removing) remove.mutate(removing); }}
@@ -194,6 +195,8 @@ function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
   pipeline: Pipeline | null; preset?: string; recipes: Recipe[]; nodes: Node[]; onClose: () => void; onSaved: () => void;
 }) {
   const llm = preset === 'text_sft' || pipeline?.recipe === 'text_sft';
+  const classifier = preset === 'text_classifier' || pipeline?.recipe === 'text_classifier';
+  const [clsName, setClsName] = useState(pipeline?.output?.name ?? '');
   const [modelName, setModelName] = useState(pipeline?.output?.ollama_name ?? '');
   const [quant, setQuant] = useState(pipeline?.output?.quant ?? 'Q4_K_M');
   const [system, setSystem] = useState(pipeline?.output?.system_prompt ?? '');
@@ -203,7 +206,7 @@ function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
   const [datasetId, setDatasetId] = useState(String(pipeline?.dataset_id ?? ''));
   const [serverId, setServerId] = useState(String(pipeline?.server_id ?? ''));
   const [base, setBase] = useState(pipeline?.base_model ?? '');
-  const [auto, setAuto] = useState(pipeline ? on(pipeline.auto_trigger) : !llm);   // a custom LLM starts with Run now
+  const [auto, setAuto] = useState(pipeline ? on(pipeline.auto_trigger) : !llm && !classifier);   // a model you name starts with Run now
   const [minRows, setMinRows] = useState(String(pipeline?.min_rows ?? 200));
   const r = recipes.find((x) => x.key === recipe);
   const [hp, setHp] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(pipeline?.hyperparams ?? {}).map(([k, v]) => [k, String(v)])));
@@ -218,6 +221,7 @@ function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
         base_model: base.trim() || null, auto_trigger: auto, min_rows: Number(minRows) || 200,
         hyperparams: Object.fromEntries(Object.entries(hp).filter(([, v]) => v.trim() !== '').map(([k, v]) => [k, Number(v)])),
         ...(recipe === 'text_sft' ? { output: { ollama_name: modelName.trim().toLowerCase(), quant, system_prompt: system } } : {}),
+        ...(recipe === 'text_classifier' ? { output: { name: clsName.trim().toLowerCase() } } : {}),
       };
       return pipeline ? put(`/training/pipelines/${pipeline.id}`, body) : post('/training/pipelines', body);
     },
@@ -226,11 +230,13 @@ function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
   });
 
   return (
-    <FormModal open onClose={onClose} size="lg" title={pipeline ? `Edit ${pipeline.name}` : llm ? 'Create a custom LLM' : 'New training pipeline'}
+    <FormModal open onClose={onClose} size="lg" title={pipeline ? `Edit ${pipeline.name}` : llm ? 'Create a custom LLM' : classifier ? 'Create a text classifier' : 'New training pipeline'}
       description={llm
         ? 'A GPU node fine-tunes the base model on your dataset (LoRA); this server merges it, converts it to GGUF and adds it to Ollama — it then appears in Models and Chat.'
-        : 'When Automatic is on, a run is queued whenever the data changes (and once at the start).'}
-      submitLabel={pipeline ? 'Save' : llm ? 'Create' : 'Create pipeline'} submitting={save.isPending} onSubmit={() => save.mutate()}>
+        : classifier
+          ? 'A node fine-tunes a multilingual model to sort text into your dataset\'s labels; the classifier is then served here, with a Try box and POST /api/v1/classify.'
+          : 'When Automatic is on, a run is queued whenever the data changes (and once at the start).'}
+      submitLabel={pipeline ? 'Save' : llm || classifier ? 'Create' : 'Create pipeline'} submitting={save.isPending} onSubmit={() => save.mutate()}>
       <div className="grid gap-4 sm:grid-cols-2">
         <Input label="Name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="WorkSuite Sinhala chat — v2 mix" wrapperClassName="sm:col-span-2" />
         <Select label="Recipe" value={recipe} onChange={(e) => { setRecipe(e.target.value); setHp({}); }}
@@ -253,6 +259,14 @@ function PipelineForm({ pipeline, preset, recipes, nodes, onClose, onSaved }: {
           <Input label={r?.base_options?.length ? 'Hugging Face model id' : 'Base model'} value={base.trim()} onChange={(e) => setBase(e.target.value)} placeholder={r?.base_model}
             hint="Hugging Face id; empty uses the recipe default. Gated models (Llama, Gemma) need the node to be logged in to Hugging Face." />
         )}
+        {recipe === 'text_classifier' && <>
+          <Input label="Classifier name" value={clsName} onChange={(e) => setClsName(e.target.value)} placeholder="news-categories"
+            hint="Apps call it by this name. Empty uses the pipeline name." />
+          <div className="sm:col-span-2 rounded-lg bg-slate-50 px-4 py-3 text-xs/5 text-slate-600 ring-1 ring-slate-200 dark:bg-white/5 dark:text-slate-400 dark:ring-white/10">
+            Dataset layout: the text to classify in <b>input</b> (or <b>instruction</b> when there is no input) and its label in <b>output</b> — for example a news article and “sports”.
+            2 to 200 labels; the run stops early with the reason if the data does not fit.
+          </div>
+        </>}
         {recipe === 'text_sft' && <>
           <Input label="Model name in Ollama" value={modelName} onChange={(e) => setModelName(e.target.value)} placeholder="worksuite-sinhala:3b-v2"
             hint="Lowercase, with an optional :tag. Empty uses the pipeline name." />

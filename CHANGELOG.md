@@ -2,6 +2,12 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.21.0] — 2026-10-27 — Text classifiers
+- Training page → **Create text classifier**: pick a labelled dataset (text in input — or instruction — and the label in output, 2 to 200 labels), a base model (XLM-RoBERTa base for Sinhala + English, DistilBERT multilingual, or XLM-RoBERTa large), a node and a name. Recipe `text_classifier` fine-tunes it on any node (GPU in fp16, or CPU), reports accuracy and macro-F1 on the dev rows each epoch, keeps the best epoch and uploads it.
+- The server checks the data before anything leaves: at least two labels, short labels rather than free text, and which labels have few examples.
+- Once trained, the classifier is installed on the server (`/srv/aistudio-models/ml`) and served by the new **ML service** (`aistudio-ml`, 127.0.0.1:8097, loads models on first use, keeps 4 in memory). A newer model with the same name takes over; the older one steps aside.
+- **Text classifiers** card on the Training page: labels, accuracy, macro-F1, a **Try it** box with per-label scores, and a ready-made API call. API: `GET /api/ml-models`, `POST /api/ml-models/{id}/predict`, `DELETE /api/ml-models/{id}`; for apps, `POST /api/v1/classify` and `GET /api/v1/classifiers` with the new **Classify text** key scope.
+
 ## [1.20.0] — 2026-10-27 — A public website for AI Studio
 - Public pages in the Tailwind Plus Radiant design: **Home** (shown at / to visitors who are not signed in; signed-in users still get the dashboard), **Pricing**, **Company** and **Blog**. Ported to the app's React Router instead of a second Next.js server, with Switzer as the site font; the app's own look is untouched.
 - Home: the hero, live figures from the system (training rows, speech recordings, model packages, chat models), an app preview and feature sections for speech, custom LLMs, datasets, the API gateway, languages, nodes, automated training, release gates and privacy — drawn in code from real features, with no stock screenshots, made-up customer logos or testimonials.

@@ -130,7 +130,7 @@ class TrainingPipelineService
             }
             $summary = 'data: ' . implode(', ', $rows);
         } else {
-            $summary = $this->stageDataset($dir, (int) $p['dataset_id'], (int) $p['min_rows'], (int) ($hp['max_rows'] ?? 0));
+            $summary = $this->stageDataset($dir, (int) $p['dataset_id'], (int) $p['min_rows'], (int) ($hp['max_rows'] ?? 0), ! empty($recipe['data']['classifier']));
             array_push($names, 'train.jsonl', 'dev.jsonl');
         }
         file_put_contents($dir . 'job.env', implode("\n", array_map(fn ($k, $v) => $k . '=' . preg_replace('/[^\w.:\/+-]/', '', $v), array_keys($env), $env)) . "\n");
@@ -140,7 +140,7 @@ class TrainingPipelineService
     }
 
     /** Export a dataset to train.jsonl / dev.jsonl with validation. */
-    private function stageDataset(string $dir, int $datasetId, int $minRows, int $maxRows): string
+    private function stageDataset(string $dir, int $datasetId, int $minRows, int $maxRows, bool $classifier = false): string
     {
         $d = $this->db->table('datasets')->where('id', $datasetId)->get()->getRowArray();
         if (! $d) throw new \RuntimeException('the dataset no longer exists');
@@ -150,7 +150,7 @@ class TrainingPipelineService
         }
         $frozen = ! empty($d['manifest_hash']);
         $fh = ['train' => fopen($dir . 'train.jsonl', 'wb'), 'dev' => fopen($dir . 'dev.jsonl', 'wb')];
-        $n  = ['train' => 0, 'dev' => 0]; $bad = 0; $seen = [];
+        $n  = ['train' => 0, 'dev' => 0]; $bad = 0; $seen = []; $labels = [];
         $q  = $this->db->table('dataset_items')->select('id, instruction, input, output, hash, split')->where('dataset_id', $datasetId);
         if ($frozen) $q->whereIn('split', ['train', 'dev']);                    // the locked test split stays here
         $last = 0;
@@ -164,6 +164,7 @@ class TrainingPipelineService
                 $seen[$r['hash']] = true;
                 $split = $frozen ? $r['split'] : (hexdec(substr($r['hash'], 0, 4)) % 20 === 0 ? 'dev' : 'train');
                 if ($split === 'train' && $maxRows > 0 && $n['train'] >= $maxRows) continue;
+                if ($classifier) $labels[$out] = ($labels[$out] ?? 0) + 1;
                 fwrite($fh[$split], json_encode(['instruction' => $ins, 'input' => (string) ($r['input'] ?? ''), 'output' => $out], JSON_UNESCAPED_UNICODE) . "\n");
                 $n[$split]++;
             }
@@ -171,6 +172,18 @@ class TrainingPipelineService
         fclose($fh['train']); fclose($fh['dev']);
         if ($n['train'] < $minRows) throw new \RuntimeException("only {$n['train']} usable training rows (the pipeline needs at least {$minRows})");
         if ($n['dev'] < 1) throw new \RuntimeException('no dev rows to check training against');
+        if ($classifier) {
+            // A classification set: the output column holds a short label, the same few values again and again.
+            if (count($labels) < 2) throw new \RuntimeException('a classifier needs at least two different labels in the output column');
+            if (count($labels) > 200 || max(array_map('mb_strlen', array_keys($labels))) > 80) {
+                throw new \RuntimeException(count($labels) . ' different outputs — this looks like free text, not labels. A classifier dataset has text in the input (or instruction) and a short label in the output.');
+            }
+            arsort($labels);
+            $rare = array_keys(array_filter($labels, fn ($c) => $c < 5));
+            return sprintf('dataset #%d: %s train / %s dev rows, %d labels (%s)%s', $datasetId, number_format($n['train']), number_format($n['dev']), count($labels),
+                implode(', ', array_map(fn ($l, $c) => "{$l}: {$c}", array_slice(array_keys($labels), 0, 8), array_slice($labels, 0, 8))) . (count($labels) > 8 ? ', …' : ''),
+                $rare ? '; few examples for ' . implode(', ', array_slice($rare, 0, 5)) : '');
+        }
         return sprintf('dataset #%d: %s train / %s dev rows%s%s', $datasetId, number_format($n['train']), number_format($n['dev']),
             $frozen ? ' (frozen splits; test held back)' : ' (95/5 split)', $bad ? ", {$bad} empty/oversized/duplicate rows skipped" : '');
     }
@@ -313,6 +326,11 @@ class TrainingPipelineService
     public function finished(array $job, string $status): void
     {
         if (! $job['recipe']) return;
+        if ($status === 'completed' && $job['recipe'] === 'text_classifier') {
+            LlmFinalizeService::spawn((int) $job['id']);                    // unpack and register the classifier
+            $this->notify("Training completed: {$job['name']}", "Job #{$job['id']} finished; the classifier is being installed.", 'success', true);
+            return;
+        }
         if ($status === 'completed' && $job['recipe'] === 'text_sft') {
             LlmFinalizeService::spawn((int) $job['id']);                    // merge → GGUF → quantize → Ollama, in the background
             $this->notify("Training completed: {$job['name']}", "Job #{$job['id']} finished on the node; the model is being built on the server (merge, GGUF, Ollama).", 'success', true);

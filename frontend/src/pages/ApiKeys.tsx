@@ -23,6 +23,7 @@ const SCOPES = [
   { value: 'models', label: 'List models' },
   { value: 'download_models', label: 'Download models', hint: 'Engine packages: Whisper, vision and Sinhala chat model files' },
   { value: 'download_datasets', label: 'Download datasets', hint: 'Rights-approved datasets as JSONL; never a locked test split' },
+  { value: 'classify', label: 'Classify text', hint: 'POST /classify with your trained text classifiers' },
 ];
 
 const gatewayBase = () => `${window.location.origin}/api/v1`;

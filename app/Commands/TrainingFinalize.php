@@ -3,6 +3,7 @@
 namespace App\Commands;
 
 use App\Services\LlmFinalizeService;
+use App\Services\MlModelService;
 use CodeIgniter\CLI\BaseCommand;
 use CodeIgniter\CLI\CLI;
 
@@ -11,7 +12,7 @@ class TrainingFinalize extends BaseCommand
 {
     protected $group       = 'OllamaHub';
     protected $name        = 'training:finalize';
-    protected $description = 'Build a custom LLM from a finished text_sft job: merge, GGUF, quantize, add to Ollama.';
+    protected $description = 'Finish a trained job: build its custom LLM (merge, GGUF, Ollama) or install its classifier.';
     protected $usage       = 'training:finalize <job id>';
 
     public function run(array $params)
@@ -20,7 +21,13 @@ class TrainingFinalize extends BaseCommand
         if ($id <= 0) { CLI::error('Give the job id.'); return EXIT_ERROR; }
         @set_time_limit(0);
         $svc = new LlmFinalizeService();
+        $recipe = \Config\Database::connect()->table('training_jobs')->select('recipe')->where('id', $id)->get()->getRow()?->recipe;
         try {
+            if ($recipe === 'text_classifier') {                         // unpack + register; the ML service loads it on first use
+                $r = (new MlModelService())->installClassifier($id);
+                CLI::write("Ready: {$r['name']} ({$r['path']})", 'green');
+                return EXIT_SUCCESS;
+            }
             $r = $svc->run($id);
             CLI::write("Ready: {$r['name']} ({$r['gguf']})", 'green');
             return EXIT_SUCCESS;

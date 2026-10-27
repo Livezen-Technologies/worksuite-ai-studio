@@ -1,0 +1,17 @@
+[Unit]
+Description=AI Studio ML service (text classifiers)
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+Environment=ML_ROOT=/srv/aistudio-models/ml
+Environment=ML_THREADS=4
+Environment=HF_HOME=/srv/aistudio-hf
+ExecStart=/opt/aistudio-llm/venv/bin/python /var/www/ollamahub/deploy/ml/ml_service.py
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
