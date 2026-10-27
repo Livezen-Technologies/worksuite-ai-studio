@@ -2,6 +2,15 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.24.0] — 2026-10-27 — Storage (part 2): files across nodes, replicas, failover, draining
+- **Files** across storage nodes: each file is stored by ID (`objects/ab/<uuid>`), never by name, so renames and moves never touch a disk and any node can hold any file. SHA-256 recorded at upload.
+- **Placement policies** (Storage → Policies): number of copies (1–5), how nodes are chosen (most free space, node priority, spread evenly), optional node tags, per-app policies and a default ("Default — 2 copies, most free space"). Only active, healthy or degraded, writable nodes with room (10 % margin) are used; a node allocated to apps only takes those apps.
+- **Failover**: an upload falls over to the next node if one refuses it; downloads read from the healthiest copy, verify the checksum, fall over to the next copy and mark a damaged one for repair.
+- **Background work** every minute (`storage_sync`): extra copies, moves, deletions and repairs; files below their copy count (a node down, a copy damaged, a policy raised) are topped up; failed work is retried 5 times, then notifies and waits for Retry.
+- **Draining** a node queues every file it holds to move to other nodes; you are notified when it is empty. A node that still holds files cannot be retired; cancelling a drain drops the waiting moves.
+- **File browser** (Storage → Files): apps, folders and breadcrumbs, search, upload, download, rename/move, delete, and per-file copies with "Move elsewhere".
+- API: `/api/storage/files`, `/api/storage/policies`, `/api/storage/tasks`.
+
 ## [1.23.0] — 2026-10-27 — Storage nodes (part 1): nodes, health, alerts, allocations
 - New **Storage** page (Infrastructure → Storage, permissions `storage.view` / `storage.manage`): add, edit, test and remove storage nodes — **local disk** folders, **network mounts** (NFS/SMB mount points; refused while the share is not mounted, so a dropped mount never fills the local disk) and **S3-compatible** buckets (AWS, Garage, MinIO, Wasabi, R2 …, signed with AWS SigV4, path-style or virtual-hosted, under a prefix). S3 keys are stored encrypted (CodeIgniter encrypter; an encryption key was generated on the server) and never shown again.
 - **Lifecycle**: testing → active ⇄ draining → retired (and back to testing), with reasons and history; a node that failed its last check cannot be activated; only testing or retired nodes can be removed, and files on them are never deleted.

@@ -133,9 +133,15 @@ class StorageService
         $allowed = self::FLOW[$n['status']] ?? [];
         if (! in_array($to, $allowed, true)) throw new \InvalidArgumentException("A {$n['status']} node cannot become {$to}.");
         if ($to === 'active' && $n['health'] === 'down') throw new \RuntimeException('The node failed its last health check; fix it and run Test before activating.');
+        $store = new ObjectStoreService();
+        if ($to === 'retired' && ($held = $store->heldBy((int) $n['id']))) throw new \RuntimeException("The node still holds {$held} file(s). Drain it and wait until it is empty before retiring.");
         $hist = json_decode((string) ($n['status_history'] ?? ''), true) ?: [];
         $hist[] = ['from' => $n['status'], 'to' => $to, 'at' => date('Y-m-d H:i:s'), 'by' => $userId, 'reason' => $reason];
         $this->db->table('storage_nodes')->where('id', $n['id'])->update(['status' => $to, 'status_history' => json_encode($hist), 'updated_at' => date('Y-m-d H:i:s')]);
+        if ($to === 'draining') $store->drain((int) $n['id']);              // queue every file it holds to move elsewhere
+        if ($n['status'] === 'draining' && $to === 'active') {               // drain cancelled
+            $this->db->table('storage_tasks')->where(['type' => 'migrate', 'from_node' => $n['id'], 'status' => 'pending'])->delete();
+        }
         return self::public($this->db->table('storage_nodes')->where('id', $n['id'])->get()->getRowArray());
     }
 

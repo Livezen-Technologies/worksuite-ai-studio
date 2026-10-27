@@ -10,6 +10,7 @@ import {
 import { del, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ago, bytes, dateTime } from '../lib/format';
+import { FilesTab, PoliciesTab, TasksTab } from './StorageFiles';
 
 type Kind = 'local' | 'mounted' | 's3';
 interface Node {
@@ -47,6 +48,7 @@ export default function Storage() {
   const [detail, setDetail] = useState<number | null>(null);
   const [removing, setRemoving] = useState<Node | null>(null);
   const [lifecycle, setLifecycle] = useState<{ node: Node; to: string } | null>(null);
+  const [tab, setTab] = useState<'nodes' | 'files' | 'policies' | 'tasks'>('nodes');
   const qc = useQueryClient();
   const toast = useToast();
   const refresh = () => { qc.invalidateQueries({ queryKey: ['storage'] }); qc.invalidateQueries({ queryKey: ['storage-node'] }); };
@@ -144,6 +146,13 @@ export default function Storage() {
         </Card>
       )}
 
+      <div className="mb-4">
+        <Segmented label="Section" value={tab} onChange={setTab} options={[{ value: 'nodes', label: 'Nodes' }, { value: 'files', label: 'Files' }, { value: 'policies', label: 'Policies' }, { value: 'tasks', label: 'Background work' }]} />
+      </div>
+      {tab === 'files' && <FilesTab manage={manage} />}
+      {tab === 'policies' && <PoliciesTab manage={manage} />}
+      {tab === 'tasks' && <TasksTab manage={manage} />}
+      {tab === 'nodes' && <>
       <Card className="mb-6">
         <CardHeader title="Storage nodes" description="New nodes start in testing; activate one once its checks pass. Draining moves work away before a node is retired." />
         <DataTable columns={columns} rows={d?.nodes ?? []} rowKey={(n) => n.id} loading={q.isLoading} error={q.error} onRetry={() => q.refetch()} onRowClick={(n) => setDetail(n.id)}
@@ -151,6 +160,7 @@ export default function Storage() {
       </Card>
 
       <Rules rules={d?.rules ?? []} nodes={d?.nodes ?? []} manage={manage} onChange={refresh} />
+      </>}
 
       {editing && <NodeForm node={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refresh(); }} />}
       {detail !== null && <NodeDetail id={detail} manage={manage} onClose={() => setDetail(null)} />}
