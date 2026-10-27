@@ -221,6 +221,8 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->get('storage/backups', 'StorageFilesController::backups');
     $routes->put('storage/backups/(:num)', 'StorageFilesController::backupSave/$1');
     $routes->post('storage/backups/(:num)/run', 'StorageFilesController::backupRun/$1');
+    $routes->get('storage/restore', 'StorageFilesController::restoreStatus');
+    $routes->post('storage/backups/runs/(:num)/restore', 'StorageFilesController::restore/$1');
     $routes->get('ml-models', 'MlModelsController::index');
     $routes->post('ml-models/table', 'MlModelsController::createTable');
     $routes->post('ml-models/(:num)/predict', 'MlModelsController::predict/$1');

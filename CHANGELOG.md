@@ -2,6 +2,14 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.27.0] — 2026-10-27 — One-click database restore
+- **Restore** on every good run in Storage → Backups: puts the whole Studio database back to that backup. Super Admin only, and you type RESTORE to confirm.
+- **Safety backup first** (on by default): the current database is backed up before anything changes, and the restore stops if that fails. After the import, the safety backup — and the backup just restored — are re-listed, so the safety one can undo the restore in one more click.
+- The chosen backup is fetched with its checksum and gzip-checked before the database is touched; one restore at a time, never while a backup runs; migrations newer than the backup are re-applied afterwards. Tables a backup left out keep their current contents.
+- Progress lives in a file (not in the database being replaced) and shows as a banner on the Backups tab; a notification says when it finished or failed. Runs as a detached `spark storage:restore`.
+- A safety backup never prunes old backups, so it cannot remove the one being restored.
+- Tested on a scratch copy of the database on the server (backup → change → restore → undo, both backups still listed); the live database was not touched and the scratch copy was dropped.
+
 ## [1.26.0] — 2026-10-27 — Model builder (part 4): table models — classic ML on a CSV
 - **Table models** (Training page → Table models): upload a CSV (comma, semicolon, tab or pipe; up to 200 MB, 200,000 rows used), pick the column to predict and whether it is a category or a number (or let it decide). Trained on this server with scikit-learn — no GPU, no node — in seconds to minutes, as a detached `spark ml:train-table` process with live progress.
 - Columns are typed automatically; identifiers, free text, empty and constant columns are left out (and listed). Logistic/ridge regression, random forest and gradient boosting are compared with 5-fold cross-validation (macro-F1 or R²); the winner is measured once on 20 % of rows it never saw — accuracy and macro-F1 against always guessing the commonest class, or R² and the typical error against guessing the average — then refit on every row.

@@ -210,4 +210,26 @@ class StorageFilesController extends BaseApiController
         catch (\RuntimeException $e) { return $this->failure($e->getMessage(), 409); }
         return $this->ok(['run_id' => $run], 'Backup started. It runs in the background.');
     }
+
+    /** Restore status (from its file, so it survives the database being replaced). */
+    public function restoreStatus()
+    {
+        if ($r = $this->requirePermission('storage.view')) return $r;
+        return $this->ok(\App\Services\StorageRestoreService::status());
+    }
+
+    /** POST storage/backups/runs/{id}/restore {confirm: "RESTORE", safety: true} — Super Admin only. */
+    public function restore($runId = null)
+    {
+        if ($r = $this->requirePermission('storage.manage')) return $r;
+        if (! $this->isSuperAdmin()) return $this->failure('Only a Super Admin can restore the database.', 403);
+        $in = $this->input();
+        $u = $this->db()->table('users')->where('id', $this->userId())->get()->getRowArray();
+        try {
+            $s = (new \App\Services\StorageRestoreService())->start((int) $runId, ! array_key_exists('safety', $in) || ! empty($in['safety']), (string) ($in['confirm'] ?? ''),
+                $this->userId(), (string) ($u['name'] ?? $u['email'] ?? ('user #' . $this->userId())));
+        } catch (\InvalidArgumentException $e) { return $this->failure($e->getMessage(), 422); }
+        catch (\RuntimeException $e) { return $this->failure($e->getMessage(), 409); }
+        return $this->ok($s, 'Restore started.');
+    }
 }

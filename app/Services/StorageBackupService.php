@@ -64,8 +64,8 @@ class StorageBackupService
         return $run;
     }
 
-    /** The detached process: dump, store, prune. */
-    public function run(int $runId): void
+    /** The detached process: dump, store, prune (not for a restore's safety backup: it must never prune the backup being restored). */
+    public function run(int $runId, bool $prune = true): void
     {
         $r = $this->db->table('storage_backup_runs')->where('id', $runId)->get()->getRowArray();
         $b = $r ? $this->db->table('storage_backups')->where('id', $r['backup_id'])->get()->getRowArray() : null;
@@ -89,7 +89,7 @@ class StorageBackupService
             $o = (new ObjectStoreService())->put('backups', $slug . '/' . date('Y-m-d_His') . '.sql.gz', $dump, null, $b['policy_id'] ? (int) $b['policy_id'] : null, null, 'application/gzip');
             $this->db->table('storage_backup_runs')->where('id', $runId)->update(['object_id' => $o['id'], 'size' => (int) $o['size']]);
             $this->finish($runId, 'ok');
-            $this->prune($b);
+            if ($prune) $this->prune($b);
         } catch (\Throwable $e) {
             $this->finish($runId, 'failed', $e->getMessage());
         } finally {

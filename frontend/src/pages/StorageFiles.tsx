@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDownTrayIcon, ArrowPathIcon, ArrowUpTrayIcon, DocumentIcon, FolderIcon, PencilSquareIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ArrowDownTrayIcon, ArrowPathIcon, ArrowUturnLeftIcon, ArrowUpTrayIcon, DocumentIcon, FolderIcon, PencilSquareIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { ActionMenu, Badge, Button, Card, CardHeader, ConfirmDialog, DataTable, EmptyState, FormModal, Input, Modal, Segmented, Select, useToast, type Column } from '../components/ui';
 import { del, download, get, post, put } from '../lib/api';
 import { ago, bytes, dateTime } from '../lib/format';
@@ -258,9 +258,13 @@ export function BackupsTab({ manage }: { manage: boolean }) {
   const toast = useToast();
   const q = useQuery({ queryKey: ['storage-backups'], queryFn: () => get<Backup[]>('/storage/backups'), refetchInterval: 15_000 });
   const [editing, setEditing] = useState<Backup | null>(null);
+  const [restoring, setRestoring] = useState<{ backup: Backup; run: BackupRun } | null>(null);
+  const rs = useQuery({ queryKey: ['storage-restore'], queryFn: () => get<RestoreStatus | null>('/storage/restore'),
+    refetchInterval: (query) => (query.state.data?.state === 'running' ? 3000 : 30_000) });
   const run = useMutation({ mutationFn: (b: Backup) => post(`/storage/backups/${b.id}/run`), onSuccess: () => { toast.success('Backup started', 'It runs in the background.'); q.refetch(); }, onError: (e) => toast.error(e) });
   return (
     <div className="space-y-6">
+      {rs.data && <RestoreBanner s={rs.data} />}
       {(q.data ?? []).map((b) => (
         <Card key={b.id}>
           <CardHeader title={<span className="flex items-center gap-2">{b.name} <Badge tone={Number(b.enabled) === 1 ? 'green' : 'gray'}>{Number(b.enabled) === 1 ? 'on' : 'off'}</Badge></span>}
@@ -278,12 +282,14 @@ export function BackupsTab({ manage }: { manage: boolean }) {
                 <span className="text-slate-700 dark:text-slate-300" title={dateTime(r.started_at)}>{ago(r.started_at)} · {r.trigger}</span>
                 <span className="flex-1 truncate text-xs text-slate-500 dark:text-slate-400">{r.error ?? (r.object_key ? `${r.object_key}${r.size ? ` · ${bytes(r.size)}` : ''}` : r.object_id ? 'removed by the keep limit' : '')}</span>
                 {r.status === 'ok' && r.object_key && r.object_id && <Button size="sm" variant="secondary" icon={ArrowDownTrayIcon} onClick={() => download(`/storage/files/${r.object_id}/download`, 'backup.sql.gz').catch((e) => toast.error(e))}>Download</Button>}
+                {manage && r.status === 'ok' && r.object_key && <Button size="sm" variant="secondary" icon={ArrowUturnLeftIcon} disabled={rs.data?.state === 'running'} onClick={() => setRestoring({ backup: b, run: r })}>Restore</Button>}
               </li>
             ))}
             {!b.runs.length && <li className="px-4 py-3 text-sm text-slate-500 sm:px-6 dark:text-slate-400">No runs yet.</li>}
           </ul>
         </Card>
       ))}
+      {restoring && <RestoreDialog {...restoring} onClose={() => setRestoring(null)} onStarted={() => { setRestoring(null); rs.refetch(); }} />}
       {editing && <BackupForm backup={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); q.refetch(); }} />}
     </div>
   );
@@ -313,6 +319,42 @@ function BackupForm({ backup, onClose, onSaved }: { backup: Backup; onClose: () 
       <Select label="Placement policy" value={policy} onChange={(e) => setPolicy(e.target.value)}
         options={[{ value: '', label: 'The default policy' }, ...(pol.data ?? []).map((p) => ({ value: String(p.id), label: `${p.name} — ${p.replicas} copies${Number(p.min_regions ?? 1) > 1 ? `, ${p.min_regions}+ regions` : ''}` }))]} />
       <Input label="Leave out tables" value={exclude} onChange={(e) => setExclude(e.target.value)} hint="Comma-separated table names, e.g. large logs that can be rebuilt." />
+    </FormModal>
+  );
+}
+
+interface RestoreStatus { state: 'running' | 'done' | 'failed'; backup: string; taken_at: string; by: string; started_at: string; finished_at?: string; step: string; error?: string; safety: boolean; safety_key?: string; log: string[] }
+
+function RestoreBanner({ s }: { s: RestoreStatus }) {
+  const tone = s.state === 'running' ? 'border-amber-300 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10'
+    : s.state === 'failed' ? 'border-red-300 bg-red-50 dark:border-red-500/30 dark:bg-red-500/10' : 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10';
+  return (
+    <div className={`rounded-lg border p-4 text-sm ${tone}`} role="status">
+      <p className="font-medium text-slate-900 dark:text-white">
+        {s.state === 'running' ? 'Restoring the database…' : s.state === 'failed' ? 'The last restore failed' : 'Last restore finished'} — backup of {s.taken_at}, started by {s.by} {ago(s.started_at)}
+      </p>
+      <p className="mt-1 text-slate-700 dark:text-slate-300">{s.state === 'failed' ? s.error : s.step}</p>
+      {s.safety_key && <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">The database as it was before is kept as {s.safety_key} — restore it to undo.</p>}
+    </div>
+  );
+}
+
+function RestoreDialog({ backup, run, onClose, onStarted }: { backup: Backup; run: BackupRun; onClose: () => void; onStarted: () => void }) {
+  const toast = useToast();
+  const [confirm, setConfirm] = useState('');
+  const [safety, setSafety] = useState<'yes' | 'no'>('yes');
+  const go = useMutation({
+    mutationFn: () => post(`/storage/backups/runs/${run.id}/restore`, { confirm, safety: safety === 'yes' }),
+    onSuccess: () => { toast.success('Restore started', 'Progress shows at the top of this tab.'); onStarted(); }, onError: (e) => toast.error(e),
+  });
+  return (
+    <FormModal open onClose={onClose} danger title={`Restore the database to ${dateTime(run.started_at)}?`} submitLabel="Restore database" submitting={go.isPending}
+      onSubmit={() => { if (confirm === 'RESTORE') go.mutate(); }}
+      description={`Everything in AI Studio — users, datasets, jobs, settings — goes back to how it was when this ${backup.name} backup was taken. Changes made since then are lost. The Studio may answer slowly or with errors while it runs. Only a Super Admin can do this.`}>
+      <Segmented label="Safety backup" value={safety} onChange={setSafety}
+        options={[{ value: 'yes', label: 'Back up the current database first (recommended)' }, { value: 'no', label: 'Skip — I have a recent backup' }]} />
+      <p className="text-xs text-slate-500 dark:text-slate-400">The safety backup is how you undo this restore. If it fails, nothing is restored.{backup.exclude_tables ? ` Tables this backup leaves out (${backup.exclude_tables}) keep their current contents.` : ''}</p>
+      <Input label="Type RESTORE to confirm" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="off" />
     </FormModal>
   );
 }
