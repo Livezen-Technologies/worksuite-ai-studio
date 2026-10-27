@@ -222,6 +222,7 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->put('storage/backups/(:num)', 'StorageFilesController::backupSave/$1');
     $routes->post('storage/backups/(:num)/run', 'StorageFilesController::backupRun/$1');
     $routes->get('ml-models', 'MlModelsController::index');
+    $routes->post('ml-models/table', 'MlModelsController::createTable');
     $routes->post('ml-models/(:num)/predict', 'MlModelsController::predict/$1');
     $routes->delete('ml-models/(:num)', 'MlModelsController::delete/$1');
     $routes->post('training/pipelines', 'TrainingPipelinesController::create');
@@ -296,6 +297,7 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\Gateway', 'filter'
     $routes->get('catalog', 'DownloadsController::catalog');
     $routes->get('classifiers', 'ClassifyController::index');
     $routes->post('classify', 'ClassifyController::classify');                      // downloads (v1.14)
+    $routes->post('predict', 'ClassifyController::predict');                        // table models (v1.26)
     $routes->get('packages/(:segment)/files', 'DownloadsController::file/$1');
     $routes->get('datasets/(:num)/download', 'DownloadsController::dataset/$1');
 });

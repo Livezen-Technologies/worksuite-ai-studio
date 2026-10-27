@@ -25,7 +25,7 @@ export default function MlModels({ canManage }: { canManage: boolean }) {
     onSuccess: () => { toast.success('Classifier deleted'); setRemoving(null); qc.invalidateQueries({ queryKey: ['ml-models'] }); },
     onError: (e) => toast.error(e),
   });
-  const models = (q.data ?? []).filter((m) => m.status !== 'replaced');
+  const models = (q.data ?? []).filter((m) => m.status !== 'replaced' && m.kind !== 'table');   // table models have their own card
   if (!q.isLoading && !models.length) return null;   // appears once the first classifier is trained
 
   return (

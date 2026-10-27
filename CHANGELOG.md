@@ -2,6 +2,13 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.26.0] — 2026-10-27 — Model builder (part 4): table models — classic ML on a CSV
+- **Table models** (Training page → Table models): upload a CSV (comma, semicolon, tab or pipe; up to 200 MB, 200,000 rows used), pick the column to predict and whether it is a category or a number (or let it decide). Trained on this server with scikit-learn — no GPU, no node — in seconds to minutes, as a detached `spark ml:train-table` process with live progress.
+- Columns are typed automatically; identifiers, free text, empty and constant columns are left out (and listed). Logistic/ridge regression, random forest and gradient boosting are compared with 5-fold cross-validation (macro-F1 or R²); the winner is measured once on 20 % of rows it never saw — accuracy and macro-F1 against always guessing the commonest class, or R² and the typical error against guessing the average — then refit on every row.
+- **Details & try**: the model comparison, the columns that matter most (permutation importance), what was left out, and a form pre-filled with an example row to predict from.
+- **API**: `POST /api/v1/predict {"model", "row" | "rows"}` with the Classify scope; `GET /api/v1/classifiers` now lists table models with their inputs. The ML service (`aistudio-ml`) serves them at `/predict`.
+- Tested on the server with a churn table (ID and note columns dropped correctly, accuracy 88 % vs a 64 % baseline) and a price table (R² 0.99); test models removed.
+
 ## [1.25.1] — 2026-10-27 — Storage: heartbeat fix for VPS nodes
 - The agent heartbeat could not load the VPS storage driver's port offset (the driver shares a file with the others and is not autoloaded on its own); the offset now lives on the base driver. Found by the end-to-end test before any node used it.
 

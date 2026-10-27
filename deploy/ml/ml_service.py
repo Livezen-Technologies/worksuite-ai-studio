@@ -2,12 +2,14 @@
 
   POST /classify   {"path": "/srv/aistudio-models/ml/<model>", "texts": ["…"], "top": 3}
                    → {"results": [{"label": "…", "score": 0.93, "scores": [{"label": "…", "score": …}, …]}, …]}
+  POST /predict    {"path": "/srv/aistudio-models/ml/<table model>", "rows": [{"column": value, …}], "top": 3}
+                   → {"results": [{"value": …, "score"?: 0.9, "scores"?: […]}]}   (table models, part 4)
   GET  /health
 
 Models are loaded on first use and the 4 most recently used stay in memory. Only folders under ML_ROOT are served.
 Runs as www-data with the shared toolkit (/opt/aistudio-llm/venv) — systemd unit aistudio-ml.
 """
-import json, os, threading
+import json, math, os, threading
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -33,6 +35,48 @@ def load(path):
         _models[real] = (tok, model)
         while len(_models) > KEEP: _models.popitem(last=False)
         return _models[real]
+
+
+_tables = OrderedDict()
+
+
+def load_table(path):
+    real = os.path.realpath(path)
+    if not real.startswith(ROOT + os.sep) or not os.path.isfile(os.path.join(real, 'model.joblib')):
+        raise FileNotFoundError('not a table model folder under ' + ROOT)
+    with _lock:
+        if real in _tables:
+            _tables.move_to_end(real); return _tables[real]
+        import joblib
+        pipe = joblib.load(os.path.join(real, 'model.joblib'))
+        schema = json.load(open(os.path.join(real, 'schema.json')))
+        _tables[real] = (pipe, schema)
+        while len(_tables) > KEEP: _tables.popitem(last=False)
+        return _tables[real]
+
+
+def predict(path, rows, top):
+    import numpy as np
+    pipe, schema = load_table(path)
+    feats = schema['features']
+    X = np.empty((len(rows), len(feats)), dtype=object)
+    for i, r in enumerate(rows):
+        for j, f in enumerate(feats):
+            v = r.get(f['name'])
+            if f['type'] == 'number':
+                try: v = float(str(v).replace(',', '')) if v not in (None, '') else float('nan')
+                except ValueError: v = float('nan')
+                X[i, j] = v if math.isfinite(v) else np.nan
+            else:
+                X[i, j] = str(v).strip() if v not in (None, '') else np.nan
+    if schema['task'] == 'regression':
+        return [{'value': round(float(v), 4)} for v in pipe.predict(X)]
+    probs = pipe.predict_proba(X); classes = [str(c) for c in pipe.classes_]
+    out = []
+    for row in probs:
+        ranked = sorted(zip(classes, row), key=lambda x: -x[1])
+        out.append({'value': ranked[0][0], 'score': round(float(ranked[0][1]), 4), 'scores': [{'label': l, 'score': round(float(p), 4)} for l, p in ranked[:top]]})
+    return out
 
 
 def classify(path, texts, top):
@@ -66,6 +110,17 @@ class H(BaseHTTPRequestHandler):
         self._send(404, {'error': 'not found'})
 
     def do_POST(self):
+        if self.path == '/predict':
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+                rows = [r for r in body.get('rows', []) if isinstance(r, dict)][:1000]
+                if not rows: return self._send(422, {'error': 'rows is required'})
+                return self._send(200, {'results': predict(body.get('path', ''), rows, int(body.get('top', 3)))})
+            except FileNotFoundError as e:
+                return self._send(404, {'error': str(e)})
+            except Exception as e:
+                print('predict failed:', type(e).__name__, e, flush=True)
+                return self._send(500, {'error': f'{type(e).__name__}: {str(e)[:200]}'})
         if self.path != '/classify': return self._send(404, {'error': 'not found'})
         try:
             body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
