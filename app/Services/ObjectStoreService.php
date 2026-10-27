@@ -197,6 +197,9 @@ class ObjectStoreService
             $want = max(1, (int) $this->policy($o['policy_id'] ? (int) $o['policy_id'] : null, $o['app'])['replicas']);
             if ((int) $o['good'] >= $want || (int) $o['good'] === 0) continue;
             if ($this->db->table('storage_tasks')->where('object_id', $o['id'])->whereIn('type', ['replicate', 'repair'])->whereIn('status', ['pending', 'running'])->countAllResults()) continue;
+            $have = array_map('intval', array_column($this->db->table('storage_placements')->select('node_id')->where('object_id', $o['id'])->get()->getResultArray(), 'node_id'));
+            $policy = $this->policy($o['policy_id'] ? (int) $o['policy_id'] : null, $o['app']);
+            if (! $this->eligible($o['app'], (int) $o['size'], $policy, $have)) continue;   // no other node can take a copy yet
             $src = $this->db->table('storage_placements p')->select('p.node_id')->join('storage_nodes n', 'n.id = p.node_id')
                 ->where(['p.object_id' => $o['id'], 'p.status' => 'ok'])->where('n.health !=', 'down')->get()->getRowArray();
             $this->task('replicate', (int) $o['id'], (int) $src['node_id'], null, 'below its replica count'); $queued++;

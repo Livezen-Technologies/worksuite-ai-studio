@@ -2,6 +2,9 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.24.1] — 2026-10-27 — Storage sync fix
+- A file below its copy count is topped up only once another eligible node exists, instead of queueing a copy that fails five times and raises a notice (seen with a single active node).
+
 ## [1.24.0] — 2026-10-27 — Storage (part 2): files across nodes, replicas, failover, draining
 - **Files** across storage nodes: each file is stored by ID (`objects/ab/<uuid>`), never by name, so renames and moves never touch a disk and any node can hold any file. SHA-256 recorded at upload.
 - **Placement policies** (Storage → Policies): number of copies (1–5), how nodes are chosen (most free space, node priority, spread evenly), optional node tags, per-app policies and a default ("Default — 2 copies, most free space"). Only active, healthy or degraded, writable nodes with room (10 % margin) are used; a node allocated to apps only takes those apps.
