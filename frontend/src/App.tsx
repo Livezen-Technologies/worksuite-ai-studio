@@ -12,11 +12,13 @@ const SiteHome = lazy(() => import('./site/pages/Home'));
 const SitePricing = lazy(() => import('./site/pages/Pricing'));
 const SiteCompany = lazy(() => import('./site/pages/Company'));
 const SiteBlog = lazy(() => import('./site/pages/Blog'));
+const SiteModelTraining = lazy(() => import('./site/pages/ModelTraining'));
 const SiteBlogPost = lazy(() => import('./site/pages/Blog').then((m) => ({ default: m.BlogPost })));
 
 const pages = {
   '/': lazy(() => import('./pages/Dashboard')),
   '/servers': lazy(() => import('./pages/Servers')),
+  '/storage': lazy(() => import('./pages/Storage')),
   '/node-app': lazy(() => import('./pages/NodeApp')),
   '/models': lazy(() => import('./pages/Models')),
   '/monitoring': lazy(() => import('./pages/Monitoring')),
@@ -50,7 +52,7 @@ const pages = {
 } as const;
 
 const perms: Record<keyof typeof pages, string> = {
-  '/': 'dashboard.view', '/servers': 'servers.view', '/node-app': 'servers.view', '/models': 'models.view', '/monitoring': 'monitoring.view', '/queue': 'queues.view',
+  '/': 'dashboard.view', '/servers': 'servers.view', '/storage': 'storage.view', '/node-app': 'servers.view', '/models': 'models.view', '/monitoring': 'monitoring.view', '/queue': 'queues.view',
   '/studio': 'models.view', '/datasets': 'models.view', '/training': 'models.view', '/portal': 'portal.use', '/portal/datasets': 'portal.use', '/portal/jobs': 'portal.use', '/compute': 'compute.manage', '/compute/usage': 'compute.manage', '/engine': 'engine.view', '/engine/evaluations': 'engine.view', '/engine/approvals': 'engine.view', '/engine/packages': 'engine.view', '/engine/bindings': 'engine.view',
   '/chat': 'chat.use', '/speech': 'chat.use', '/prompts': 'prompts.view',
   '/knowledge': 'knowledge.view', '/agents': 'agents.view', '/api-keys': 'apikeys.view', '/api-logs': 'logs.view', '/analytics': 'analytics.view',
@@ -118,6 +120,7 @@ export function App() {
       <Route path="/pricing" element={<Public><SitePricing /></Public>} />
       <Route path="/company" element={<Public><SiteCompany /></Public>} />
       <Route path="/blog" element={<Public><SiteBlog /></Public>} />
+      <Route path="/ai-model-training" element={<Public><SiteModelTraining /></Public>} />
       <Route path="/blog/:slug" element={<Public><SiteBlogPost /></Public>} />
       {/* Old URLs from OllamaHub 1.x */}
       <Route path="/apikeys" element={<Navigate to="/api-keys" replace />} />

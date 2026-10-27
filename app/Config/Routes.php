@@ -174,6 +174,7 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->post('datasets', 'DatasetsController::create');
     $routes->get('datasets/(:num)', 'DatasetsController::show/$1');
     $routes->post('datasets/(:num)/upload', 'DatasetsController::upload/$1');
+    $routes->post('datasets/(:num)/speech', 'DatasetsController::speechUpload/$1');
     $routes->post('datasets/(:num)/dedupe', 'DatasetsController::dedupe/$1');
     $routes->post('datasets/(:num)/clean', 'DatasetsController::clean/$1');
     $routes->get('datasets/(:num)/export', 'DatasetsController::export/$1');
@@ -191,6 +192,19 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->post('training/(:num)/cancel', 'TrainingPipelinesController::cancel/$1');
     $routes->post('training/(:num)/retry', 'TrainingPipelinesController::retry/$1');
     $routes->get('training/pipelines', 'TrainingPipelinesController::index');
+    $routes->get('storage', 'StorageController::index');
+    $routes->get('storage/nodes/(:num)', 'StorageController::show/$1');
+    $routes->post('storage/nodes', 'StorageController::create');
+    $routes->put('storage/nodes/(:num)', 'StorageController::update/$1');
+    $routes->delete('storage/nodes/(:num)', 'StorageController::delete/$1');
+    $routes->post('storage/nodes/(:num)/test', 'StorageController::test/$1');
+    $routes->post('storage/nodes/(:num)/status', 'StorageController::status/$1');
+    $routes->post('storage/nodes/(:num)/allocations', 'StorageController::allocate/$1');
+    $routes->delete('storage/allocations/(:num)', 'StorageController::unallocate/$1');
+    $routes->post('storage/rules', 'StorageController::ruleCreate');
+    $routes->put('storage/rules/(:num)', 'StorageController::ruleUpdate/$1');
+    $routes->delete('storage/rules/(:num)', 'StorageController::ruleDelete/$1');
+    $routes->post('storage/alerts/(:num)/ack', 'StorageController::ack/$1');
     $routes->get('ml-models', 'MlModelsController::index');
     $routes->post('ml-models/(:num)/predict', 'MlModelsController::predict/$1');
     $routes->delete('ml-models/(:num)', 'MlModelsController::delete/$1');

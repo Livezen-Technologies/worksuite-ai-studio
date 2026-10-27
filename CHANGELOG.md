@@ -2,6 +2,14 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.23.0] — 2026-10-27 — Storage nodes (part 1): nodes, health, alerts, allocations
+- New **Storage** page (Infrastructure → Storage, permissions `storage.view` / `storage.manage`): add, edit, test and remove storage nodes — **local disk** folders, **network mounts** (NFS/SMB mount points; refused while the share is not mounted, so a dropped mount never fills the local disk) and **S3-compatible** buckets (AWS, Garage, MinIO, Wasabi, R2 …, signed with AWS SigV4, path-style or virtual-hosted, under a prefix). S3 keys are stored encrypted (CodeIgniter encrypter; an encryption key was generated on the server) and never shown again.
+- **Lifecycle**: testing → active ⇄ draining → retired (and back to testing), with reasons and history; a node that failed its last check cannot be activated; only testing or retired nodes can be removed, and files on them are never deleted.
+- **Health checks** every 5 minutes (`storage_health`) and on demand (Test now, `spark storage:check [node]`): capacity, used and free space (quota for buckets), a 4 MB write/read/verify test with write and read speed, response time; health ok / degraded / down; 30 days of history with 7-day charts per node.
+- **Alert rules** (unreachable, used %, free GB, response time, write speed; per node or all; warning or error): alerts open and resolve themselves, can be acknowledged, notify in the app, and errors also go to the configured Slack / email / webhook channels. Five starting rules are created.
+- **Allocations**: assign a node to apps, services, users or organizations, each with an optional quota.
+- First node: "This server — /srv" (`/srv/aistudio-storage`), in testing. Its first check found the server disk 90.3% full (421 of 466 GB) — both disk alerts are open.
+
 ## [1.22.0] — 2026-10-27 — Custom speech models; an AI model training page
 - **Speech datasets**: Datasets → New dataset → Speech recordings: a zip of audio files (WAV, MP3, M4A, OGG, FLAC, WebM, Opus) with their transcripts in a `metadata.csv` (file, transcript) or a `.txt` beside each file. Recordings are kept in `/srv/aistudio-models/speech-data/<dataset>`; large sets can be imported on the server with `spark datasets:import-speech <dataset> <zip>`.
 - Training page → **Create speech model** (recipe `whisper_custom`): fine-tunes Whisper Sinhala (or Whisper Small / Base / Medium) on your recordings with the gentle recipe from the numbers report — encoder frozen, low learning rate, ordinary SinhaSpeech clips mixed in. Staging packs the recordings into one archive and checks there are enough (at least 50). After every epoch it measures word and character error on your recordings and on general Sinhala, keeps the best epoch whose general word error has not risen by more than 3 points, and does not upload a model that is no better than the base.

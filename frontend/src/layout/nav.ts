@@ -15,6 +15,7 @@ export const NAV: NavSection[] = [
   ] },
   { heading: 'Infrastructure', items: [
     { label: 'Servers', to: '/servers', icon: ServerStackIcon, perm: 'servers.view', description: 'Ollama nodes and providers' },
+    { label: 'Storage', to: '/storage', icon: CircleStackIcon, perm: 'storage.view', description: 'Storage servers, mounts and S3 buckets' },
     { label: 'Node App', to: '/node-app', icon: CommandLineIcon, perm: 'servers.view', description: 'Download the node app and the setup guide' },
     { label: 'Models', to: '/models', icon: CpuChipIcon, perm: 'models.view', description: 'Pull, load and configure models' },
     { label: 'Monitoring', to: '/monitoring', icon: SignalIcon, perm: 'monitoring.view', description: 'Live CPU, memory, GPU and health' },

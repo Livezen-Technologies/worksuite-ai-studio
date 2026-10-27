@@ -20,6 +20,7 @@ class SchedulerService
         'generate_report'=> ['Daily report', 'Roll up usage statistics', 'generate_report', 'daily'],
         'backup'         => ['Backup', 'Snapshot the database', 'backup', 'daily'],
         'training_pipelines' => ['Training pipelines', 'Start runs when data changes; retry or fail stalled jobs', 'training_pipelines', 'every_minute'],
+        'storage_health' => ['Storage health', 'Check every storage node and evaluate alert rules', 'storage_health', 'every_5m'],
     ];
 
     public function __construct()
@@ -92,6 +93,7 @@ class SchedulerService
             'cleanup_cache'   => ['flushed' => \Config\Services::cache()->clean()],
             'backup'          => $this->backup(),
             'training_pipelines' => (new TrainingPipelineService())->tick(),
+            'storage_health' => (new StorageService())->checkAll(),
             default           => throw new \RuntimeException("Unknown handler: {$handler}"),
         };
     }
