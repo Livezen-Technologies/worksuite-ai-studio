@@ -309,7 +309,7 @@ class TrainingPipelineService
         if ($state !== '' && $state !== 'ok' && $state !== 'off') {
             $this->db->table('storage_nodes')->where('id', $node['id'])->update(['last_error' => 'Node helper: ' . preg_replace('/^error:/', '', $state)]);
         }
-        return ['store_wanted' => 1, 'store_port' => (int) $server['tunnel_port'] + \App\Libraries\Storage\AgentDriver::PORT_OFFSET,
+        return ['store_wanted' => 1, 'store_port' => (int) $server['tunnel_port'] + \App\Libraries\Storage\StorageDriver::AGENT_PORT_OFFSET,
                 'store_dir' => (string) ($cfg['path'] ?? 'aistudio-storage'), 'store_key' => $key];
     }
 

@@ -10,6 +10,8 @@ namespace App\Libraries\Storage;
 abstract class StorageDriver
 {
     public const PROBE_BYTES = 4 * 1024 * 1024;
+    /** VPS / node storage: the helper's tunnel lands on the node's tunnel port + this (see AgentDriver) */
+    public const AGENT_PORT_OFFSET = 2000;
 
     /** @return array{total:?int, used:?int, free:?int, write_mbps:float, read_mbps:float, latency_ms:float} */
     abstract public function probe(): array;
@@ -247,7 +249,6 @@ class S3Driver extends StorageDriver
  */
 class AgentDriver extends StorageDriver
 {
-    public const PORT_OFFSET = 2000;
     private string $base;
     private string $key;
 
@@ -258,7 +259,7 @@ class AgentDriver extends StorageDriver
         $srv = \Config\Database::connect()->table('servers')->select('tunnel_port')->where('id', $sid)->get()->getRowArray();
         if (! $srv) throw new \InvalidArgumentException('That server no longer exists.');
         if (! $srv['tunnel_port']) throw new \InvalidArgumentException('That server is not enrolled with a tunnel; enrol it with the node installer first.');
-        $this->base = 'http://127.0.0.1:' . ((int) $srv['tunnel_port'] + self::PORT_OFFSET);
+        $this->base = 'http://127.0.0.1:' . ((int) $srv['tunnel_port'] + self::AGENT_PORT_OFFSET);
         $this->key = (string) ($secret['store_key'] ?? '');
     }
 

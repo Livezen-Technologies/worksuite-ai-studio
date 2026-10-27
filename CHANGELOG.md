@@ -2,6 +2,9 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.25.1] — 2026-10-27 — Storage: heartbeat fix for VPS nodes
+- The agent heartbeat could not load the VPS storage driver's port offset (the driver shares a file with the others and is not autoloaded on its own); the offset now lives on the base driver. Found by the end-to-end test before any node used it.
+
 ## [1.25.0] — 2026-10-27 — Storage (part 3): VPS nodes, database backups, off-site copies
 - **VPS / node storage**: a new node type that stores files in a folder on any enrolled server (a VPS, an office machine) running the training agent. The agent (now **1.4.0**) runs a small storage helper on the node (Python standard library, nothing to install) and forwards it through the node's existing tunnel to tunnel port + 2000 on the Studio, so nothing is opened on the node's firewall. Each node has its own storage key, generated on the Studio, sealed with its credentials and only sent in the agent's heartbeat; every upload is checked against its SHA-256 before the node keeps it. One storage node per server; a relative folder is under the agent user's home.
 - Tunnel keys now also allow the storage port (tunnel port + 2000). Existing nodes need the agent reinstalled (1.4.0) to serve storage.
