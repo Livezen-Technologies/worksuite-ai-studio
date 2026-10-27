@@ -218,6 +218,9 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->delete('storage/policies/(:num)', 'StorageFilesController::policyDelete/$1');
     $routes->get('storage/tasks', 'StorageFilesController::tasks');
     $routes->post('storage/tasks/(:num)/retry', 'StorageFilesController::retry/$1');
+    $routes->get('storage/backups', 'StorageFilesController::backups');
+    $routes->put('storage/backups/(:num)', 'StorageFilesController::backupSave/$1');
+    $routes->post('storage/backups/(:num)/run', 'StorageFilesController::backupRun/$1');
     $routes->get('ml-models', 'MlModelsController::index');
     $routes->post('ml-models/(:num)/predict', 'MlModelsController::predict/$1');
     $routes->delete('ml-models/(:num)', 'MlModelsController::delete/$1');

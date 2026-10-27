@@ -10,7 +10,7 @@ use App\Libraries\Storage\StorageDriver;
  */
 class StorageService
 {
-    public const KINDS = ['local', 'mounted', 's3'];
+    public const KINDS = ['local', 'mounted', 's3', 'agent'];
     /** lifecycle: which moves are allowed from each status */
     public const FLOW = ['testing' => ['active', 'retired'], 'active' => ['draining'], 'draining' => ['active', 'retired'], 'retired' => ['testing']];
 

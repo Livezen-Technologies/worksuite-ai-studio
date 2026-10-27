@@ -10,7 +10,7 @@ interface Listing { apps: { app: string; files: number; bytes: number }[]; app: 
 interface Placement { node_id: number; node_name: string | null; status: string; health: string | null; node_status: string | null; verified_at: string | null; error: string | null }
 interface Task { id: number; type: string; status: string; object_key: string | null; app: string | null; from_name: string | null; to_name: string | null; attempts: number; error: string | null; reason: string | null; updated_at: string }
 interface FileDetail extends FileRow { sha256: string; placements: Placement[]; tasks: Task[]; policy: { name?: string; replicas: number | string; strategy: string } }
-export interface Policy { id: number; name: string; replicas: number | string; strategy: string; node_tags: string | null; app: string | null; is_default: number | string; files?: number | string }
+export interface Policy { id: number; name: string; replicas: number | string; min_regions?: number | string; strategy: string; node_tags: string | null; app: string | null; is_default: number | string; files?: number | string }
 
 const STRATEGY: Record<string, string> = { capacity: 'Most free space', priority: 'Node priority', round_robin: 'Spread evenly' };
 const TASK_TONE: Record<string, 'blue' | 'amber' | 'green' | 'red'> = { pending: 'blue', running: 'amber', done: 'green', failed: 'red' };
@@ -177,7 +177,7 @@ export function PoliciesTab({ manage }: { manage: boolean }) {
           <li key={p.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:px-6">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-slate-900 dark:text-white">{p.name} {Number(p.is_default) === 1 && <Badge tone="blue">default</Badge>} {p.app && <Badge>app: {p.app}</Badge>}</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">{p.replicas} {Number(p.replicas) === 1 ? 'copy' : 'copies'} · {STRATEGY[p.strategy]}{p.node_tags ? ` · nodes tagged ${p.node_tags}` : ''} · {p.files} files</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{p.replicas} {Number(p.replicas) === 1 ? 'copy' : 'copies'}{Number(p.min_regions ?? 1) > 1 ? ` in ${p.min_regions}+ regions` : ''} · {STRATEGY[p.strategy]}{p.node_tags ? ` · nodes tagged ${p.node_tags}` : ''} · {p.files} files</p>
             </div>
             {manage && (
               <div className="flex gap-2">
@@ -197,12 +197,13 @@ function PolicyForm({ policy, onClose, onSaved }: { policy: Policy | null; onClo
   const toast = useToast();
   const [name, setName] = useState(policy?.name ?? '');
   const [replicas, setReplicas] = useState(String(policy?.replicas ?? 2));
+  const [regions, setRegions] = useState(String(policy?.min_regions ?? 1));
   const [strategy, setStrategy] = useState(policy?.strategy ?? 'capacity');
   const [tags, setTags] = useState(policy?.node_tags ?? '');
   const [app, setApp] = useState(policy?.app ?? '');
   const [isDefault, setIsDefault] = useState(Number(policy?.is_default ?? 0) === 1);
   const save = useMutation({
-    mutationFn: () => { const body = { name, replicas: Number(replicas), strategy, node_tags: tags, app, is_default: isDefault }; return policy ? put(`/storage/policies/${policy.id}`, body) : post('/storage/policies', body); },
+    mutationFn: () => { const body = { name, replicas: Number(replicas), min_regions: Number(regions), strategy, node_tags: tags, app, is_default: isDefault }; return policy ? put(`/storage/policies/${policy.id}`, body) : post('/storage/policies', body); },
     onSuccess: () => { toast.success('Policy saved'); onSaved(); }, onError: (e) => toast.error(e),
   });
   return (
@@ -213,6 +214,9 @@ function PolicyForm({ policy, onClose, onSaved }: { policy: Policy | null; onClo
         <Select label="Choose nodes by" value={strategy} onChange={(e) => setStrategy(e.target.value)}
           options={Object.entries(STRATEGY).map(([value, label]) => ({ value, label }))} />
       </div>
+      <Select label="Off-site copies" value={regions} onChange={(e) => setRegions(e.target.value)}
+        hint="Disaster recovery: copies must sit in this many different regions (the Region / site of each node). Extra copies are added when needed."
+        options={[{ value: '1', label: 'Any region' }, { value: '2', label: 'At least 2 regions' }, { value: '3', label: 'At least 3 regions' }]} />
       <Input label="Only nodes tagged" value={tags} onChange={(e) => setTags(e.target.value)} hint="Comma-separated; a node needs every tag. Leave empty for any node." />
       <Input label="Use for app" value={app} onChange={(e) => setApp(e.target.value)} hint="e.g. datasets or recordings. Leave empty for a general policy." />
       <Segmented label="Default" value={isDefault ? 'yes' : 'no'} onChange={(v) => setIsDefault(v === 'yes')} options={[{ value: 'no', label: 'Not default' }, { value: 'yes', label: 'Default policy' }]} />
@@ -243,5 +247,72 @@ export function TasksTab({ manage }: { manage: boolean }) {
       <DataTable columns={columns} rows={q.data?.tasks ?? []} rowKey={(t) => t.id} loading={q.isLoading} error={q.error} onRetry={() => q.refetch()}
         empty={<EmptyState icon={ArrowPathIcon} title="Nothing queued" description="Every file has the copies its policy asks for." />} />
     </Card>
+  );
+}
+
+interface BackupRun { id: number; status: string; trigger: string; size: number | null; object_id: number | null; object_key: string | null; error: string | null; started_at: string; finished_at: string | null }
+interface Backup { id: number; name: string; schedule: string; at_hour: number | string; keep: number | string; exclude_tables: string | null; policy_id: number | null; enabled: number | string; last_run_at: string | null; runs: BackupRun[] }
+const RUN_TONE: Record<string, 'blue' | 'green' | 'red'> = { running: 'blue', ok: 'green', failed: 'red' };
+
+export function BackupsTab({ manage }: { manage: boolean }) {
+  const toast = useToast();
+  const q = useQuery({ queryKey: ['storage-backups'], queryFn: () => get<Backup[]>('/storage/backups'), refetchInterval: 15_000 });
+  const [editing, setEditing] = useState<Backup | null>(null);
+  const run = useMutation({ mutationFn: (b: Backup) => post(`/storage/backups/${b.id}/run`), onSuccess: () => { toast.success('Backup started', 'It runs in the background.'); q.refetch(); }, onError: (e) => toast.error(e) });
+  return (
+    <div className="space-y-6">
+      {(q.data ?? []).map((b) => (
+        <Card key={b.id}>
+          <CardHeader title={<span className="flex items-center gap-2">{b.name} <Badge tone={Number(b.enabled) === 1 ? 'green' : 'gray'}>{Number(b.enabled) === 1 ? 'on' : 'off'}</Badge></span>}
+            description={`Database dump, ${b.schedule} at ${String(b.at_hour).padStart(2, '0')}:00 server time, keeps the newest ${b.keep}. Stored as files in app "backups" — give it a policy with copies in two regions for off-site recovery.`}
+            actions={manage && (
+              <div className="flex gap-2">
+                <Button size="sm" variant="secondary" icon={PencilSquareIcon} onClick={() => setEditing(b)}>Settings</Button>
+                <Button size="sm" icon={ArrowPathIcon} disabled={run.isPending || b.runs[0]?.status === 'running'} onClick={() => run.mutate(b)}>Run now</Button>
+              </div>
+            )} />
+          <ul className="divide-y divide-slate-200 dark:divide-white/10">
+            {b.runs.map((r) => (
+              <li key={r.id} className="flex flex-col gap-1 px-4 py-2.5 text-sm sm:flex-row sm:items-center sm:gap-3 sm:px-6">
+                <Badge tone={RUN_TONE[r.status] ?? 'gray'}>{r.status}</Badge>
+                <span className="text-slate-700 dark:text-slate-300" title={dateTime(r.started_at)}>{ago(r.started_at)} · {r.trigger}</span>
+                <span className="flex-1 truncate text-xs text-slate-500 dark:text-slate-400">{r.error ?? (r.object_key ? `${r.object_key}${r.size ? ` · ${bytes(r.size)}` : ''}` : r.object_id ? 'removed by the keep limit' : '')}</span>
+                {r.status === 'ok' && r.object_key && r.object_id && <Button size="sm" variant="secondary" icon={ArrowDownTrayIcon} onClick={() => download(`/storage/files/${r.object_id}/download`, 'backup.sql.gz').catch((e) => toast.error(e))}>Download</Button>}
+              </li>
+            ))}
+            {!b.runs.length && <li className="px-4 py-3 text-sm text-slate-500 sm:px-6 dark:text-slate-400">No runs yet.</li>}
+          </ul>
+        </Card>
+      ))}
+      {editing && <BackupForm backup={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); q.refetch(); }} />}
+    </div>
+  );
+}
+
+function BackupForm({ backup, onClose, onSaved }: { backup: Backup; onClose: () => void; onSaved: () => void }) {
+  const toast = useToast();
+  const pol = useQuery({ queryKey: ['storage-policies'], queryFn: () => get<Policy[]>('/storage/policies') });
+  const [schedule, setSchedule] = useState(backup.schedule);
+  const [hour, setHour] = useState(String(backup.at_hour));
+  const [keep, setKeep] = useState(String(backup.keep));
+  const [policy, setPolicy] = useState(String(backup.policy_id ?? ''));
+  const [exclude, setExclude] = useState(backup.exclude_tables ?? '');
+  const [enabled, setEnabled] = useState(Number(backup.enabled) === 1);
+  const save = useMutation({
+    mutationFn: () => put(`/storage/backups/${backup.id}`, { schedule, at_hour: Number(hour), keep: Number(keep), policy_id: policy ? Number(policy) : null, exclude_tables: exclude, enabled }),
+    onSuccess: () => { toast.success('Backup saved'); onSaved(); }, onError: (e) => toast.error(e),
+  });
+  return (
+    <FormModal open onClose={onClose} title={`${backup.name} — settings`} onSubmit={() => save.mutate()} submitting={save.isPending}>
+      <Segmented label="Backups" value={enabled ? 'on' : 'off'} onChange={(v) => setEnabled(v === 'on')} options={[{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }]} />
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Select label="Every" value={schedule} onChange={(e) => setSchedule(e.target.value)} options={[{ value: 'daily', label: 'Day' }, { value: 'weekly', label: 'Week' }]} />
+        <Input label="At hour" type="number" min={0} max={23} value={hour} onChange={(e) => setHour(e.target.value)} hint="Server time (UTC)" />
+        <Input label="Keep" type="number" min={1} max={365} value={keep} onChange={(e) => setKeep(e.target.value)} hint="Newest runs kept" />
+      </div>
+      <Select label="Placement policy" value={policy} onChange={(e) => setPolicy(e.target.value)}
+        options={[{ value: '', label: 'The default policy' }, ...(pol.data ?? []).map((p) => ({ value: String(p.id), label: `${p.name} — ${p.replicas} copies${Number(p.min_regions ?? 1) > 1 ? `, ${p.min_regions}+ regions` : ''}` }))]} />
+      <Input label="Leave out tables" value={exclude} onChange={(e) => setExclude(e.target.value)} hint="Comma-separated table names, e.g. large logs that can be rebuilt." />
+    </FormModal>
   );
 }

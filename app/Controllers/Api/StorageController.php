@@ -38,7 +38,8 @@ class StorageController extends BaseApiController
         $alloc = $this->db()->table('storage_allocations')->select('node_id, COUNT(*) n', false)->groupBy('node_id')->get()->getResultArray();
         $counts = array_column($alloc, 'n', 'node_id');
         foreach ($nodes as &$n) $n['allocations'] = (int) ($counts[$n['id']] ?? 0);
-        return $this->ok(['summary' => $this->svc()->summary(), 'nodes' => $nodes, 'alerts' => $alerts, 'rules' => $rules, 'flow' => StorageService::FLOW]);
+        $servers = $this->db()->table('servers')->select('id, name, tunnel_port, agent_seen_at, agent_version')->where('tunnel_port IS NOT NULL')->orderBy('name')->get()->getResultArray();
+        return $this->ok(['summary' => $this->svc()->summary(), 'nodes' => $nodes, 'alerts' => $alerts, 'rules' => $rules, 'flow' => StorageService::FLOW, 'servers' => $servers]);
     }
 
     public function show($id = null)
@@ -59,19 +60,28 @@ class StorageController extends BaseApiController
     private function fields(array $in, ?array $existing): array
     {
         $kind = $existing['kind'] ?? (string) ($in['kind'] ?? '');
-        if (! in_array($kind, StorageService::KINDS, true)) throw new \InvalidArgumentException('Choose local, mounted or S3.');
+        if (! in_array($kind, StorageService::KINDS, true)) throw new \InvalidArgumentException('Choose local, mounted, S3 or a node.');
         $name = trim((string) ($in['name'] ?? $existing['name'] ?? ''));
         if ($name === '') throw new \InvalidArgumentException('Give the node a name.');
         $c = is_array($in['config'] ?? null) ? $in['config'] : (json_decode((string) ($existing['config'] ?? ''), true) ?: []);
-        $config = $kind === 's3'
-            ? ['endpoint' => trim((string) ($c['endpoint'] ?? '')), 'bucket' => trim((string) ($c['bucket'] ?? '')), 'region' => trim((string) ($c['region'] ?? '')),
-               'path_style' => ! empty($c['path_style']), 'prefix' => trim((string) ($c['prefix'] ?? 'aistudio'), '/') ?: 'aistudio']
-            : ['path' => rtrim(trim((string) ($c['path'] ?? '')), '/')];
+        $config = match ($kind) {
+            's3'    => ['endpoint' => trim((string) ($c['endpoint'] ?? '')), 'bucket' => trim((string) ($c['bucket'] ?? '')), 'region' => trim((string) ($c['region'] ?? '')),
+                        'path_style' => ! empty($c['path_style']), 'prefix' => trim((string) ($c['prefix'] ?? 'aistudio'), '/') ?: 'aistudio'],
+            // server_id first: the heartbeat finds the node by '"server_id":N,'
+            'agent' => ['server_id' => (int) ($c['server_id'] ?? 0), 'path' => rtrim(trim((string) ($c['path'] ?? '')), '/') ?: 'aistudio-storage'],
+            default => ['path' => rtrim(trim((string) ($c['path'] ?? '')), '/')],
+        };
+        if ($kind === 'agent' && (str_contains($config['path'], '..') || preg_match('/[^\w.\/-]/', $config['path']))) throw new \InvalidArgumentException('Use a plain folder path on the node, e.g. /data/aistudio or aistudio-storage.');
+        if ($kind === 'agent' && $this->db()->table('storage_nodes')->where(['kind' => 'agent', 'deleted_at' => null])->where('status !=', 'retired')
+                ->like('config', '"server_id":' . $config['server_id'] . ',', 'both')->where('id !=', (int) ($existing['id'] ?? 0))->countAllResults()) {
+            throw new \InvalidArgumentException('That server already has a storage node.');
+        }
         $secret = StorageService::open($existing['secret'] ?? null);
+        if ($kind === 'agent' && empty($secret['store_key'])) $secret['store_key'] = bin2hex(random_bytes(24));   // generated here, never shown
         foreach (['access_key', 'secret_key'] as $k) {
             if (isset($in['secret'][$k]) && trim((string) $in['secret'][$k]) !== '') $secret[$k] = trim((string) $in['secret'][$k]);
         }
-        $row = ['name' => mb_substr($name, 0, 120), 'kind' => $kind, 'config' => json_encode($config), 'secret' => $kind === 's3' ? StorageService::seal($secret) : null,
+        $row = ['name' => mb_substr($name, 0, 120), 'kind' => $kind, 'config' => json_encode($config), 'secret' => in_array($kind, ['s3', 'agent'], true) ? StorageService::seal($secret) : null,
                 'region' => mb_substr(trim((string) ($in['region'] ?? $existing['region'] ?? '')), 0, 60) ?: null,
                 'tags' => mb_substr(trim((string) ($in['tags'] ?? $existing['tags'] ?? '')), 0, 255) ?: null,
                 'priority' => (int) ($in['priority'] ?? $existing['priority'] ?? 100), 'readonly' => ! empty($in['readonly'] ?? $existing['readonly'] ?? 0) ? 1 : 0,

@@ -37,7 +37,7 @@ class ObjectStoreService
         $p = $id ? $q->where('id', $id)->get()->getRowArray() : null;
         $p ??= $this->db->table('storage_policies')->where('app', $app)->get()->getRowArray();
         $p ??= $this->db->table('storage_policies')->where('is_default', 1)->get()->getRowArray();
-        return $p ?: ['id' => null, 'replicas' => 1, 'strategy' => 'capacity', 'node_tags' => null];
+        return $p ?: ['id' => null, 'replicas' => 1, 'min_regions' => 1, 'strategy' => 'capacity', 'node_tags' => null];
     }
 
     /** Nodes that may take $size more bytes for $app under $policy, best first. */
@@ -68,6 +68,28 @@ class ObjectStoreService
             default       => fn ($a, $b) => [$a['_used_pct'], $a['priority']] <=> [$b['_used_pct'], $b['priority']],
         });
         return $out;
+    }
+
+    private static function region(array $node): string
+    {
+        return strtolower(trim((string) ($node['region'] ?? ''))) ?: 'default';
+    }
+
+    /** Regions holding a good copy of the object on a live node. */
+    private function regionsOf(int $objectId): array
+    {
+        $rows = $this->db->table('storage_placements p')->select('n.region')->join('storage_nodes n', 'n.id = p.node_id')
+            ->where(['p.object_id' => $objectId, 'p.status' => 'ok', 'n.deleted_at' => null])->where('n.health !=', 'down')->where('n.status !=', 'retired')->get()->getResultArray();
+        return array_values(array_unique(array_map(fn ($r) => self::region($r), $rows)));
+    }
+
+    /** Candidates in regions none of $haveNodeIds is in come first (keeping the strategy's order within each group). */
+    private function preferNewRegions(array $candidates, array $haveNodeIds): array
+    {
+        $have = $haveNodeIds ? array_map(fn ($r) => self::region($r), $this->db->table('storage_nodes')->select('region')->whereIn('id', $haveNodeIds)->get()->getResultArray()) : [];
+        $new = $old = [];
+        foreach ($candidates as $n) { if (in_array(self::region($n), $have, true)) $old[] = $n; else $new[] = $n; }
+        return array_merge($new, $old);
     }
 
     private function placed(int $nodeId): int
@@ -103,7 +125,12 @@ class ObjectStoreService
         $this->db->table('storage_placements')->insert(['object_id' => $id, 'node_id' => $first['id'], 'status' => 'ok', 'verified_at' => $now, 'created_at' => $now]);
         $this->bumpUsed((int) $first['id'], $size);
         $want = max(1, (int) $policy['replicas']);
-        foreach (array_slice(array_values(array_filter($nodes, fn ($n) => $n['id'] !== $first['id'])), 0, $want - 1) as $n) {
+        $want = max($want, (int) ($policy['min_regions'] ?? 1));
+        $chosen = [(int) $first['id']];
+        for ($i = 1; $i < $want; $i++) {
+            $n = $this->preferNewRegions(array_filter($nodes, fn ($n) => ! in_array((int) $n['id'], $chosen, true)), $chosen)[0] ?? null;
+            if (! $n) break;
+            $chosen[] = (int) $n['id'];
             $this->task('replicate', $id, (int) $first['id'], (int) $n['id'], 'new file');
         }
         if ($old) $this->remove((int) $old['id'], 'replaced by a new version');
@@ -194,12 +221,17 @@ class ObjectStoreService
                 FROM storage_objects o LEFT JOIN storage_placements p ON p.object_id = o.id LEFT JOIN storage_nodes n ON n.id = p.node_id
                 WHERE o.deleted_at IS NULL GROUP BY o.id, o.app, o.size, o.policy_id LIMIT 2000")->getResultArray();
         foreach ($rows as $o) {
-            $want = max(1, (int) $this->policy($o['policy_id'] ? (int) $o['policy_id'] : null, $o['app'])['replicas']);
-            if ((int) $o['good'] >= $want || (int) $o['good'] === 0) continue;
+            $pol = $this->policy($o['policy_id'] ? (int) $o['policy_id'] : null, $o['app']);
+            $want = max(1, (int) $pol['replicas'], (int) ($pol['min_regions'] ?? 1));
+            $short = (int) $o['good'] < $want;
+            if (! $short && (int) ($pol['min_regions'] ?? 1) > 1) $short = count($this->regionsOf((int) $o['id'])) < (int) $pol['min_regions'];   // DR: too few regions
+            if (! $short || (int) $o['good'] === 0) continue;
             if ($this->db->table('storage_tasks')->where('object_id', $o['id'])->whereIn('type', ['replicate', 'repair'])->whereIn('status', ['pending', 'running'])->countAllResults()) continue;
             $have = array_map('intval', array_column($this->db->table('storage_placements')->select('node_id')->where('object_id', $o['id'])->get()->getResultArray(), 'node_id'));
             $policy = $this->policy($o['policy_id'] ? (int) $o['policy_id'] : null, $o['app']);
-            if (! $this->eligible($o['app'], (int) $o['size'], $policy, $have)) continue;   // no other node can take a copy yet
+            $cands = $this->eligible($o['app'], (int) $o['size'], $policy, $have);
+            if ((int) $o['good'] >= $want) $cands = array_filter($cands, fn ($n) => ! in_array(self::region($n), $this->regionsOf((int) $o['id']), true));
+            if (! $cands) continue;   // no other node (or no node in a new region) can take a copy yet
             $src = $this->db->table('storage_placements p')->select('p.node_id')->join('storage_nodes n', 'n.id = p.node_id')
                 ->where(['p.object_id' => $o['id'], 'p.status' => 'ok'])->where('n.health !=', 'down')->get()->getRowArray();
             $this->task('replicate', (int) $o['id'], (int) $src['node_id'], null, 'below its replica count'); $queued++;
@@ -242,7 +274,7 @@ class ObjectStoreService
         if (! $to || in_array($to, $have, true)) {
             $policy = $this->policy($obj['policy_id'] ? (int) $obj['policy_id'] : null, $obj['app']);
             $exclude = array_merge($have, $t['type'] === 'migrate' ? [(int) $t['from_node']] : []);
-            $to = (int) (($this->eligible($obj['app'], (int) $obj['size'], $policy, $exclude)[0]['id']) ?? 0);
+            $to = (int) (($this->preferNewRegions($this->eligible($obj['app'], (int) $obj['size'], $policy, $exclude), $have)[0]['id']) ?? 0);
             if (! $to) throw new \RuntimeException('no other eligible node has room');
         }
         $tmp = $this->fetch($obj);                                          // verified copy from the healthiest node

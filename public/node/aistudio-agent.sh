@@ -9,7 +9,7 @@
 # it is alive, stops the run if the job is cancelled, and reports how the process ended. Get the token on the Servers
 # page: ⋯ → Install training agent. Run as your normal user (not root); it asks for sudo once to keep running after logout.
 set -euo pipefail
-VERSION="1.3.2"
+VERSION="1.4.0"
 DIR="${HOME}/.aistudio-agent"
 SERVER="" TOKEN="" UNINSTALL=0 FORCE_VENV=0
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -60,14 +60,15 @@ printf 'SERVER=%s\nTOKEN=%s\nAISTUDIO_PYENV=%s\nAISTUDIO_CONDA=%s\n' "$SERVER" "
 cat > "$DIR/agent-loop.sh" <<'LOOP'
 #!/usr/bin/env bash
 # AI Studio training agent loop (installed by aistudio-agent.sh).
-VERSION="1.3.2"
+VERSION="1.4.0"
 DIR="${HOME}/.aistudio-agent"
 . "$DIR/agent.env"
-JOB="" PID="" EXITED="" CODE="" TAIL="" ASR_STATE="" ASR_DEVICE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"; ASR_DEVICE="${ASR_DEVICE:-$(nproc) CPU cores}"
+JOB="" PID="" EXITED="" CODE="" TAIL="" ASR_STATE="" STORE_STATE="" ASR_DEVICE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"; ASR_DEVICE="${ASR_DEVICE:-$(nproc) CPU cores}"
 log() { echo "$(date '+%F %T') $*" >> "$DIR/agent.log"; }
 log "agent ${VERSION} started"
 # Keep the speech helper current: fetched from the Studio each time the agent starts.
 curl -fsS -m 60 -o "$DIR/aistudio-asr-node.sh.new" "${SERVER}/node/aistudio-asr-node.sh" && mv "$DIR/aistudio-asr-node.sh.new" "$DIR/aistudio-asr-node.sh" && chmod 700 "$DIR/aistudio-asr-node.sh"
+curl -fsS -m 60 -o "$DIR/aistudio-store-node.sh.new" "${SERVER}/node/aistudio-store-node.sh" && mv "$DIR/aistudio-store-node.sh.new" "$DIR/aistudio-store-node.sh" && chmod 700 "$DIR/aistudio-store-node.sh"
 trap '[ -n "$PID" ] && kill -TERM -- "-$PID" 2>/dev/null; exit 0' TERM INT
 while true; do
   # Did the current run end?
@@ -80,7 +81,7 @@ while true; do
   R="$(curl -s -m 30 -X POST -H "Authorization: Bearer ${TOKEN}" \
         --data-urlencode "version=${VERSION}" --data-urlencode "job_id=${JOB}" --data-urlencode "gpus=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU')" \
         --data-urlencode "exited_job_id=${EXITED}" --data-urlencode "exit_code=${CODE}" --data-urlencode "tail=${TAIL}" \
-        --data-urlencode "asr_state=${ASR_STATE}" --data-urlencode "asr_device=${ASR_DEVICE}" \
+        --data-urlencode "asr_state=${ASR_STATE}" --data-urlencode "asr_device=${ASR_DEVICE}" --data-urlencode "store_state=${STORE_STATE}" \
         "${SERVER}/api/agent/heartbeat?format=env" 2>>"$DIR/agent.log")" || { sleep 30; continue; }
   EXITED="" CODE="" TAIL=""
   get() { printf '%s\n' "$R" | sed -n "s/^$1=//p" | head -1; }
@@ -88,6 +89,11 @@ while true; do
   if [ -x "$DIR/aistudio-asr-node.sh" ]; then
     if [ "$(get ASR_WANTED)" = 1 ]; then ASR_STATE="$(timeout 60 bash "$DIR/aistudio-asr-node.sh" ensure "$(get ASR_PORT)" 2>>"$DIR/agent.log")"
     elif [ -n "$ASR_STATE" ] && [ "$ASR_STATE" != off ]; then ASR_STATE="$(bash "$DIR/aistudio-asr-node.sh" stop 2>>"$DIR/agent.log")"; fi
+  fi
+  # Storage helper (when a storage node on the Studio points at this machine) — kept running with its tunnel.
+  if [ -x "$DIR/aistudio-store-node.sh" ]; then
+    if [ "$(get STORE_WANTED)" = 1 ]; then STORE_STATE="$(STORE_KEY="$(get STORE_KEY)" timeout 30 bash "$DIR/aistudio-store-node.sh" ensure "$(get STORE_PORT)" "$(get STORE_DIR)" 2>>"$DIR/agent.log")"
+    elif [ -n "$STORE_STATE" ] && [ "$STORE_STATE" != off ]; then STORE_STATE="$(bash "$DIR/aistudio-store-node.sh" stop 2>>"$DIR/agent.log")"; fi
   fi
   case "$(get ACTION)" in
     run)
@@ -109,6 +115,7 @@ while true; do
 done
 LOOP
 chmod 700 "$DIR/agent-loop.sh"
+curl -fsS -m 60 -o "$DIR/aistudio-store-node.sh" "${SERVER}/node/aistudio-store-node.sh" && chmod 700 "$DIR/aistudio-store-node.sh"
 curl -fsS -m 60 -o "$DIR/aistudio-asr-node.sh" "${SERVER}/node/aistudio-asr-node.sh" && chmod 700 "$DIR/aistudio-asr-node.sh" \
   || say "Could not fetch the GPU speech helper; training still works."
 

@@ -21,6 +21,7 @@ class SchedulerService
         'backup'         => ['Backup', 'Snapshot the database', 'backup', 'daily'],
         'training_pipelines' => ['Training pipelines', 'Start runs when data changes; retry or fail stalled jobs', 'training_pipelines', 'every_minute'],
         'storage_health' => ['Storage health', 'Check every storage node and evaluate alert rules', 'storage_health', 'every_5m'],
+        'storage_backups' => ['Storage backups', 'Start due database backups and mark dead runs as failed', 'storage_backups', 'every_5m'],
         'storage_sync'   => ['Storage sync', 'Replicate, move and delete file copies across storage nodes', 'storage_sync', 'every_minute'],
     ];
 
@@ -96,6 +97,7 @@ class SchedulerService
             'training_pipelines' => (new TrainingPipelineService())->tick(),
             'storage_health' => (new StorageService())->checkAll(),
             'storage_sync'   => (new ObjectStoreService())->sync(),
+            'storage_backups' => (new StorageBackupService())->tick(),
             default           => throw new \RuntimeException("Unknown handler: {$handler}"),
         };
     }

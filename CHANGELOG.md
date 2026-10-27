@@ -2,6 +2,12 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.25.0] — 2026-10-27 — Storage (part 3): VPS nodes, database backups, off-site copies
+- **VPS / node storage**: a new node type that stores files in a folder on any enrolled server (a VPS, an office machine) running the training agent. The agent (now **1.4.0**) runs a small storage helper on the node (Python standard library, nothing to install) and forwards it through the node's existing tunnel to tunnel port + 2000 on the Studio, so nothing is opened on the node's firewall. Each node has its own storage key, generated on the Studio, sealed with its credentials and only sent in the agent's heartbeat; every upload is checked against its SHA-256 before the node keeps it. One storage node per server; a relative folder is under the agent user's home.
+- Tunnel keys now also allow the storage port (tunnel port + 2000). Existing nodes need the agent reinstalled (1.4.0) to serve storage.
+- **Off-site copies (disaster recovery)**: a policy can require its copies in at least 2 or 3 regions (each node's Region / site). New copies prefer regions that do not hold one yet, and files short of regions are topped up as soon as a node in a new region is available.
+- **Database backups** (Storage → Backups): a scheduled gzipped `mysqldump --single-transaction` of the Studio database, daily or weekly at a chosen hour, kept as files in app "backups" under any placement policy, newest N kept; tables can be left out. Runs as a detached `spark storage:backup` process started by the new `storage_backups` scheduler task (every 5 minutes), with Run now, run history, download, and a notification (plus Slack / email / webhook) when a run fails. The "Studio database" backup is created **off**: the database is about 15.6 GB and the server disk is 90% full, so point it at a node with room before turning it on.
+
 ## [1.24.1] — 2026-10-27 — Storage sync fix
 - A file below its copy count is topped up only once another eligible node exists, instead of queueing a copy that fails five times and raises a notice (seen with a single active node).
 

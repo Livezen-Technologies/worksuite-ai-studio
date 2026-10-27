@@ -262,7 +262,7 @@ class TrainingPipelineService
             'agent_seen_at' => $now, 'agent_version' => mb_substr((string) ($in['version'] ?? ''), 0, 20) ?: null, 'agent_job_id' => $busy,
         ]);
         if (! empty($in['probe'])) return ['action' => 'idle', 'why' => 'probe'];   // the installer's token check never takes work
-        $speech = $this->speech($server, $in);                              // GPU speech service on the node (NodeSpeech)
+        $speech = $this->speech($server, $in) + $this->storage($server, $in);   // GPU speech service + storage helper on the node
         if ($busy) {
             $job = $this->db->table('training_jobs')->where('id', $busy)->get()->getRowArray();
             if (! $job || (int) $job['cancel_requested'] === 1 || in_array($job['status'], ['cancelled', 'failed'], true)) return ['action' => 'stop', 'job_id' => $busy] + $speech;
@@ -291,6 +291,26 @@ class TrainingPipelineService
         }
         $this->db->table('servers')->where('id', $server['id'])->update($upd);
         return ['asr_wanted' => $want ? 1 : 0, 'asr_port' => $port ?? ''];
+    }
+
+    /**
+     * The node's storage helper (storage part 3): wanted while a storage node of kind "agent" that is not retired points
+     * at this server. Port = tunnel port + 2000. The key travels only in this heartbeat answer (HTTPS, agent token).
+     */
+    private function storage(array $server, array $in): array
+    {
+        $node = $this->db->table('storage_nodes')->where(['kind' => 'agent', 'deleted_at' => null])->where('status !=', 'retired')
+            ->like('config', '"server_id":' . (int) $server['id'] . ',', 'both')->orderBy('id')->get(1)->getRowArray();
+        if (! $node || empty($server['tunnel_port']) || ! (int) ($server['is_enabled'] ?? 1)) return ['store_wanted' => 0];
+        $cfg = json_decode((string) $node['config'], true) ?: [];
+        $key = (string) (StorageService::open($node['secret'])['store_key'] ?? '');
+        if ($key === '') return ['store_wanted' => 0];
+        $state = mb_substr((string) ($in['store_state'] ?? ''), 0, 250);
+        if ($state !== '' && $state !== 'ok' && $state !== 'off') {
+            $this->db->table('storage_nodes')->where('id', $node['id'])->update(['last_error' => 'Node helper: ' . preg_replace('/^error:/', '', $state)]);
+        }
+        return ['store_wanted' => 1, 'store_port' => (int) $server['tunnel_port'] + \App\Libraries\Storage\AgentDriver::PORT_OFFSET,
+                'store_dir' => (string) ($cfg['path'] ?? 'aistudio-storage'), 'store_key' => $key];
     }
 
     private function claim(array $server): ?array

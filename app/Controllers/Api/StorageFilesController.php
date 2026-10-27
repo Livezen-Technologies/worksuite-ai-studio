@@ -138,7 +138,7 @@ class StorageFilesController extends BaseApiController
         if ($name === '') return $this->failure('Give the policy a name.', 422);
         $strategy = (string) ($in['strategy'] ?? 'capacity');
         if (! in_array($strategy, ['capacity', 'priority', 'round_robin'], true)) return $this->failure('Unknown strategy.', 422);
-        $row = ['name' => mb_substr($name, 0, 100), 'replicas' => max(1, min(5, (int) ($in['replicas'] ?? 2))), 'strategy' => $strategy,
+        $row = ['name' => mb_substr($name, 0, 100), 'replicas' => max(1, min(5, (int) ($in['replicas'] ?? 2))), 'min_regions' => max(1, min(3, (int) ($in['min_regions'] ?? 1))), 'strategy' => $strategy,
                 'node_tags' => mb_substr(trim((string) ($in['node_tags'] ?? '')), 0, 255) ?: null,
                 'app' => strtolower(trim((string) ($in['app'] ?? ''))) ?: null, 'is_default' => ! empty($in['is_default']) ? 1 : 0, 'updated_at' => date('Y-m-d H:i:s')];
         $db = $this->db();
@@ -175,5 +175,39 @@ class StorageFilesController extends BaseApiController
         if ($r = $this->requirePermission('storage.manage')) return $r;
         $this->db()->table('storage_tasks')->where('id', (int) $id)->where('status', 'failed')->update(['status' => 'pending', 'attempts' => 0, 'error' => null, 'updated_at' => date('Y-m-d H:i:s')]);
         return $this->ok(null, 'Queued again.');
+    }
+
+    public function backups()
+    {
+        if ($r = $this->requirePermission('storage.view')) return $r;
+        $db = $this->db();
+        $rows = $db->table('storage_backups')->orderBy('id')->get()->getResultArray();
+        foreach ($rows as &$b) {
+            $b['runs'] = $db->table('storage_backup_runs r')->select('r.*, o.object_key')->join('storage_objects o', 'o.id = r.object_id AND o.deleted_at IS NULL', 'left')
+                ->where('r.backup_id', $b['id'])->orderBy('r.id', 'DESC')->limit(20)->get()->getResultArray();
+        }
+        return $this->ok($rows);
+    }
+
+    public function backupSave($id = null)
+    {
+        if ($r = $this->requirePermission('storage.manage')) return $r;
+        $in = $this->input();
+        $row = ['schedule' => ($in['schedule'] ?? 'daily') === 'weekly' ? 'weekly' : 'daily', 'at_hour' => max(0, min(23, (int) ($in['at_hour'] ?? 2))),
+                'keep' => max(1, min(365, (int) ($in['keep'] ?? 14))), 'policy_id' => (int) ($in['policy_id'] ?? 0) ?: null,
+                'exclude_tables' => mb_substr(preg_replace('/[^\w,]/', '', (string) ($in['exclude_tables'] ?? '')), 0, 2000) ?: null,
+                'enabled' => ! empty($in['enabled']) ? 1 : 0, 'updated_at' => date('Y-m-d H:i:s')];
+        $this->db()->table('storage_backups')->where('id', (int) $id)->update($row);
+        return $this->ok(null, 'Backup saved.');
+    }
+
+    public function backupRun($id = null)
+    {
+        if ($r = $this->requirePermission('storage.manage')) return $r;
+        $b = $this->db()->table('storage_backups')->where('id', (int) $id)->get()->getRowArray();
+        if (! $b) return $this->failure('Backup not found.', 404);
+        try { $run = (new \App\Services\StorageBackupService())->start($b, 'manual'); }
+        catch (\RuntimeException $e) { return $this->failure($e->getMessage(), 409); }
+        return $this->ok(['run_id' => $run], 'Backup started. It runs in the background.');
     }
 }

@@ -25,6 +25,7 @@ abstract class StorageDriver
         return match ($node['kind']) {
             'local', 'mounted' => new LocalDriver($config, $node['kind'] === 'mounted'),
             's3'               => new S3Driver($config, $secret),
+            'agent'            => new AgentDriver($config, $secret),
             default            => throw new \InvalidArgumentException("No driver for {$node['kind']} nodes yet."),
         };
     }
@@ -236,5 +237,78 @@ class S3Driver extends StorageDriver
     public function delete(string $key): void
     {
         $this->request('DELETE', $this->prefix . '/' . self::key($key));
+    }
+}
+
+/**
+ * A folder on an enrolled node (a VPS or any machine running the AI Studio agent). The agent runs a small storage
+ * helper on the node (127.0.0.1:18098, public/node/aistudio-store-node.sh) and forwards it over the node's tunnel to
+ * 127.0.0.1:<tunnel port + 2000> here; every request carries the node's storage key (sealed in the node's secret).
+ */
+class AgentDriver extends StorageDriver
+{
+    public const PORT_OFFSET = 2000;
+    private string $base;
+    private string $key;
+
+    public function __construct(array $config, array $secret)
+    {
+        $sid = (int) ($config['server_id'] ?? 0);
+        if (! $sid) throw new \InvalidArgumentException('Choose the node (server) that holds this storage.');
+        $srv = \Config\Database::connect()->table('servers')->select('tunnel_port')->where('id', $sid)->get()->getRowArray();
+        if (! $srv) throw new \InvalidArgumentException('That server no longer exists.');
+        if (! $srv['tunnel_port']) throw new \InvalidArgumentException('That server is not enrolled with a tunnel; enrol it with the node installer first.');
+        $this->base = 'http://127.0.0.1:' . ((int) $srv['tunnel_port'] + self::PORT_OFFSET);
+        $this->key = (string) ($secret['store_key'] ?? '');
+    }
+
+    private function call(string $method, string $path, ?string $upload = null, ?string $download = null, int $timeout = 3600): array
+    {
+        if ($this->key === '') throw new \RuntimeException('The node has no storage key yet; save the node again.');
+        $ch = curl_init($this->base . $path);
+        $opts = [CURLOPT_CUSTOMREQUEST => $method, CURLOPT_HTTPHEADER => ['X-Store-Key: ' . $this->key, 'Expect:'], CURLOPT_CONNECTTIMEOUT => 5, CURLOPT_TIMEOUT => $timeout];
+        $in = $out = null;
+        if ($upload !== null) { $in = fopen($upload, 'rb'); $opts += [CURLOPT_UPLOAD => true, CURLOPT_INFILE => $in, CURLOPT_INFILESIZE => filesize($upload)]; }
+        if ($download !== null) { $out = fopen($download, 'wb'); $opts[CURLOPT_FILE] = $out; } else $opts[CURLOPT_RETURNTRANSFER] = true;
+        curl_setopt_array($ch, $opts);
+        $body = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_RESPONSE_CODE); $err = curl_error($ch);
+        curl_close($ch); if ($in) fclose($in); if ($out) fclose($out);
+        if ($body === false || $code === 0) throw new \RuntimeException('The node\'s storage helper is not reachable through its tunnel' . ($err ? " ({$err})" : '') . '. Is the agent running on the node?');
+        if ($code >= 300) throw new \RuntimeException("The node answered {$code}: " . mb_substr(is_string($body) ? $body : '', 0, 200));
+        return ['code' => $code, 'body' => is_string($body) ? $body : ''];
+    }
+
+    public function probe(): array
+    {
+        $t0 = microtime(true);
+        $st = json_decode($this->call('GET', '/stat', null, null, 15)['body'], true) ?: [];
+        $latency = (microtime(true) - $t0) * 1000;
+        $src = tempnam(sys_get_temp_dir(), 'pr'); $back = tempnam(sys_get_temp_dir(), 'pb');
+        file_put_contents($src, random_bytes(self::PROBE_BYTES));
+        try {
+            $key = '.aistudio-probe-' . bin2hex(random_bytes(4));
+            $t = microtime(true); $this->put($key, $src); $w = microtime(true) - $t;
+            $t = microtime(true); $this->get($key, $back); $r = microtime(true) - $t;
+            $this->delete($key);
+            if (hash_file('sha256', $src) !== hash_file('sha256', $back)) throw new \RuntimeException('The test file read back differently from what was written.');
+        } finally { @unlink($src); @unlink($back); }
+        return ['total' => isset($st['total']) ? (int) $st['total'] : null, 'used' => isset($st['used']) ? (int) $st['used'] : null, 'free' => isset($st['free']) ? (int) $st['free'] : null,
+                'write_mbps' => self::mbps(self::PROBE_BYTES, $w), 'read_mbps' => self::mbps(self::PROBE_BYTES, $r), 'latency_ms' => round($latency, 1)];
+    }
+
+    public function put(string $key, string $localFile): void
+    {
+        $this->call('PUT', '/o/' . self::key($key) . '?sha256=' . hash_file('sha256', $localFile), $localFile);
+    }
+
+    public function get(string $key, string $localFile): void
+    {
+        $this->call('GET', '/o/' . self::key($key), null, $localFile);
+    }
+
+    public function delete(string $key): void
+    {
+        $this->call('DELETE', '/o/' . self::key($key), null, null, 60);
     }
 }

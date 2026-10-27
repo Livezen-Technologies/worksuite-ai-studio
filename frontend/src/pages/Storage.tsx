@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArchiveBoxIcon, BellAlertIcon, CircleStackIcon, CloudIcon, PencilSquareIcon, PlusIcon, ServerIcon, ShareIcon, TrashIcon, WrenchScrewdriverIcon,
+  ArchiveBoxIcon, BellAlertIcon, GlobeAltIcon, CircleStackIcon, CloudIcon, PencilSquareIcon, PlusIcon, ServerIcon, ShareIcon, TrashIcon, WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Alert, Badge, Button, Card, CardHeader, ConfirmDialog, DataTable, EmptyState, FormModal, Input, Meter, Modal, PageHeader, Segmented,
@@ -10,12 +10,13 @@ import {
 import { del, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ago, bytes, dateTime } from '../lib/format';
-import { FilesTab, PoliciesTab, TasksTab } from './StorageFiles';
+import { BackupsTab, FilesTab, PoliciesTab, TasksTab } from './StorageFiles';
 
-type Kind = 'local' | 'mounted' | 's3';
+type Kind = 'local' | 'mounted' | 's3' | 'agent';
+interface Srv { id: number; name: string; tunnel_port: number; agent_seen_at: string | null; agent_version: string | null }
 interface Node {
   id: number; name: string; kind: Kind; status: 'testing' | 'active' | 'draining' | 'retired'; health: 'ok' | 'degraded' | 'down' | 'unknown';
-  config: { path?: string; endpoint?: string; bucket?: string; region?: string; path_style?: boolean; prefix?: string };
+  config: { path?: string; server_id?: number; endpoint?: string; bucket?: string; region?: string; path_style?: boolean; prefix?: string };
   has_secret: boolean; region: string | null; tags: string | null; priority: number; readonly: number | string;
   quota_bytes: number | null; total_bytes: number | null; used_bytes: number | null; free_bytes: number | null; capacity_bytes: number | null; used_pct: number | null;
   write_mbps: number | null; read_mbps: number | null; latency_ms: number | null; last_check_at: string | null; last_error: string | null;
@@ -25,7 +26,7 @@ interface Rule { id: number; name: string; metric: string; op: 'gt' | 'lt'; thre
 interface AlertRow { id: number; node_id: number; node_name: string | null; level: string; message: string; opened_at: string; acknowledged_by: number | null }
 interface Overview {
   summary: { nodes: number; active: number; healthy: number; down: number; capacity_bytes: number; used_bytes: number; free_bytes: number; open_alerts: number };
-  nodes: Node[]; alerts: AlertRow[]; rules: Rule[]; flow: Record<string, string[]>;
+  nodes: Node[]; alerts: AlertRow[]; rules: Rule[]; flow: Record<string, string[]>; servers: Srv[];
 }
 interface Check { at: string; health: string; used_bytes: number | null; total_bytes: number | null; write_mbps: number | null; read_mbps: number | null; latency_ms: number | null; error: string | null }
 interface Allocation { id: number; scope_type: string; scope_id: string; quota_bytes: number | null; note: string | null; created_at: string }
@@ -34,6 +35,7 @@ const KIND: Record<Kind, { label: string; icon: typeof ServerIcon; tone: 'blue' 
   local: { label: 'Local disk', icon: ServerIcon, tone: 'blue' },
   mounted: { label: 'Network mount', icon: ShareIcon, tone: 'purple' },
   s3: { label: 'S3-compatible', icon: CloudIcon, tone: 'amber' },
+  agent: { label: 'VPS / node', icon: GlobeAltIcon, tone: 'purple' },
 };
 const STATUS_TONE: Record<string, 'gray' | 'green' | 'amber' | 'blue'> = { testing: 'blue', active: 'green', draining: 'amber', retired: 'gray' };
 const ACTION: Record<string, string> = { active: 'Activate', draining: 'Drain', retired: 'Retire', testing: 'Return to testing' };
@@ -48,7 +50,7 @@ export default function Storage() {
   const [detail, setDetail] = useState<number | null>(null);
   const [removing, setRemoving] = useState<Node | null>(null);
   const [lifecycle, setLifecycle] = useState<{ node: Node; to: string } | null>(null);
-  const [tab, setTab] = useState<'nodes' | 'files' | 'policies' | 'tasks'>('nodes');
+  const [tab, setTab] = useState<'nodes' | 'files' | 'policies' | 'backups' | 'tasks'>('nodes');
   const qc = useQueryClient();
   const toast = useToast();
   const refresh = () => { qc.invalidateQueries({ queryKey: ['storage'] }); qc.invalidateQueries({ queryKey: ['storage-node'] }); };
@@ -75,7 +77,7 @@ export default function Storage() {
             <div className="min-w-0">
               <p className="truncate font-medium text-slate-900 dark:text-white">{n.name}</p>
               <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                {n.kind === 's3' ? `${n.config.bucket} · ${n.config.endpoint?.replace(/^https?:\/\//, '')}` : n.config.path}{n.tags ? ` · ${n.tags}` : ''}
+                {n.kind === 's3' ? `${n.config.bucket} · ${n.config.endpoint?.replace(/^https?:\/\//, '')}` : n.kind === 'agent' ? `${d?.servers.find((v) => v.id === n.config.server_id)?.name ?? `server #${n.config.server_id}`}: ${n.config.path}` : n.config.path}{n.tags ? ` · ${n.tags}` : ''}
               </p>
             </div>
           </div>
@@ -147,10 +149,11 @@ export default function Storage() {
       )}
 
       <div className="mb-4">
-        <Segmented label="Section" value={tab} onChange={setTab} options={[{ value: 'nodes', label: 'Nodes' }, { value: 'files', label: 'Files' }, { value: 'policies', label: 'Policies' }, { value: 'tasks', label: 'Background work' }]} />
+        <Segmented label="Section" value={tab} onChange={setTab} options={[{ value: 'nodes', label: 'Nodes' }, { value: 'files', label: 'Files' }, { value: 'policies', label: 'Policies' }, { value: 'backups', label: 'Backups' }, { value: 'tasks', label: 'Background work' }]} />
       </div>
       {tab === 'files' && <FilesTab manage={manage} />}
       {tab === 'policies' && <PoliciesTab manage={manage} />}
+      {tab === 'backups' && <BackupsTab manage={manage} />}
       {tab === 'tasks' && <TasksTab manage={manage} />}
       {tab === 'nodes' && <>
       <Card className="mb-6">
@@ -162,7 +165,7 @@ export default function Storage() {
       <Rules rules={d?.rules ?? []} nodes={d?.nodes ?? []} manage={manage} onChange={refresh} />
       </>}
 
-      {editing && <NodeForm node={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refresh(); }} />}
+      {editing && <NodeForm servers={d?.servers ?? []} node={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refresh(); }} />}
       {detail !== null && <NodeDetail id={detail} manage={manage} onClose={() => setDetail(null)} />}
       {lifecycle && <LifecycleDialog {...lifecycle} onClose={() => setLifecycle(null)} onDone={() => { setLifecycle(null); refresh(); }} />}
       <ConfirmDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={() => { if (removing) remove.mutate(removing); }}
@@ -188,11 +191,12 @@ function LifecycleDialog({ node, to, onClose, onDone }: { node: Node; to: string
   );
 }
 
-function NodeForm({ node, onClose, onSaved }: { node: Node | null; onClose: () => void; onSaved: () => void }) {
+function NodeForm({ node, servers, onClose, onSaved }: { node: Node | null; servers: Srv[]; onClose: () => void; onSaved: () => void }) {
   const toast = useToast();
   const [kind, setKind] = useState<Kind>(node?.kind ?? 'local');
   const [name, setName] = useState(node?.name ?? '');
   const [path, setPath] = useState(node?.config.path ?? '');
+  const [serverId, setServerId] = useState(String(node?.config.server_id ?? servers[0]?.id ?? ''));
   const [endpoint, setEndpoint] = useState(node?.config.endpoint ?? '');
   const [bucket, setBucket] = useState(node?.config.bucket ?? '');
   const [s3region, setS3region] = useState(node?.config.region ?? '');
@@ -209,7 +213,7 @@ function NodeForm({ node, onClose, onSaved }: { node: Node | null; onClose: () =
     mutationFn: () => {
       const body = {
         name, kind, quota_gb: quota, region, tags, priority: Number(priority) || 100, readonly,
-        config: kind === 's3' ? { endpoint, bucket, region: s3region, path_style: pathStyle, prefix } : { path },
+        config: kind === 's3' ? { endpoint, bucket, region: s3region, path_style: pathStyle, prefix } : kind === 'agent' ? { server_id: Number(serverId), path } : { path },
         secret: kind === 's3' ? { access_key: accessKey, secret_key: secretKey } : undefined,
       };
       return node ? put<Node>(`/storage/nodes/${node.id}`, body) : post<Node>('/storage/nodes', body);
@@ -229,11 +233,17 @@ function NodeForm({ node, onClose, onSaved }: { node: Node | null; onClose: () =
         {!node && (
           <div className="sm:col-span-2">
             <Segmented label="Type" value={kind} onChange={setKind}
-              options={[{ value: 'local', label: 'Local disk' }, { value: 'mounted', label: 'Network mount' }, { value: 's3', label: 'S3-compatible' }]} />
+              options={[{ value: 'local', label: 'Local disk' }, { value: 'mounted', label: 'Network mount' }, { value: 's3', label: 'S3-compatible' }, { value: 'agent', label: 'VPS / node' }]} />
           </div>
         )}
         <Input label="Name" required value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === 's3' ? 'Garage — primary' : 'Data disk 2'} wrapperClassName="sm:col-span-2" />
-        {kind !== 's3' ? (
+        {kind === 'agent' ? <>
+          <Select label="Node" value={serverId} onChange={(e) => setServerId(e.target.value)} wrapperClassName="sm:col-span-2"
+            options={servers.length ? servers.map((v) => ({ value: String(v.id), label: `${v.name}${v.agent_seen_at ? ` — agent ${v.agent_version ?? ''}, seen ${ago(v.agent_seen_at)}` : ' — no agent yet'}` })) : [{ value: '', label: 'No enrolled nodes — enrol one on the Servers page' }]}
+            hint="A server enrolled with the node installer and running the training agent 1.4.0 or newer. Files travel through its tunnel; nothing is opened on its firewall." />
+          <Input label="Folder on the node" required value={path} onChange={(e) => setPath(e.target.value)} placeholder="aistudio-storage or /data/aistudio" wrapperClassName="sm:col-span-2"
+            hint="A relative folder is under the agent user's home. The agent starts the storage helper within a minute; then run Test." />
+        </> : kind !== 's3' ? (
           <Input label="Folder on this server" required value={path} onChange={(e) => setPath(e.target.value)} placeholder={kind === 'mounted' ? '/mnt/nas-storage' : '/srv/storage'} wrapperClassName="sm:col-span-2"
             hint={kind === 'mounted'
               ? 'The mount point of an NFS or SMB share (mount it on the server first, e.g. in /etc/fstab). The check refuses it while the share is not mounted.'
