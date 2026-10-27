@@ -153,6 +153,10 @@ class TrainingPipelineService
         $n  = ['train' => 0, 'dev' => 0]; $bad = 0; $seen = []; $labels = [];
         $q  = $this->db->table('dataset_items')->select('id, instruction, input, output, hash, split')->where('dataset_id', $datasetId);
         if ($frozen) $q->whereIn('split', ['train', 'dev']);                    // the locked test split stays here
+        // With a row cap, keep an even, stable sample of the whole dataset (by row hash) — not its first rows, which
+        // are often grouped by source or label.
+        $total = (int) (clone $q)->countAllResults();
+        $ratio = $maxRows > 0 && $total > 0 ? min(1.0, $maxRows / ($total * 0.95)) : 1.0;
         $last = 0;
         while (true) {
             $rows = (clone $q)->where('id >', $last)->orderBy('id')->limit(2000)->get()->getResultArray();
@@ -161,6 +165,7 @@ class TrainingPipelineService
                 $last = (int) $r['id'];
                 $ins = trim((string) $r['instruction']); $out = trim((string) $r['output']);
                 if ($ins === '' || $out === '' || mb_strlen($out) > 8000 || isset($seen[$r['hash']])) { $bad++; continue; }
+                if ($ratio < 1.0 && hexdec(substr($r['hash'], 4, 6)) / 0x1000000 >= $ratio) continue;
                 $seen[$r['hash']] = true;
                 $split = $frozen ? $r['split'] : (hexdec(substr($r['hash'], 0, 4)) % 20 === 0 ? 'dev' : 'train');
                 if ($split === 'train' && $maxRows > 0 && $n['train'] >= $maxRows) continue;

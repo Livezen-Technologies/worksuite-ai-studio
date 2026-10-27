@@ -6,17 +6,12 @@ import { useEffect, type ReactNode } from 'react';
 import { useAuth } from '../lib/auth';
 import { Button, Container, Gradient, Link, PlusGrid, PlusGridItem, PlusGridRow, Subheading } from './ui';
 
-/** The AI Studio mark (same spark as the app) with the wordmark, sized for the site. */
+/** The original WorkSuite logo with the product name, sized for the site. */
 export function SiteLogo({ className = '' }: { className?: string }) {
   return (
-    <span className={`flex items-center gap-2.5 ${className}`}>
-      <span className="flex size-9 items-center justify-center rounded-xl bg-gray-950 text-white shadow-md">
-        <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2" />
-          <circle cx="12" cy="12" r="3" />
-        </svg>
-      </span>
-      <span className="text-lg font-semibold tracking-tight text-gray-950">AI Studio</span>
+    <span className={`flex items-center gap-3 ${className}`}>
+      <img src="/brand/worksuite-wordmark.png" alt="WorkSuite" className="h-8 w-auto" />
+      <span className="border-l border-gray-950/15 pl-3 text-lg font-medium tracking-tight whitespace-nowrap text-gray-950">AI Studio</span>
     </span>
   );
 }

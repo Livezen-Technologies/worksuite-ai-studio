@@ -2,6 +2,11 @@
 
 All notable changes to the OllamaHub control plane are documented here.
 
+## [1.21.1] — 2026-10-27 — The original WorkSuite logo and icons
+- The app, the sign-in page and the public site use the original WorkSuite logo with "AI Studio" beside it; the wordmark swaps to its light-text version in dark mode, and a collapsed sidebar shows the four-square mark. The supplied PNGs had solid backgrounds, so transparent versions were cut from them (`public/brand/worksuite-wordmark*.png`).
+- Favicon and app icons drawn from the mark's exact geometry and colours (from the brand motion source): `worksuite-mark.svg` for browsers, pixel-exact 16/32 px PNGs and a multi-size `favicon.ico`, the Apple touch icon (180 px) and 192/512 px icons; theme colour #0A6CFF.
+- Training pipelines with a row cap now take an even, stable sample of the whole dataset (by row hash) instead of its first rows, which are often grouped by source or label — a capped news-category run had taken 644 rows of one label and 21 of another.
+
 ## [1.21.0] — 2026-10-27 — Text classifiers
 - Training page → **Create text classifier**: pick a labelled dataset (text in input — or instruction — and the label in output, 2 to 200 labels), a base model (XLM-RoBERTa base for Sinhala + English, DistilBERT multilingual, or XLM-RoBERTa large), a node and a name. Recipe `text_classifier` fine-tunes it on any node (GPU in fp16, or CPU), reports accuracy and macro-F1 on the dev rows each epoch, keeps the best epoch and uploads it.
 - The server checks the data before anything leaves: at least two labels, short labels rather than free text, and which labels have few examples.

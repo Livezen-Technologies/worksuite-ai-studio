@@ -1,21 +1,18 @@
 import { cx } from '../components/ui';
 
-/** WorkSuite AI Studio mark: the WorkSuite blue tile with a spark. */
+/**
+ * WorkSuite AI Studio: the original WorkSuite logo (public/brand) with the product name. The wordmark swaps to its
+ * light-text version in dark mode; `compact` (a collapsed sidebar) shows the four-square mark alone.
+ */
 export function Logo({ className, compact }: { className?: string; compact?: boolean }) {
+  if (compact) {
+    return <img src="/brand/worksuite-mark.svg" alt="WorkSuite AI Studio" className={cx('size-8', className)} />;
+  }
   return (
     <div className={cx('flex items-center gap-2.5', className)}>
-      <span className="flex size-8 items-center justify-center rounded-lg bg-brand-600 text-white shadow-sm">
-        <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2" />
-          <circle cx="12" cy="12" r="3" />
-        </svg>
-      </span>
-      {!compact && (
-        <span className="leading-tight">
-          <span className="block text-sm font-semibold text-slate-900 dark:text-white">WorkSuite</span>
-          <span className="block text-xs text-slate-500 dark:text-slate-400">AI Studio</span>
-        </span>
-      )}
+      <img src="/brand/worksuite-wordmark.png" alt="WorkSuite" className="h-7 w-auto dark:hidden" />
+      <img src="/brand/worksuite-wordmark-dark.png" alt="WorkSuite" className="hidden h-7 w-auto dark:block" />
+      <span className="border-l border-slate-200 pl-2.5 text-sm font-semibold whitespace-nowrap text-slate-700 dark:border-white/15 dark:text-slate-200">AI Studio</span>
     </div>
   );
 }

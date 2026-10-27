@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="25 25 150 150" role="img" aria-label="WorkSuite">
+  <!-- WorkSuite mark: geometry and colours from the brand motion source (worksuite-loader.json); navy painted last -->
+  <rect x="75" y="25" width="100" height="100" fill="#0A6CFF"/>
+  <rect x="25" y="75" width="50" height="50" fill="#00DAF2"/>
+  <rect x="75" y="125" width="50" height="50" fill="#00DAF2"/>
+  <rect x="75" y="75" width="50" height="50" fill="#001842"/>
+</svg>
