@@ -83,7 +83,7 @@ const alertTone: Record<Tone, string> = {
 
 export function Alert({ tone = 'info', title, children, className }: { tone?: Tone; title?: string; children?: ReactNode; className?: string }) {
   return (
-    <div role={tone === 'danger' ? 'alert' : 'status'} className={cx('rounded-md p-3 text-sm ring-1 ring-inset', alertTone[tone], className)}>
+    <div role={tone === 'danger' ? 'alert' : 'status'} className={cx('rounded-lg p-3.5 text-sm ring-1 ring-inset', alertTone[tone], className)}>
       {title && <p className="font-semibold">{title}</p>}
       {children && <div className={cx(title && 'mt-1')}>{children}</div>}
     </div>

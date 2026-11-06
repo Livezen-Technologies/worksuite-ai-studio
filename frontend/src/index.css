@@ -26,7 +26,7 @@
 :root { color-scheme: light; }
 .dark { color-scheme: dark; }
 html, body, #root { height: 100%; }
-body { @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100; }
+body { @apply bg-slate-100/70 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
