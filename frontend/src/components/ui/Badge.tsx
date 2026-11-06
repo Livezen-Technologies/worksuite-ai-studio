@@ -14,7 +14,7 @@ const tones: Record<BadgeTone, string> = {
 
 export function Badge({ tone = 'gray', dot, children, className }: { tone?: BadgeTone; dot?: boolean; children: ReactNode; className?: string }) {
   return (
-    <span className={cx('inline-flex items-center gap-x-1.5 rounded-md px-2 py-0.5 text-xs font-medium whitespace-nowrap ring-1 ring-inset', tones[tone], className)}>
+    <span className={cx('inline-flex items-center gap-x-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap ring-1 ring-inset', tones[tone], className)}>
       {dot && <svg viewBox="0 0 6 6" aria-hidden className="size-1.5 fill-current"><circle r={3} cx={3} cy={3} /></svg>}
       {children}
     </span>

@@ -5,10 +5,10 @@ import { cx } from './cx';
 /** Page heading with actions (Tailwind Plus "page heading with actions"); breadcrumbs come from the shell. */
 export function PageHeader({ title, description, actions, meta }: { title: ReactNode; description?: ReactNode; actions?: ReactNode; meta?: ReactNode }) {
   return (
-    <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
-        <h1 className="text-2xl/8 font-semibold tracking-tight text-slate-900 sm:truncate dark:text-white">{title}</h1>
-        {description && <p className="mt-1 max-w-3xl text-sm text-slate-500 dark:text-slate-400">{description}</p>}
+        <h1 className="text-[28px]/9 font-bold tracking-tight text-slate-900 sm:truncate dark:text-white">{title}</h1>
+        {description && <p className="mt-1.5 max-w-3xl text-[15px]/6 text-slate-500 dark:text-slate-400">{description}</p>}
         {meta && <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-slate-500 dark:text-slate-400">{meta}</div>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
@@ -19,7 +19,7 @@ export function PageHeader({ title, description, actions, meta }: { title: React
 /** Search box + filters + right-side controls above a table. */
 export function Toolbar({ children, right, className }: { children?: ReactNode; right?: ReactNode; className?: string }) {
   return (
-    <div className={cx('flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 dark:border-white/10', className)}>
+    <div className={cx('flex flex-col gap-3 border-b border-slate-100 px-5 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-white/10', className)}>
       <div className="flex flex-1 flex-wrap items-center gap-2">{children}</div>
       {right && <div className="flex items-center gap-2">{right}</div>}
     </div>
@@ -36,7 +36,7 @@ export function SearchInput({ value, onChange, placeholder = 'Search…', classN
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={placeholder}
-        className="block w-full rounded-md bg-white py-1.5 pr-3 pl-8 text-sm text-slate-900 outline-1 -outline-offset-1 outline-slate-300 placeholder:text-slate-400 focus:outline-2 focus:-outline-offset-2 focus:outline-brand-600 dark:bg-white/5 dark:text-white dark:outline-white/10"
+        className="block w-full rounded-lg bg-white py-2 pr-3 pl-8 text-sm text-slate-900 outline-1 -outline-offset-1 outline-slate-300 placeholder:text-slate-400 focus:outline-2 focus:-outline-offset-2 focus:outline-brand-600 dark:bg-white/5 dark:text-white dark:outline-white/10"
       />
     </div>
   );
@@ -95,7 +95,7 @@ export function Tabs({ tabs, value, onChange, className }: { tabs: TabItem[]; va
 /** Segmented control for small filters (status, range). */
 export function Segmented<T extends string>({ options, value, onChange, label }: { options: { value: T; label: string }[]; value: T; onChange: (v: T) => void; label: string }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex rounded-md bg-slate-100 p-0.5 dark:bg-white/5">
+    <div role="radiogroup" aria-label={label} className="inline-flex rounded-lg bg-slate-100 p-0.5 dark:bg-white/5">
       {options.map((o) => (
         <button
           key={o.value}
@@ -104,7 +104,7 @@ export function Segmented<T extends string>({ options, value, onChange, label }:
           aria-checked={o.value === value}
           onClick={() => onChange(o.value)}
           className={cx(
-            'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+            'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
             o.value === value ? 'bg-white text-slate-900 shadow-xs dark:bg-white/15 dark:text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white',
           )}
         >
