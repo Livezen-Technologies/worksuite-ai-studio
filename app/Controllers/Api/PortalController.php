@@ -163,8 +163,10 @@ class PortalController extends BaseApiController
             }
             try {
                 $result = (new DatasetService())->import((int) $id, file_get_contents($file->getTempName()), $file->getClientExtension() ?: 'jsonl');
-            } catch (\Throwable $e) {
+            } catch (\InvalidArgumentException $e) {
                 return $this->failure('Dataset created but import failed: ' . $e->getMessage(), 422, ['dataset_id' => $id]);
+            } catch (\Throwable $e) {
+                return $this->failException($e, 'Dataset created but import failed.', 500, ['dataset_id' => $id]);
             }
         }
         return $this->ok(['dataset' => $this->datasets()->find($id)] + $result, "Dataset created ({$result['imported']} rows imported).", 201);
@@ -188,8 +190,10 @@ class PortalController extends BaseApiController
         if ($why = $this->uploadProblem($file, ['jsonl', 'json', 'csv', 'tsv', 'txt'], 100, true)) return $this->failure($why, 422);
         try {
             $result = (new DatasetService())->import((int) $id, file_get_contents($file->getTempName()), $file->getClientExtension() ?: 'jsonl');
-        } catch (\Throwable $e) {
+        } catch (\InvalidArgumentException $e) {
             return $this->failure('Import failed: ' . $e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failException($e, 'Import failed.', 500);
         }
         return $this->ok($result + ['dataset' => $this->datasets()->find((int) $id)], "{$result['imported']} rows imported, {$result['skipped']} skipped.");
     }
@@ -296,8 +300,10 @@ class PortalController extends BaseApiController
             (new TrainingService())->generateKit((int) $id);
         } catch (\DomainException $e) {
             return $this->failure($e->getMessage(), 409);
-        } catch (\Throwable $e) {
+        } catch (\InvalidArgumentException | \RuntimeException $e) {
             return $this->failure($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failException($e, 'Could not generate the training kit.', 500);
         }
         return $this->jobShow($id);
     }

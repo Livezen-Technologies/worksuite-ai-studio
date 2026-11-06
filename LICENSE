@@ -1,0 +1,18 @@
+Copyright (c) 2026 Livezen Technologies. All rights reserved.
+
+WorkSuite AI Studio, including its source code, documentation, build output and related files
+in this repository, is proprietary and confidential software owned by Livezen Technologies.
+
+No part of this software may be copied, modified, merged, published, distributed, sublicensed,
+sold, or used to create derivative works, in whole or in part, by any means, without the prior
+written permission of Livezen Technologies.
+
+Access to this repository does not grant any licence or right to use the software beyond what
+Livezen Technologies has agreed to in writing.
+
+Third-party components included in or used by this software (for example packages installed
+through Composer or npm) remain under their own licences.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. IN NO EVENT
+SHALL LIVEZEN TECHNOLOGIES BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM THE
+USE OF OR INABILITY TO USE THE SOFTWARE.

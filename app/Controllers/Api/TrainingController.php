@@ -97,8 +97,10 @@ class TrainingController extends BaseApiController
             (new TrainingService())->generateKit((int) $id);
         } catch (\DomainException $e) {
             return $this->failure($e->getMessage(), 409); // dataset withdrawn / not frozen
-        } catch (\Throwable $e) {
+        } catch (\InvalidArgumentException | \RuntimeException $e) {
             return $this->failure($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failException($e, 'Could not generate the training kit.', 500);
         }
         return $this->ok($this->jobs()->find((int) $id), 'Training kit generated.');
     }

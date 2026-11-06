@@ -59,7 +59,7 @@ class ModelStudioController extends BaseApiController
                 $client->pushBlob($digest, $tmp);
             }
         } catch (\Throwable $e) {
-            return $this->failure('Upload to node failed: ' . $e->getMessage(), 502);
+            return $this->failException($e, 'Upload to node failed.', 502);
         }
 
         return $this->ok([
@@ -130,7 +130,7 @@ class ModelStudioController extends BaseApiController
             (new ModelService())->syncServer($server);
             $emit(['status' => 'success', 'done' => true, 'model' => $name]);
         } catch (\Throwable $e) {
-            $emit(['error' => $e->getMessage(), 'done' => true]);
+            $emit(['error' => $this->publicError($e, 'The request failed.'), 'done' => true]);
         }
         exit;
     }
@@ -150,7 +150,7 @@ class ModelStudioController extends BaseApiController
             (new OllamaService($server['api_url'], $server['auth_token'] ?? null))->copy($src, $dst);
             (new ModelService())->syncServer($server);
         } catch (\Throwable $e) {
-            return $this->failure('Copy failed: ' . $e->getMessage(), 502);
+            return $this->failException($e, 'Copy failed.', 502);
         }
         return $this->ok(null, "Cloned {$src} → {$dst}.");
     }

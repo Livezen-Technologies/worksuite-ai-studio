@@ -40,7 +40,7 @@ class ClassifyController extends BaseApiController
         } catch (\InvalidArgumentException $e) {
             return $this->failure($e->getMessage(), 422);
         } catch (\Throwable $e) {
-            return $this->failure($e->getMessage(), 503);
+            return $this->failException($e, 'The classifier is unavailable.', 503);
         }
     }
 
@@ -56,7 +56,7 @@ class ClassifyController extends BaseApiController
         } catch (\InvalidArgumentException $e) {
             return $this->failure($e->getMessage(), 422);
         } catch (\Throwable $e) {
-            return $this->failure($e->getMessage(), 503);
+            return $this->failException($e, 'The classifier is unavailable.', 503);
         }
     }
 }

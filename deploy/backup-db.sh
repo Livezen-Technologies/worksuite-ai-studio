@@ -12,9 +12,10 @@ APP_DIR="${APP_DIR:-/var/www/ollamahub}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/aistudio}"
 KEEP_DAYS="${KEEP_DAYS:-14}"
 
-env_get() { grep -E "^\s*$1\s*=" "${APP_DIR}/.env" | head -1 | sed -E 's/^[^=]+=\s*//; s/^"(.*)"$/\1/; s/\s+$//'; }
-DB=$(env_get database.default.database); USER=$(env_get database.default.username); PASS=$(env_get database.default.password)
-HOSTDB=$(env_get database.default.hostname); HOSTDB=${HOSTDB:-127.0.0.1}
+# shellcheck source-path=SCRIPTDIR source=lib-env.sh
+. "$(dirname "$0")/lib-env.sh"
+DB=$(env_get database.default.database "${APP_DIR}/.env"); USER=$(env_get database.default.username "${APP_DIR}/.env"); PASS=$(env_get database.default.password "${APP_DIR}/.env")
+HOSTDB=$(env_get database.default.hostname "${APP_DIR}/.env"); HOSTDB=${HOSTDB:-127.0.0.1}
 
 mkdir -p "${BACKUP_DIR}" && chmod 700 "${BACKUP_DIR}"
 OUT="${BACKUP_DIR}/nightly-$(date +%Y%m%d-%H%M%S).sql.gz"

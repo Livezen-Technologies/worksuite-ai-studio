@@ -19,8 +19,9 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-env_get() { grep -E "^\s*$1\s*=" "${APP_DIR}/.env" | head -1 | sed -E 's/^[^=]+=\s*//; s/^"(.*)"$/\1/; s/\s+$//'; }
-DB=$(env_get database.default.database); DB=${DB:-ollamahub}
+# shellcheck source-path=SCRIPTDIR source=lib-env.sh
+. "$(dirname "$0")/lib-env.sh"
+DB=$(env_get database.default.database "${APP_DIR}/.env"); DB=${DB:-ollamahub}
 if ! [[ "${DB}" =~ ^[A-Za-z0-9_]+$ ]]; then
   echo "verify-backup: unexpected database name '${DB}'" >&2
   exit 1

@@ -3,6 +3,14 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.28.3] — 2026-11-06 — Change your own password, and tidier security
+- **Change your password** from Account: it signs out your other devices and keeps you signed in here. New passwords need at least 12 characters and can't be a common password or your email.
+- **Clearer, safer errors**: unexpected server errors no longer show internal details in production; they are logged instead.
+- **Harder to abuse**: two-factor codes can't be reused, training outputs have a size cap, backups can't start twice at once, and new local storage folders must be under the configured base.
+- **Tablet layout**: between 1024 and 1279 px the page panel folds away so content has room; the menu button opens every page.
+- Better contrast for small text in the header and menus, safer link handling in chat, and the MCP server only listens locally with rate limits.
+- The project is proprietary: a LICENSE file now says so.
+
 ## [1.28.2] — 2026-11-06 — Security hardening, round three
 - **Framework security update**: CodeIgniter 4.7.6 fixes two critical, one high and one medium advisory in 4.7.3.
 - **Sessions**: the 14-day sign-in (refresh) token now lives in a secure, script-proof cookie instead of browser storage.

@@ -34,7 +34,7 @@ If a step fails, the script prints the backup to restore from (next section).
   rows, drops it, and feeds the `BackupRestoreStale` alert (> 8 days). Log: `/var/log/aistudio-backup.log`.
   Run it by hand: `sudo bash /var/www/ollamahub/deploy/verify-backup.sh`.
 
-Check the latest backup: `ls -lt /var/backups/aistudio | head`.
+Check the latest backup: `sudo ls -lt /var/backups/aistudio | head` (the directory is root-only, 0700).
 
 ## Restore the database
 
@@ -42,9 +42,9 @@ Check the latest backup: `ls -lt /var/backups/aistudio | head`.
 cd /var/www/ollamahub
 sudo systemctl stop ollamahub-queue
 # Safety copy of the current state first
-APP_DIR=$PWD bash deploy/backup-db.sh
+sudo APP_DIR=$PWD bash deploy/backup-db.sh
 # Restore (replace the file name)
-gunzip -c /var/backups/aistudio/predeploy-YYYYMMDD-HHMMSS.sql.gz | sudo mysql ollamahub
+sudo gunzip -c /var/backups/aistudio/predeploy-YYYYMMDD-HHMMSS.sql.gz | sudo mysql ollamahub
 sudo systemctl start ollamahub-queue
 ```
 
@@ -135,6 +135,34 @@ Do these once on the current production server.
    `alerting: { alertmanagers: [ { static_configs: [ { targets: ['127.0.0.1:9093'] } ] } ] }`.
    Note the blackbox probe runs on the same server, so it catches nginx/PHP/TLS failures but not a
    whole-server outage; an external uptime check covers that.
+
+9. **Queue unit, backup directory, MCP gateway** (fourth audit round; all commands are safe to re-run):
+   ```bash
+   cd /var/www/ollamahub
+   # Queue worker: absolute php path, and failed runs are logged (journalctl -u ollamahub-queue)
+   # instead of disappearing silently; the 5 s polling loop stays.
+   sudo cp deploy/ollamahub-queue.service /etc/systemd/system/ollamahub-queue.service
+   sudo systemctl daemon-reload && sudo systemctl restart ollamahub-queue
+   systemctl status ollamahub-queue --no-pager | head -5
+   # Backups: root-owned and root-only, for both nightly and pre-deploy dumps (deploys no longer chown it).
+   sudo install -d -m 700 /var/backups/aistudio
+   sudo chown -R root:root /var/backups/aistudio && sudo chmod 700 /var/backups/aistudio
+   sudo ls -ld /var/backups/aistudio                                           # drwx------ root root
+   ```
+   If the MCP gateway (`mcp-server/`, HTTP mode) is deployed: rebuild it (`npm ci && npm run build`)
+   and restart it. It now listens on `HOST` (default `127.0.0.1`; nginx proxies to
+   `127.0.0.1:8787`, so leave it unset), allows 120 requests/minute per client IP on `/mcp` and 20
+   failed sign-ins per 15 minutes per IP. Behind nginx, set `TRUST_PROXY=loopback` in its `.env` so
+   limits apply per real client instead of to nginx as a whole. Check: `ss -ltnp | grep 8787`
+   shows `127.0.0.1:8787`.
+
+### Later
+
+- **ASR service location.** `aistudio-asr.service` runs as `ubuntu` from `/home/ubuntu/sinhala-build`.
+  When convenient, move it to `/opt/aistudio-asr` owned by a dedicated system user
+  (`sudo useradd --system --home /opt/aistudio-asr aistudio-asr`), recreate the venv there, point
+  `User=`, `ExecStart=` and `ReadWritePaths=` at it and set `ProtectHome=true`. Not done yet so the
+  live paths keep working.
 
 ## Security behaviour to know
 

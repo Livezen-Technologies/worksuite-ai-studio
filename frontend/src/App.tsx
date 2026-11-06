@@ -51,7 +51,8 @@ const pages = {
   '/settings': lazy(() => import('./pages/Settings')),
 } as const;
 
-const perms: Record<keyof typeof pages, string> = {
+/** Route → permission the Guard checks; must agree with each nav item's `perm` (see nav.test.ts). */
+export const perms: Record<keyof typeof pages, string> = {
   '/': 'dashboard.view', '/servers': 'servers.view', '/storage': 'storage.view', '/node-app': 'servers.view', '/models': 'models.view', '/monitoring': 'monitoring.view', '/queue': 'queues.view',
   '/studio': 'models.view', '/datasets': 'models.view', '/training': 'models.view', '/portal': 'portal.use', '/portal/datasets': 'portal.use', '/portal/jobs': 'portal.use', '/compute': 'compute.manage', '/compute/usage': 'compute.manage', '/engine': 'engine.view', '/engine/evaluations': 'engine.view', '/engine/approvals': 'engine.view', '/engine/packages': 'engine.view', '/engine/bindings': 'engine.view',
   '/chat': 'chat.use', '/speech': 'chat.use', '/prompts': 'prompts.view',

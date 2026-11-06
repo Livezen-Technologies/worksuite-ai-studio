@@ -54,9 +54,29 @@ class LocalDriver extends StorageDriver
     {
         $this->root = rtrim((string) ($config['path'] ?? ''), '/');
         if ($this->root === '' || $this->root[0] !== '/') throw new \InvalidArgumentException('Give an absolute folder path, e.g. /srv/storage.');
-        if (in_array($this->root, ['/', '/etc', '/var', '/usr', '/bin', '/boot', '/root', '/home', '/proc', '/sys', '/dev'], true)) {
-            throw new \InvalidArgumentException("Choose a dedicated folder, not {$this->root}.");
+        // The folder allowlist is enforced when an admin saves a node (StorageController::fields),
+        // not here: nodes saved before it existed (e.g. NFS mounts under /mnt) must keep working.
+        if (in_array('..', explode('/', $this->root), true)) {
+            throw new \InvalidArgumentException('The storage path may not contain "..".');
         }
+    }
+
+    /** Base folder local storage roots must live under (env storage.localBase). */
+    public static function localBase(): string
+    {
+        return rtrim((string) (env('storage.localBase') ?: '/srv/aistudio-storage'), '/') ?: '/srv/aistudio-storage';
+    }
+
+    /** Allowlist: $path is under storage.localBase or WRITEPATH, after resolving symlinks of existing folders. */
+    public static function allowedRoot(string $path): bool
+    {
+        if ($path === '' || $path[0] !== '/' || in_array('..', explode('/', $path), true)) return false;
+        $real = is_dir($path) ? (realpath($path) ?: $path) : $path;
+        foreach ([self::localBase(), rtrim(WRITEPATH, '/')] as $base) {
+            $base = is_dir($base) ? (realpath($base) ?: $base) : $base;
+            if ($real === $base || str_starts_with($real, $base . '/')) return true;
+        }
+        return false;
     }
 
     public function probe(): array

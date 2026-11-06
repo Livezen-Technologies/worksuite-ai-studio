@@ -29,7 +29,11 @@ function CodeFence({ lang, code }: { lang: string; code: string }) {
   );
 }
 
-const safeHref = (h: string) => (/^(https?:|mailto:)/i.test(h) ? h : undefined);
+/**
+ * Only absolute http(s) and mailto links survive; anything else (javascript:, data:, vbscript:,
+ * relative paths, obfuscated schemes like `java\tscript:` or leading control chars) renders as text.
+ */
+export const safeHref = (h: string) => (/^(https?:\/\/|mailto:)[^\s\x00-\x1f\x7f]*$/i.test(h) ? h : undefined);
 
 /** Inline: `code`, **bold**, *italic* / _italic_, [text](url). */
 export function inline(text: string, keyBase = 'i'): ReactNode[] {

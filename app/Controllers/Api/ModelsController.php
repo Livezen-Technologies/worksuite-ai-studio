@@ -43,7 +43,7 @@ class ModelsController extends BaseApiController
             try {
                 return $this->ok($svc->syncServer($server), 'Models synced.');
             } catch (\Throwable $e) {
-                return $this->failure('Node unreachable: ' . $e->getMessage(), 502);
+                return $this->failException($e, 'Node unreachable.', 502);
             }
         }
         return $this->ok($svc->syncAll(), 'Sync complete.');
@@ -85,7 +85,7 @@ class ModelsController extends BaseApiController
             $svc->syncServer($server);
             $emit(['status' => 'success', 'done' => true]);
         } catch (\Throwable $e) {
-            $emit(['error' => $e->getMessage(), 'done' => true]);
+            $emit(['error' => $this->publicError($e, 'The request failed.'), 'done' => true]);
         }
         exit;
     }
@@ -99,7 +99,7 @@ class ModelsController extends BaseApiController
         try {
             (new ModelService())->clientFor($server)->delete($model['name']);
         } catch (\Throwable $e) {
-            return $this->failure('Node unreachable: ' . $e->getMessage(), 502);
+            return $this->failException($e, 'Node unreachable.', 502);
         }
         $this->models()->delete($model['id']);
         return $this->ok(null, 'Model removed from node.');
@@ -118,7 +118,7 @@ class ModelsController extends BaseApiController
             $client = (new ModelService())->clientFor($server);
             $action === 'load' ? $client->load($model['name']) : $client->unload($model['name']);
         } catch (\Throwable $e) {
-            return $this->failure('Node unreachable: ' . $e->getMessage(), 502);
+            return $this->failException($e, 'Node unreachable.', 502);
         }
         $this->models()->update($model['id'], ['status' => $action === 'load' ? 'running' : 'available']);
         return $this->ok(null, $action === 'load' ? 'Model loaded into memory.' : 'Model unloaded.');

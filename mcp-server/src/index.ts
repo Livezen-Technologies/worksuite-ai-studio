@@ -9,6 +9,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express, { type Request, type Response, type NextFunction } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { AiStudioClient, configFromEnv } from './client.js';
 import { buildServer } from './server.js';
 
@@ -31,8 +32,29 @@ async function startHttp() {
   // connectors that cannot send headers need it; keep access_log off for that location).
   const allowUrlSecret = /^(1|true|yes)$/i.test(process.env.MCP_ALLOW_URL_SECRET ?? '');
   const port = Number(process.env.PORT ?? 8787);
+  // Loopback by default: the reverse proxy (nginx) forwards to 127.0.0.1:8787.
+  const host = process.env.HOST ?? '127.0.0.1';
   const app = express();
   app.disable('x-powered-by');
+  // Only trust X-Forwarded-For when told to (e.g. TRUST_PROXY=loopback behind nginx), otherwise
+  // a client could pick its own rate-limit key.
+  const trustProxy = (process.env.TRUST_PROXY ?? '').trim();
+  if (trustProxy) {
+    app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : /^true$/i.test(trustProxy) ? true : trustProxy);
+  }
+  const rpcError = (message: string) => ({ jsonrpc: '2.0', error: { code: -32029, message }, id: null });
+  // 120 requests/minute per client IP on /mcp.
+  const mcpLimiter = rateLimit({
+    windowMs: 60_000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false,
+    message: rpcError('Too many requests, slow down.'),
+  });
+  // Failed sign-ins: 20 per 15 minutes per IP, so secrets cannot be brute-forced.
+  const authFailLimiter = rateLimit({
+    windowMs: 15 * 60_000, limit: 20, standardHeaders: 'draft-8', legacyHeaders: false,
+    requestWasSuccessful: (_req, res) => res.statusCode !== 401,
+    skipSuccessfulRequests: true,
+    message: rpcError('Too many failed authentication attempts, try again later.'),
+  });
   app.use(express.json({ limit: '10mb' }));
 
   // Accept the secret as a Bearer token or as the last path segment (/mcp/<secret>) for
@@ -61,14 +83,14 @@ async function startHttp() {
     res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed (stateless server).' }, id: null });
 
   for (const path of allowUrlSecret ? ['/mcp', '/mcp/:secret'] : ['/mcp']) {
-    app.post(path, auth, handle);
-    app.get(path, auth, notAllowed);
-    app.delete(path, auth, notAllowed);
+    app.post(path, mcpLimiter, authFailLimiter, auth, handle);
+    app.get(path, mcpLimiter, authFailLimiter, auth, notAllowed);
+    app.delete(path, mcpLimiter, authFailLimiter, auth, notAllowed);
   }
   app.get('/healthz', (_req, res) => { res.json({ ok: true }); });
 
-  app.listen(port, () => {
-    console.error(`AI Studio MCP server (HTTP${readOnly ? ', read-only' : ''}) on :${port}/mcp -> ${client.baseUrl}`);
+  app.listen(port, host, () => {
+    console.error(`AI Studio MCP server (HTTP${readOnly ? ', read-only' : ''}) on ${host}:${port}/mcp -> ${client.baseUrl}`);
   });
 }
 
