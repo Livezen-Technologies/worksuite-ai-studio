@@ -77,14 +77,16 @@ export default function Chat() {
     if (!modelKey && pick) setModelKey(keyOf(pick.server_id, pick.name));
   }, [models.data, modelKey]);
 
-  // Arrive from Prompts ("Use in chat") or Agents ("Chat with agent").
+  // Arrive from Prompts ("Use in chat") or Agents ("Chat with agent"), also when already on
+  // this page. applyAgent is read through a ref so the latest version runs.
+  const applyAgentRef = useRef<(a: Agent) => void>(() => {});
+  applyAgentRef.current = (a: Agent) => applyAgent(a);
   useEffect(() => {
     const st = location.state as { prompt?: string; agent?: Agent } | null;
     if (st?.prompt) setDraft(st.prompt);
-    if (st?.agent) applyAgent(st.agent);
+    if (st?.agent) applyAgentRef.current(st.agent);
     if (st) window.history.replaceState({}, '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [location.key, location.state]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });

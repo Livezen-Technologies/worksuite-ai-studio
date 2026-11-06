@@ -113,4 +113,30 @@ abstract class BaseApiController extends ResourceController
         $per  = min(200, max(1, (int) ($this->request->getGet('per_page') ?? $defaultPer)));
         return [$page, $per, ($page - 1) * $per];
     }
+
+    /**
+     * Shared upload check: allowed extensions, a size cap and, for text formats, valid UTF-8 text
+     * (rejects binaries renamed to .csv). Returns an error message, or null when the file is fine.
+     */
+    protected function uploadProblem($file, array $extensions, int $maxMb, bool $text = false): ?string
+    {
+        if (! $file || ! $file->isValid()) {
+            return 'No file received (check the upload size limit).';
+        }
+        $ext = strtolower($file->getClientExtension() ?: pathinfo($file->getClientName(), PATHINFO_EXTENSION));
+        if (! in_array($ext, $extensions, true)) {
+            return 'Unsupported file type. Use ' . implode(', ', $extensions) . '.';
+        }
+        if ($file->getSize() > $maxMb * 1048576) {
+            return "The file is over {$maxMb} MB.";
+        }
+        if ($text) {
+            $head = (string) file_get_contents($file->getTempName(), false, null, 0, 65536);
+            // Trim a possibly cut multibyte character at the end of the sample before checking.
+            if (str_contains($head, "\0") || ! mb_check_encoding(substr($head, 0, strlen($head) - 4) ?: $head, 'UTF-8')) {
+                return 'The file does not look like UTF-8 text.';
+            }
+        }
+        return null;
+    }
 }

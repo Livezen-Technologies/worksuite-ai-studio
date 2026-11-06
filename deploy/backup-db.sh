@@ -26,4 +26,10 @@ find "${BACKUP_DIR}" -name 'nightly-*.sql.gz' -mtime "+${KEEP_DAYS}" -delete
 if [ -n "${BACKUP_RSYNC_TARGET:-}" ]; then
   rsync -a "${OUT}" "${BACKUP_RSYNC_TARGET}"
 fi
+# Freshness metric for the BackupStale alert (node_exporter textfile collector, if present).
+TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/prometheus/node-exporter}"
+if [ -d "${TEXTFILE_DIR}" ]; then
+  echo "aistudio_backup_last_success_seconds $(date +%s)" > "${TEXTFILE_DIR}/aistudio_backup.prom.$$"
+  mv "${TEXTFILE_DIR}/aistudio_backup.prom.$$" "${TEXTFILE_DIR}/aistudio_backup.prom"
+fi
 echo "backup ok: ${OUT}"

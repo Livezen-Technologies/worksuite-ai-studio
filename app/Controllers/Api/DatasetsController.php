@@ -52,6 +52,9 @@ class DatasetsController extends BaseApiController
         $result = ['imported' => 0, 'skipped' => 0];
         $file = $this->request->getFile('file');
         if ($file && $file->isValid()) {
+            if ($why = $this->uploadProblem($file, ['jsonl', 'json', 'csv', 'tsv', 'txt'], 200, true)) {
+                return $this->failure('Dataset created but the file was not imported: ' . $why, 422, ['dataset_id' => $id]);
+            }
             try {
                 $result = (new DatasetService())->import(
                     (int) $id,
@@ -111,7 +114,7 @@ class DatasetsController extends BaseApiController
         if ($r = $this->requirePermission('models.manage')) return $r;
         if (! $this->datasets()->find((int) $id)) return $this->failure('Dataset not found.', 404);
         $file = $this->request->getFile('file');
-        if (! $file || ! $file->isValid()) return $this->failure('No file received.', 422);
+        if ($why = $this->uploadProblem($file, ['jsonl', 'json', 'csv', 'tsv', 'txt'], 200, true)) return $this->failure($why, 422);
         try {
             $result = (new DatasetService())->import(
                 (int) $id, file_get_contents($file->getTempName()), $file->getClientExtension() ?: 'jsonl'
@@ -129,7 +132,7 @@ class DatasetsController extends BaseApiController
         if ($r = $this->requirePermission('models.manage')) return $r;
         if (! $this->datasets()->find((int) $id)) return $this->failure('Dataset not found.', 404);
         $file = $this->request->getFile('file');
-        if (! $file || ! $file->isValid()) return $this->failure('No zip received.', 422);
+        if ($why = $this->uploadProblem($file, ['zip'], 4096)) return $this->failure($why, 422);
         @set_time_limit(0);
         try {
             $r = (new \App\Services\SpeechDatasetService())->importZip((int) $id, $file->getTempName());

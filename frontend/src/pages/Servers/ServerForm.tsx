@@ -89,13 +89,13 @@ export default function ServerForm({ server, onClose }: { server: Server | null;
             <>
               <div className="grid gap-4 sm:grid-cols-3">
                 <Input wrapperClassName="sm:col-span-2" label="IP address" value={String(f.ip_address)} onChange={set('ip_address')} error={errors.ip_address}
-                  placeholder="40.160.57.17" hint="The API URL is built from this and the port when left blank." />
+                  placeholder="192.168.1.20" hint="The API URL is built from this and the port when left blank." />
                 <Input label="Ollama port" type="number" min={1} max={65535} value={String(f.port)} onChange={set('port')} error={errors.port} />
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Input label="Hostname" value={String(f.hostname)} onChange={set('hostname')} placeholder="gpu-01.internal" />
                 <Input label="API URL" value={String(f.api_url)} onChange={set('api_url')} error={errors.api_url}
-                  placeholder="http://40.160.57.17:11434" hint="Overrides IP and port." />
+                  placeholder="http://192.168.1.20:11434" hint="Overrides IP and port." />
               </div>
               <Input label="Auth token" type="password" autoComplete="new-password" value={String(f.auth_token)} onChange={set('auth_token')}
                 placeholder={server?.has_token ? '•••••••• (unchanged)' : 'Optional'}

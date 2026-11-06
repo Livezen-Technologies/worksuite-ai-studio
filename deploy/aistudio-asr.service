@@ -9,6 +9,17 @@ ExecStart=/home/ubuntu/sinhala-build/.venv-asr/bin/python /home/ubuntu/sinhala-b
 Restart=on-failure
 RestartSec=5
 Nice=-5
+# Sandboxing: no privilege escalation, read-only /usr /boot /etc, kernel settings off-limits.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Runs from /home/ubuntu/sinhala-build, so home stays readable here.
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/sinhala-build
 
 [Install]
 WantedBy=multi-user.target

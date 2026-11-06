@@ -158,6 +158,9 @@ class PortalController extends BaseApiController
         $result = ['imported' => 0, 'skipped' => 0];
         $file = $this->request->getFile('file');
         if ($file && $file->isValid()) {
+            if ($why = $this->uploadProblem($file, ['jsonl', 'json', 'csv', 'tsv', 'txt'], 100, true)) {
+                return $this->failure('Dataset created but the file was not imported: ' . $why, 422, ['dataset_id' => $id]);
+            }
             try {
                 $result = (new DatasetService())->import((int) $id, file_get_contents($file->getTempName()), $file->getClientExtension() ?: 'jsonl');
             } catch (\Throwable $e) {
@@ -182,7 +185,7 @@ class PortalController extends BaseApiController
         if ($r = $this->requirePermission('portal.use')) return $r;
         if (! $this->visibleDataset($id, false)) return $this->failure('Dataset not found.', 404);
         $file = $this->request->getFile('file');
-        if (! $file || ! $file->isValid()) return $this->failure('No file received.', 422);
+        if ($why = $this->uploadProblem($file, ['jsonl', 'json', 'csv', 'tsv', 'txt'], 100, true)) return $this->failure($why, 422);
         try {
             $result = (new DatasetService())->import((int) $id, file_get_contents($file->getTempName()), $file->getClientExtension() ?: 'jsonl');
         } catch (\Throwable $e) {

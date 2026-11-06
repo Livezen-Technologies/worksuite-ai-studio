@@ -207,8 +207,9 @@ function CreateDataset({ open, onClose, onCreated }: { open: boolean; onClose: (
     try {
       if (kind === 'speech') {
         // create the dataset, then send the zip of recordings + transcripts
-        const { data: created } = await uploadWithProgress<{ id: number }>('/datasets', form, () => {});
-        const id = (created as unknown as { id?: number; dataset?: { id: number } }).id ?? (created as unknown as { dataset: { id: number } }).dataset.id;
+        // POST /datasets always answers { dataset, imported, skipped }.
+        const { data: created } = await uploadWithProgress<{ dataset: Dataset }>('/datasets', form, () => {});
+        const id = created.dataset.id;
         const zip = new FormData(); zip.append('file', file!);
         const { data, message } = await uploadWithProgress<{ imported: number; skipped: number; issues: string[] }>(`/datasets/${id}/speech`, zip, setProgress);
         toast.success(message ?? 'Recordings imported', data.issues?.length ? data.issues.join('; ') : undefined);
