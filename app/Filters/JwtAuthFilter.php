@@ -5,6 +5,7 @@ namespace App\Filters;
 use CodeIgniter\Filters\FilterInterface;
 use CodeIgniter\HTTP\RequestInterface;
 use CodeIgniter\HTTP\ResponseInterface;
+use App\Models\UserModel;
 use App\Services\JwtService;
 
 /**
@@ -30,6 +31,15 @@ class JwtAuthFilter implements FilterInterface
         if (! $payload || ($payload['type'] ?? '') !== 'access') {
             return $this->deny($response, 'Unauthorized: invalid or expired token', 401);
         }
+
+        // The token is only a claim: re-check the account so a disabled user, a signed-out
+        // session or a changed password takes effect at once, and use the role the user has now.
+        $state = (new UserModel())->authState((int) ($payload['sub'] ?? 0));
+        if (! $state || ($state['status'] ?? '') !== 'active'
+            || (int) ($state['token_version'] ?? 0) !== (int) ($payload['tv'] ?? 0)) {
+            return $this->deny($response, 'Unauthorized: session revoked', 401);
+        }
+        $payload['role'] = $state['role'] ?? 'viewer';
 
         // Coarse role gating. super_admin bypasses all role checks.
         if (! empty($arguments)) {

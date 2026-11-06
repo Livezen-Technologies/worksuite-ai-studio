@@ -6,9 +6,7 @@ import changelog from '../../../CHANGELOG.md?raw';
 
 export interface Post { slug: string; version: string; date: string; title: string; body: string; summary: string; category: string }
 
-function slugify(s: string) {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
-}
+import { releaseSlug } from './slug';
 
 /** A rough category from the title, for the blog filter. */
 function categorise(t: string): string {
@@ -35,7 +33,7 @@ export function posts(): Post[] {
     const first = body.split('\n').find((l) => l.startsWith('- ')) ?? '';
     const summary = first.replace(/^- /, '').replace(/\*\*|`/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
     const [, version, date, title] = m;
-    out.push({ slug: `${slugify(version)}-${slugify(title)}`, version, date, title: title.trim(), body, summary: summary.length > 220 ? summary.slice(0, 217) + '…' : summary, category: categorise(title) });
+    out.push({ slug: releaseSlug(version, title), version, date, title: title.trim(), body, summary: summary.length > 220 ? summary.slice(0, 217) + '…' : summary, category: categorise(title) });
   });
   cache = out;
   return out;

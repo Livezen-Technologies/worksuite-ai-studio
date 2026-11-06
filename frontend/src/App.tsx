@@ -4,7 +4,7 @@ import { ExclamationTriangleIcon, LockClosedIcon } from '@heroicons/react/24/out
 import { useAuth } from './lib/auth';
 import { AppShell } from './layout/AppShell';
 import { Button, EmptyState, Spinner } from './components/ui';
-import Login from './pages/Login';
+const Login = lazy(() => import('./pages/Login'));
 
 const Account = lazy(() => import('./pages/Account'));
 // Public site (Radiant): landing for signed-out visitors at /, plus pricing, company and the release blog.
@@ -116,7 +116,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 export function App() {
   return (
     <Routes>
-      <Route path="/login" element={<Login />} />
+      <Route path="/login" element={<Public><Login /></Public>} />
       <Route path="/pricing" element={<Public><SitePricing /></Public>} />
       <Route path="/company" element={<Public><SiteCompany /></Public>} />
       <Route path="/blog" element={<Public><SiteBlog /></Public>} />

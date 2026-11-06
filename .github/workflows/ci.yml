@@ -1,0 +1,76 @@
+# Checks every pull request and every push to main: backend tests, frontend type-check, tests and
+# build (and that the committed public/app build matches the source), and the MCP server build.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: intl, mbstring, sqlite3, mysqli, gd, zip
+          coverage: none
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/composer
+          key: composer-${{ hashFiles('composer.lock') }}
+      - run: composer install --no-interaction --no-progress --prefer-dist
+      - name: PHP syntax
+        run: find app -name '*.php' -print0 | xargs -0 -n1 -P4 php -l > /dev/null
+      - run: mkdir -p writable/{cache,logs,session,uploads,debugbar}
+      - run: vendor/bin/phpunit
+
+  frontend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsc -b --noEmit
+      - run: npx vitest run
+      - run: npx vite build
+      - name: Committed public/app matches the source
+        working-directory: .
+        run: |
+          if [ -n "$(git status --porcelain -- public/app)" ]; then
+            echo "::error::public/app is out of date. Run 'cd frontend && npm run build' and commit public/app."
+            git status --short -- public/app | head -20
+            exit 1
+          fi
+
+  mcp-server:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mcp-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mcp-server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsc

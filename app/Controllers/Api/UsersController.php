@@ -80,6 +80,12 @@ class UsersController extends BaseApiController
             (new \App\Services\TotpService())->disable((int) $id);
             \Config\Database::connect()->table('user_passkeys')->where('user_id', (int) $id)->delete();
         }
+        // New password, role or status, or a sign-in reset: end the user's existing sessions.
+        $roleChanged = isset($data['role_id']) && (int) $data['role_id'] !== (int) $row['role_id'];
+        $statusChanged = isset($data['status']) && $data['status'] !== $row['status'];
+        if (isset($data['password_hash']) || $roleChanged || $statusChanged || ! empty($in['reset_sign_in_methods'])) {
+            $m->revokeTokens((int) $id);
+        }
         return $this->ok($this->one((int) $id), 'User updated.');
     }
 
