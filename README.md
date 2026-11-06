@@ -17,3 +17,9 @@ splits, training lineage, evaluation release gates and Ed25519-signed model pack
 Spec: [`docs/sinhala-ai-engine/SRS.md`](docs/sinhala-ai-engine/SRS.md) · what's built here:
 [`docs/sinhala-ai-engine/IMPLEMENTATION.md`](docs/sinhala-ai-engine/IMPLEMENTATION.md).
 After deploying run `php spark migrate`.
+
+## MCP server (Claude and ChatGPT)
+
+`mcp-server/` lets Claude (Desktop, Code, claude.ai) and ChatGPT manage AI Studio through the Model
+Context Protocol: servers, models, chat, API keys, users and roles, datasets and training, storage,
+compute and the Sinhala engine. See [mcp-server/README.md](mcp-server/README.md).

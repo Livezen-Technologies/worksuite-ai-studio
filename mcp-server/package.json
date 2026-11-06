@@ -1,0 +1,25 @@
+{
+  "name": "aistudio-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for WorkSuite AI Studio: manage servers, models, training, users and more from Claude or ChatGPT.",
+  "private": true,
+  "type": "module",
+  "bin": { "aistudio-mcp": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "start:http": "node dist/index.js --http",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "express": "^5.2.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}
