@@ -316,7 +316,7 @@ export function AppShell() {
         </div>
 
         <main id="main" className="py-6 sm:py-8">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="w-full px-4 sm:px-6 lg:px-8">
             <Breadcrumbs />
             <div key={pathname} className="animate-fade-in">
               <Outlet />
