@@ -14,9 +14,29 @@ class JwtService
     protected int $accessTtl  = 3600;     // 1 hour
     protected int $refreshTtl = 1209600;  // 14 days
 
+    /** Development-only fallback. Never accepted in production. */
+    public const DEV_SECRET = 'ollamahub-dev-secret-change-me-32-chars-minimum';
+
     public function __construct()
     {
-        $this->secret = (string) env('JWT_SECRET', 'ollamahub-dev-secret-change-me-32-chars-minimum');
+        $this->secret = self::secret();
+    }
+
+    /**
+     * The signing secret (also the root of the TOTP encryption key). In production a missing, short
+     * or default JWT_SECRET is refused: anyone could otherwise forge an admin token with the
+     * default from this repository.
+     */
+    public static function secret(): string
+    {
+        $secret = (string) env('JWT_SECRET', '');
+        if (strlen($secret) >= 32 && $secret !== self::DEV_SECRET) {
+            return $secret;
+        }
+        if (ENVIRONMENT === 'production') {
+            throw new \RuntimeException('JWT_SECRET must be set to a random value of at least 32 characters (e.g. `openssl rand -hex 32`).');
+        }
+        return $secret !== '' ? $secret : self::DEV_SECRET;
     }
 
     /**
@@ -29,16 +49,19 @@ class JwtService
             'email' => $user['email'] ?? '',
             'name'  => $user['name'] ?? '',
             'role'  => $user['role'] ?? 'viewer',
+            'tv'    => (int) ($user['token_version'] ?? 0),
             'type'  => 'access',
             'iat'   => time(),
             'exp'   => time() + $this->accessTtl,
         ]);
     }
 
-    public function generateRefreshToken(int $userId): string
+    /** $tokenVersion: users.token_version at issue; bumping it revokes every token issued before. */
+    public function generateRefreshToken(int $userId, int $tokenVersion = 0): string
     {
         return $this->encode([
             'sub'  => $userId,
+            'tv'   => $tokenVersion,
             'type' => 'refresh',
             'iat'  => time(),
             'exp'  => time() + $this->refreshTtl,

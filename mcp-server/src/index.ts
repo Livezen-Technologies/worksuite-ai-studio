@@ -21,21 +21,26 @@ function safeEqual(a: string, b: string) {
 }
 
 async function startHttp() {
-  const secret = process.env.MCP_AUTH_SECRET ?? '';
-  if (secret.length < 24) {
-    throw new Error('MCP_AUTH_SECRET (at least 24 characters) is required in HTTP mode: anyone with the URL could otherwise manage AI Studio.');
+  // One secret per client (comma-separated) so each can be rotated or revoked on its own.
+  const secrets = [process.env.MCP_AUTH_SECRET ?? '', ...(process.env.MCP_AUTH_SECRETS ?? '').split(',')]
+    .map((x) => x.trim()).filter(Boolean);
+  if (!secrets.length || secrets.some((x) => x.length < 24)) {
+    throw new Error('Set MCP_AUTH_SECRET (or MCP_AUTH_SECRETS, comma-separated), each at least 24 characters: anyone reaching the URL could otherwise manage AI Studio.');
   }
+  // A secret in the URL ends up in proxy and access logs, so it is opt-in (claude.ai / ChatGPT
+  // connectors that cannot send headers need it; keep access_log off for that location).
+  const allowUrlSecret = /^(1|true|yes)$/i.test(process.env.MCP_ALLOW_URL_SECRET ?? '');
   const port = Number(process.env.PORT ?? 8787);
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '25mb' }));
+  app.use(express.json({ limit: '10mb' }));
 
   // Accept the secret as a Bearer token or as the last path segment (/mcp/<secret>) for
   // connectors that cannot send custom headers.
   const auth = (req: Request, res: Response, next: NextFunction) => {
     const header = req.headers.authorization ?? '';
-    const given = header.startsWith('Bearer ') ? header.slice(7) : String(req.params.secret ?? '');
-    if (given && safeEqual(given, secret)) return next();
+    const given = header.startsWith('Bearer ') ? header.slice(7) : allowUrlSecret ? String(req.params.secret ?? '') : '';
+    if (given && secrets.some((x) => safeEqual(given, x))) return next();
     res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null });
   };
 
@@ -55,7 +60,7 @@ async function startHttp() {
   const notAllowed = (_req: Request, res: Response) =>
     res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed (stateless server).' }, id: null });
 
-  for (const path of ['/mcp', '/mcp/:secret']) {
+  for (const path of allowUrlSecret ? ['/mcp', '/mcp/:secret'] : ['/mcp']) {
     app.post(path, auth, handle);
     app.get(path, auth, notAllowed);
     app.delete(path, auth, notAllowed);

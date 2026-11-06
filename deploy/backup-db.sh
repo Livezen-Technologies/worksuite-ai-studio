@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#
+# Nightly database backup for WorkSuite AI Studio (installed as a cron job by install-server.sh).
+#
+#   APP_DIR=/var/www/ollamahub BACKUP_DIR=/var/backups/aistudio bash deploy/backup-db.sh
+#
+# Keeps KEEP_DAYS days locally. Set BACKUP_RSYNC_TARGET (e.g. backup@backup-host:/srv/aistudio/)
+# to also copy each dump off this server: a backup on the same disk does not survive losing it.
+#
+set -euo pipefail
+APP_DIR="${APP_DIR:-/var/www/ollamahub}"
+BACKUP_DIR="${BACKUP_DIR:-/var/backups/aistudio}"
+KEEP_DAYS="${KEEP_DAYS:-14}"
+
+env_get() { grep -E "^\s*$1\s*=" "${APP_DIR}/.env" | head -1 | sed -E 's/^[^=]+=\s*//; s/^"(.*)"$/\1/; s/\s+$//'; }
+DB=$(env_get database.default.database); USER=$(env_get database.default.username); PASS=$(env_get database.default.password)
+HOSTDB=$(env_get database.default.hostname); HOSTDB=${HOSTDB:-127.0.0.1}
+
+mkdir -p "${BACKUP_DIR}" && chmod 700 "${BACKUP_DIR}"
+OUT="${BACKUP_DIR}/nightly-$(date +%Y%m%d-%H%M%S).sql.gz"
+MYSQL_PWD="${PASS}" mysqldump --single-transaction --routines --no-tablespaces -h "${HOSTDB}" -u "${USER}" "${DB}" | gzip > "${OUT}.part"
+mv "${OUT}.part" "${OUT}"
+gzip -t "${OUT}"
+find "${BACKUP_DIR}" -name 'nightly-*.sql.gz' -mtime "+${KEEP_DAYS}" -delete
+
+if [ -n "${BACKUP_RSYNC_TARGET:-}" ]; then
+  rsync -a "${OUT}" "${BACKUP_RSYNC_TARGET}"
+fi
+echo "backup ok: ${OUT}"

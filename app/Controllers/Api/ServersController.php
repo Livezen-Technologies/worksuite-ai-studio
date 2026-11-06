@@ -151,6 +151,9 @@ class ServersController extends BaseApiController
         if ($errors = $this->validateFields($payload, $rules)) {
             return $this->failure($external ? 'A name and API key are required.' : 'Please check the server details.', 422, $errors);
         }
+        if ($why = \App\Services\UrlGuard::reason($payload['api_url'] ?? null)) {
+            return $this->failure($why, 422, ['api_url' => $why]);
+        }
 
         $m  = $this->servers();
         $id = $m->insert($payload, true);
@@ -178,6 +181,9 @@ class ServersController extends BaseApiController
         if (! $row) return $this->failure('Server not found.', 404);
 
         $payload = $this->sanitize($this->input(), true);
+        if ($why = \App\Services\UrlGuard::reason($payload['api_url'] ?? null)) {
+            return $this->failure($why, 422, ['api_url' => $why]);
+        }
         if (! $m->update((int) $id, $payload)) {
             return $this->failure('Could not update the server.', 422, $m->errors());
         }

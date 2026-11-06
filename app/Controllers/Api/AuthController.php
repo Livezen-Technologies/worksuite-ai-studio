@@ -34,6 +34,9 @@ class AuthController extends BaseApiController
         ])) {
             return $this->failure('Please provide a valid email and password.', 422, $errors);
         }
+        // Credential stuffing: 5 tries per account and 30 per IP (offices share one IP) per minute.
+        if ($r = $this->limit('ip', $this->request->getIPAddress(), 30)) return $r;
+        if ($r = $this->limit('email', strtolower(trim((string) $in['email'])), 5)) return $r;
 
         $users = new UserModel();
         $user  = $users->findByEmail(trim((string) $in['email']));
@@ -141,6 +144,7 @@ class AuthController extends BaseApiController
 
     public function passkey()
     {
+        if ($r = $this->limit('passkey', $this->request->getIPAddress(), 10)) return $r;
         $in      = $this->input();
         $payload = (new JwtService())->decodeStep((string) ($in['challenge_token'] ?? ''), 'webauthn_get');
         $cred    = is_array($in['credential'] ?? null) ? $in['credential'] : [];
@@ -174,6 +178,7 @@ class AuthController extends BaseApiController
 
     public function refresh()
     {
+        if ($r = $this->limit('refresh', $this->request->getIPAddress(), 30)) return $r;
         $in    = $this->input();
         $token = (string) ($in['refresh_token'] ?? '');
         $jwt   = new JwtService();
@@ -187,11 +192,15 @@ class AuthController extends BaseApiController
         if (! $full || ($full['status'] ?? '') !== 'active') {
             return $this->failure('Account is no longer active.', 401);
         }
+        // Signed out, password changed or sign-in reset since this token was issued.
+        if ((int) ($full['token_version'] ?? 0) !== (int) ($payload['tv'] ?? 0)) {
+            return $this->failure('Your session has ended. Please sign in again.', 401);
+        }
 
         return $this->ok([
             'access_token' => $jwt->generateAccessToken([
                 'id' => $full['id'], 'email' => $full['email'], 'name' => $full['name'],
-                'role' => $full['role'] ?? 'viewer',
+                'role' => $full['role'] ?? 'viewer', 'token_version' => $full['token_version'] ?? 0,
             ]),
             'token_type' => 'Bearer',
             'expires_in' => $jwt->accessTtl(),
@@ -210,7 +219,9 @@ class AuthController extends BaseApiController
 
     public function logout()
     {
-        // Stateless JWT — client discards the token. (Blacklist can be added later.)
+        // Revoke every token for this user: signing out ends the session on all devices, so a
+        // copied or stolen token stops working too.
+        (new UserModel())->revokeTokens($this->userId());
         return $this->ok(null, 'Signed out.');
     }
 
@@ -227,12 +238,20 @@ class AuthController extends BaseApiController
             'user'          => $full,
             'access_token'  => $jwt->generateAccessToken([
                 'id' => $full['id'], 'email' => $full['email'], 'name' => $full['name'],
-                'role' => $full['role'] ?? 'viewer',
+                'role' => $full['role'] ?? 'viewer', 'token_version' => $full['token_version'] ?? 0,
             ]),
-            'refresh_token' => $jwt->generateRefreshToken($userId),
+            'refresh_token' => $jwt->generateRefreshToken($userId, (int) ($full['token_version'] ?? 0)),
             'token_type'    => 'Bearer',
             'expires_in'    => $jwt->accessTtl(),
         ] + $extra, $message);
+    }
+
+    /** At most $perMinute attempts per minute for one bucket/subject (IP, email…). */
+    private function limit(string $bucket, string $subject, int $perMinute)
+    {
+        return service('throttler')->check('auth-' . $bucket . '-' . md5($subject), $perMinute, MINUTE)
+            ? null
+            : $this->failure('Too many attempts. Wait a minute and try again.', 429);
     }
 
     /** 5 code attempts per user per minute. */

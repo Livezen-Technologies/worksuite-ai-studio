@@ -98,7 +98,7 @@ class TotpService
 
     private function key(): string
     {
-        return hash('sha256', 'totp|' . env('JWT_SECRET', 'ollamahub-dev-secret-change-me-32-chars-minimum'), true);
+        return hash('sha256', 'totp|' . JwtService::secret(), true);
     }
 
     /** Turn TOTP on for a user (after they confirmed a code at $step); returns fresh recovery codes. */

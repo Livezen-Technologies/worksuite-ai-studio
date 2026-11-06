@@ -83,12 +83,17 @@ Put it behind your HTTPS reverse proxy (e.g. `https://aistudio.example.com/mcp-g
 and keep it running with systemd, pm2 or Docker. A health check is at `/healthz`.
 
 Generate the secret with e.g. `openssl rand -hex 32`. The server refuses to start in HTTP mode
-without one (at least 24 characters). Clients send it either as `Authorization: Bearer <secret>`
-or as the last path segment, `https://host/mcp/<secret>`, for connector UIs that cannot set headers.
-Treat that URL like a password.
+without one (at least 24 characters). Give each client its own secret with
+`MCP_AUTH_SECRETS=secretA,secretB` so you can revoke one without touching the others.
 
-- **claude.ai**: Settings → Connectors → *Add custom connector* → URL `https://your-host/mcp/<secret>`.
-- **ChatGPT**: Settings → Apps & Connectors → Advanced → turn on *Developer mode*, then *Create* a
+Clients send the secret as `Authorization: Bearer <secret>`. Connector UIs that cannot set headers
+(claude.ai, ChatGPT) need it in the URL instead, `https://host/mcp/<secret>`: turn that on with
+`MCP_ALLOW_URL_SECRET=true`, treat the URL like a password, and switch access logging off for
+`/mcp` on your reverse proxy (the commented `location /mcp` block in `deploy/nginx-ollamahub.conf`
+does this) so the secret never lands in log files.
+
+- **claude.ai** (needs `MCP_ALLOW_URL_SECRET=true`): Settings → Connectors → *Add custom connector* → URL `https://your-host/mcp/<secret>`.
+- **ChatGPT** (needs `MCP_ALLOW_URL_SECRET=true`): Settings → Apps & Connectors → Advanced → turn on *Developer mode*, then *Create* a
   connector with URL `https://your-host/mcp/<secret>` and authentication *No authentication*
   (the secret in the URL is the authentication).
 - **Any client that can send headers** (Claude Code `--transport http`, MCP Inspector, scripts):
@@ -103,7 +108,8 @@ Treat that URL like a password.
 | `AISTUDIO_TOTP_SECRET` | Base32 TOTP secret if the user has two-factor on |
 | `AISTUDIO_REFRESH_TOKEN` | Alternative to email/password; valid 14 days (browser localStorage `aistudio.refresh`) |
 | `AISTUDIO_MCP_READ_ONLY` | `true` exposes read tools only, and `api_request` allows GET only |
-| `MCP_AUTH_SECRET` | Required for `--http` |
+| `MCP_AUTH_SECRET` / `MCP_AUTH_SECRETS` | Required for `--http`; the second is a comma-separated list, one per client |
+| `MCP_ALLOW_URL_SECRET` | `true` accepts `/mcp/<secret>` for connectors that cannot send headers (default off) |
 | `PORT` | HTTP port, default 8787 |
 
 ## Notes

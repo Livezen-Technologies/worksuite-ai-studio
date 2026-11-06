@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# WorkSuite AI Studio — one-time server provisioning for Ubuntu 24.04 (target: 40.160.57.17).
+# WorkSuite AI Studio — one-time server provisioning for Ubuntu 24.04.
 # Installs the runtime, creates the database, configures nginx + php-fpm, runs
 # migrations/seeds, installs Ollama (CPU-only), Prometheus + node_exporter, and a
 # systemd queue worker + cron. Idempotent where practical. Run as the ubuntu user
-# with sudo:   bash install-server.sh
+# with sudo:
+#   OLLAMAHUB_DB_PASS=... AISTUDIO_DOMAIN=aistudio.example.com AISTUDIO_CERT_EMAIL=ops@example.com bash install-server.sh
 #
 set -euo pipefail
 
@@ -24,7 +25,10 @@ DB_PASS="${OLLAMAHUB_DB_PASS:?set OLLAMAHUB_DB_PASS before running}"
 sudo mysql <<SQL
 CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
-GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';
+-- Least privilege: data access plus the DDL migrations need. No routines, triggers, events,
+-- FILE or GRANT. (Existing installs: see docs/runbook.md "Tighten database privileges".)
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES, LOCK TABLES, CREATE TEMPORARY TABLES
+  ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 SQL
 
@@ -35,10 +39,18 @@ fi
 sudo systemctl enable --now ollama
 
 echo "==> nginx vhost"
-sudo cp "${APP_DIR}/deploy/nginx-ollamahub.conf" /etc/nginx/sites-available/ollamahub
+DOMAIN="${AISTUDIO_DOMAIN:?set AISTUDIO_DOMAIN (e.g. aistudio.example.com) before running}"
+CERT_EMAIL="${AISTUDIO_CERT_EMAIL:?set AISTUDIO_CERT_EMAIL for certificate expiry notices}"
+sudo cp "${APP_DIR}/deploy/nginx-security-headers.conf" /etc/nginx/snippets/aistudio-security.conf
+echo 'limit_req_zone $binary_remote_addr zone=aistudio_auth:10m rate=30r/m;' | sudo tee /etc/nginx/conf.d/aistudio-ratelimit.conf >/dev/null
+sed "s/__DOMAIN__/${DOMAIN}/" "${APP_DIR}/deploy/nginx-ollamahub.conf" | sudo tee /etc/nginx/sites-available/ollamahub >/dev/null
 sudo ln -sf /etc/nginx/sites-available/ollamahub /etc/nginx/sites-enabled/ollamahub
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
+
+echo "==> HTTPS (Let's Encrypt) + redirect HTTP -> HTTPS"
+sudo apt-get install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d "${DOMAIN}" --redirect --non-interactive --agree-tos -m "${CERT_EMAIL}"
 
 echo "==> App: composer install (no-dev), migrate, seed"
 cd "${APP_DIR}"
@@ -61,5 +73,16 @@ sudo systemctl enable --now ollamahub-queue
 ( crontab -l 2>/dev/null | grep -v 'spark schedule:run' ; \
   echo "* * * * * cd ${APP_DIR} && ${PHP} spark schedule:run >/dev/null 2>&1" ) | crontab -
 
+echo "==> Nightly database backup (03:17) -> /var/backups/aistudio"
+sudo mkdir -p /var/backups/aistudio && sudo chmod 700 /var/backups/aistudio
+( sudo crontab -l 2>/dev/null | grep -v 'deploy/backup-db.sh' ; \
+  echo "17 3 * * * APP_DIR=${APP_DIR} bash ${APP_DIR}/deploy/backup-db.sh >> /var/log/aistudio-backup.log 2>&1" ) | sudo crontab -
+echo "    Set BACKUP_RSYNC_TARGET in that cron line to copy backups off this server (see docs/runbook.md)."
+
+echo "==> Firewall: SSH, HTTP, HTTPS only"
+if command -v ufw >/dev/null 2>&1; then
+  sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw --force enable
+fi
+
 echo "==> Done. Pull a baseline model:  ollama pull llama3.2"
-echo "    Then register this node in WorkSuite AI Studio at  http://<host>/app/  (api_url http://127.0.0.1:11434)"
+echo "    Then register this node in WorkSuite AI Studio at  https://${DOMAIN}/app/  (api_url http://127.0.0.1:11434)"

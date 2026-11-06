@@ -13,7 +13,7 @@ class UserModel extends Model
     protected $useTimestamps    = true;
     protected $allowedFields    = [
         'name', 'email', 'password_hash', 'role_id', 'avatar', 'status', 'last_login_at',
-        'totp_secret', 'totp_enabled_at', 'totp_last_step', 'two_factor_required',
+        'totp_secret', 'totp_enabled_at', 'totp_last_step', 'two_factor_required', 'token_version',
     ];
 
     protected $validationRules = [
@@ -66,6 +66,26 @@ class UserModel extends Model
             ->where('rp.role_id', $roleId)
             ->get()->getResultArray();
         return array_column($rows, 'name');
+    }
+
+    /** Revoke every token issued to this user so far (sign out everywhere). */
+    public function revokeTokens(int $id): void
+    {
+        $this->db->table('users')->where('id', $id)->set('token_version', 'token_version + 1', false)->update();
+    }
+
+    /**
+     * What the auth filter needs per request: status, token version and current role slug.
+     * Null when the user no longer exists.
+     */
+    public function authState(int $id): ?array
+    {
+        $row = $this->db->table('users')
+            ->select('users.status, users.token_version, roles.name AS role')
+            ->join('roles', 'roles.id = users.role_id', 'left')
+            ->where('users.id', $id)
+            ->get()->getRowArray();
+        return $row ?: null;
     }
 
     public function hash(string $plain): string

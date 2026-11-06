@@ -2,12 +2,13 @@ import { ChevronRightIcon } from '@heroicons/react/16/solid';
 import { useAuth } from '../../lib/auth';
 import { Footer, Navbar, SitePage } from '../chrome';
 import { ApiGraphic, AppPreview, DatasetsGraphic, GatesGraphic, NetworkGraphic, SpeechGraphic, TrainingCard } from '../mocks';
-import { latestPost } from '../posts';
+import latest from 'virtual:latest-release';
+import { releaseSlug } from '../slug';
 import { AnimatedNumber, BentoCard, Button, Container, Gradient, Heading, Link, Subheading } from '../ui';
 
 function Hero() {
   const { user } = useAuth();
-  const post = latestPost();
+  const post = latest && { ...latest, slug: releaseSlug(latest.version, latest.title) };
   return (
     <div className="relative">
       <Gradient className="absolute inset-2 bottom-0 rounded-4xl ring-1 ring-black/5 ring-inset" />

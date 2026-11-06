@@ -1,0 +1,94 @@
+# WorkSuite AI Studio operations runbook
+
+Production: `https://aistudio.livezentech.com`, app in `/var/www/ollamahub`, database `ollamahub`.
+
+## Deploy
+
+From your machine, in the repository:
+
+```bash
+bash deploy/rsync-deploy.sh
+```
+
+It builds the frontend, **backs up the database on the server first**
+(`/var/backups/aistudio/predeploy-*.sql.gz`, last 10 kept), syncs the code, runs `composer install`,
+`php spark migrate --all`, clears the cache, restarts the queue worker and PHP-FPM, then pings
+`/api/ping`. It never deletes server-only files: `.env`, `writable/`, `public/node/downloads/`
+(desktop installers) and `public/uploads/`.
+
+Override the target with `DEPLOY_HOST`, `DEPLOY_DIR`, `DEPLOY_URL`.
+
+If a step fails, the script prints the backup to restore from (next section).
+
+## Backups
+
+- **Nightly:** `deploy/backup-db.sh` runs from root's crontab at 03:17 and keeps 14 days in
+  `/var/backups/aistudio`. Log: `/var/log/aistudio-backup.log`.
+- **Off the server:** a backup on the same disk does not survive losing the server. Add
+  `BACKUP_RSYNC_TARGET=backup@other-host:/srv/aistudio/` to the cron line (`sudo crontab -e`) and give
+  root an SSH key that can write there.
+- **In the app:** Storage → Backups also runs backups and can restore (Super Admin only).
+
+Check the latest backup: `ls -lt /var/backups/aistudio | head`.
+
+## Restore the database
+
+```bash
+cd /var/www/ollamahub
+sudo systemctl stop ollamahub-queue
+# Safety copy of the current state first
+APP_DIR=$PWD bash deploy/backup-db.sh
+# Restore (replace the file name)
+gunzip -c /var/backups/aistudio/predeploy-YYYYMMDD-HHMMSS.sql.gz | sudo mysql ollamahub
+sudo systemctl start ollamahub-queue
+```
+
+To roll the code back as well, check out the previous release locally and run the deploy script again
+(it migrates forward only; a restored database already has the older schema).
+
+## One-time steps for the existing server (from the security audit)
+
+Do these once on the current production server.
+
+1. **JWT secret.** The app now refuses to start in production without a real `JWT_SECRET`.
+   Check `/var/www/ollamahub/.env` has `JWT_SECRET` set to a random value of 32+ characters before
+   deploying. If it was missing (the old code silently used a public default), set one with
+   `openssl rand -hex 32`. Everyone will need to sign in again, and users with an authenticator app
+   must set it up again, because its secrets are encrypted with a key derived from `JWT_SECRET`.
+2. **Migrate.** The deploy runs it: adds `users.token_version` (sessions can now be revoked) and
+   renames the default site/sender name. After this deploy every existing session is still valid;
+   signing out now ends a user's sessions on all devices.
+3. **nginx.** Copy the security headers and the sign-in rate limit, then reload:
+   ```bash
+   sudo cp deploy/nginx-security-headers.conf /etc/nginx/snippets/aistudio-security.conf
+   echo 'limit_req_zone $binary_remote_addr zone=aistudio_auth:10m rate=30r/m;' | sudo tee /etc/nginx/conf.d/aistudio-ratelimit.conf
+   ```
+   Then merge `deploy/nginx-ollamahub.conf` into the live vhost, keeping its `listen 443 ssl` and
+   certificate lines (added by certbot), and run `sudo nginx -t && sudo systemctl reload nginx`.
+4. **Tighten database privileges:**
+   ```sql
+   REVOKE ALL PRIVILEGES ON ollamahub.* FROM 'ollamahub'@'localhost';
+   GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES, LOCK TABLES,
+         CREATE TEMPORARY TABLES ON ollamahub.* TO 'ollamahub'@'localhost';
+   FLUSH PRIVILEGES;
+   ```
+5. **Nightly backup and firewall** (if the server predates them):
+   ```bash
+   ( sudo crontab -l 2>/dev/null; echo "17 3 * * * APP_DIR=/var/www/ollamahub bash /var/www/ollamahub/deploy/backup-db.sh >> /var/log/aistudio-backup.log 2>&1" ) | sudo crontab -
+   sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw --force enable
+   ```
+
+## Security behaviour to know
+
+- **Sign-in rate limits:** 5 attempts per account and 30 per IP per minute (HTTP 429), plus nginx
+  damping on `/api/auth/login`.
+- **Sessions:** signing out, a password change, a role or status change, or "reset sign-in methods"
+  revokes the user's tokens at once. Suspended users and role changes take effect on the next request.
+- **Server URLs:** node and provider URLs may be loopback or private (normal for Ollama nodes) but not
+  link-local or cloud metadata addresses (e.g. `169.254.169.254`).
+
+## Health checks
+
+- `GET /api/ping`: public liveness.
+- `GET /api/health` (signed in): database, nodes, queue and storage.
+- Queue worker: `systemctl status ollamahub-queue`, logs in `writable/logs/`.

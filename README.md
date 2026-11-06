@@ -1,14 +1,14 @@
 # WorkSuite AI Studio
 
-Self-hosted AI control plane, live at https://aistudio.livezentech.com (server 40.160.57.17, `/var/www/ollamahub`).
+Self-hosted AI control plane, live at https://aistudio.livezentech.com (`/var/www/ollamahub`).
 
-- **Backend:** CodeIgniter 4 (`app/`, `spark`); `composer install` to restore `vendor/`.
-- **Frontend:** React + Ant Design, **built** into `public/app/`. The frontend source was not on the server and is
-  not in this repository yet.
-- **Deploy:** see `deploy/` (nginx config, `ollamahub-queue.service`, `install-server.sh`, `rsync-deploy.sh`,
-  `env.production.example`). Copy `env` or `deploy/env.production.example` to `.env`; never commit `.env`.
-
-Imported from the production server on 2026-10-24 (version in `VERSION`).
+- **Backend:** CodeIgniter 4 (`app/`, `spark`). `composer install`, then `vendor/bin/phpunit` for the tests.
+- **Frontend:** React + Tailwind source in `frontend/`, built into `public/app/` (`cd frontend && npm ci && npm run build`;
+  commit `public/app` with the change, CI checks they match).
+- **Deploy and operations:** [`docs/runbook.md`](docs/runbook.md) (deploy, backups, restore, server hardening).
+  Scripts and configs are in `deploy/`. Copy `env` or `deploy/env.production.example` to `.env`; never commit `.env`.
+- **CI:** `.github/workflows/ci.yml` runs backend tests, the frontend type-check/tests/build and the MCP server build
+  on every pull request.
 
 ## WorkSuite Sinhala AI Engine
 
