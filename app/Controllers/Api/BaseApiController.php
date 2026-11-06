@@ -5,7 +5,7 @@ namespace App\Controllers\Api;
 use CodeIgniter\RESTful\ResourceController;
 
 /**
- * Shared base for every OllamaHub JSON API controller.
+ * Shared base for every WorkSuite AI Studio JSON API controller.
  *
  * Provides the standard `{ status, message, data }` envelope plus helpers to
  * read the authenticated user from the JWT payload (set by JwtAuthFilter).

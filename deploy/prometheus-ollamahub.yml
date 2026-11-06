@@ -1,4 +1,4 @@
-# Minimal Prometheus config for OllamaHub. Scrapes the local node_exporter so the
+# Minimal Prometheus config for WorkSuite AI Studio. Scrapes the local node_exporter so the
 # Monitoring page shows real CPU/RAM/disk. Add a job per remote Ollama node (its
 # node_exporter, and an nvidia GPU exporter on GPU nodes) as you register them.
 global:

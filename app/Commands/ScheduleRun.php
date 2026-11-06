@@ -12,9 +12,9 @@ use App\Services\SchedulerService;
  */
 class ScheduleRun extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'schedule:run';
-    protected $description  = 'Run due OllamaHub scheduled jobs.';
+    protected $description  = 'Run due WorkSuite AI Studio scheduled jobs.';
 
     public function run(array $params)
     {

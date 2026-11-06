@@ -34,7 +34,7 @@ class Filters extends BaseFilters
         'forcehttps'    => ForceHTTPS::class,
         'pagecache'     => PageCache::class,
         'performance'   => PerformanceMetrics::class,
-        // OllamaHub
+        // WorkSuite AI Studio
         'jwt'           => \App\Filters\JwtAuthFilter::class,
         'apikey'        => \App\Filters\ApiKeyFilter::class,
         'audit'         => \App\Filters\AuditFilter::class,

@@ -14,7 +14,7 @@ use CodeIgniter\CLI\CLI;
  */
 class DatasetsExport extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'datasets:export';
     protected $description = 'Export a frozen dataset\'s train and dev splits (never test) as JSONL for training.';
     protected $usage       = 'datasets:export <id> <dir>';

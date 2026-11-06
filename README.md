@@ -1,4 +1,4 @@
-# WorkSuite AI Studio (OllamaHub)
+# WorkSuite AI Studio
 
 Self-hosted AI control plane, live at https://aistudio.livezentech.com (server 40.160.57.17, `/var/www/ollamahub`).
 

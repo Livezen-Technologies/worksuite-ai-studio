@@ -57,7 +57,7 @@ class NotificationsController extends BaseApiController
     public function test()
     {
         if ($r = $this->requirePermission('notifications.manage')) return $r;
-        $report = (new NotificationService())->dispatch('OllamaHub test', 'This is a test notification from OllamaHub.');
+        $report = (new NotificationService())->dispatch('WorkSuite AI Studio test', 'This is a test notification from WorkSuite AI Studio.');
         return $this->ok(['channels' => $report], 'Test dispatched.');
     }
 }

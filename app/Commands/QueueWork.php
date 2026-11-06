@@ -12,9 +12,9 @@ use App\Services\QueueService;
  */
 class QueueWork extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'queue:work';
-    protected $description  = 'Process pending OllamaHub background jobs.';
+    protected $description  = 'Process pending WorkSuite AI Studio background jobs.';
     protected $usage       = 'queue:work [--limit N]';
 
     public function run(array $params)

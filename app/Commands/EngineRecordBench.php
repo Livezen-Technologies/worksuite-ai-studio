@@ -14,7 +14,7 @@ use CodeIgniter\CLI\CLI;
  */
 class EngineRecordBench extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'engine:record-bench';
     protected $description = 'Record a server benchmark results.json as gated Engine evaluations.';
     protected $usage       = 'engine:record-bench <results.json> [--package id]';
