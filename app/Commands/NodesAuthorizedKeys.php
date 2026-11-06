@@ -11,7 +11,7 @@ use CodeIgniter\CLI\BaseCommand;
  */
 class NodesAuthorizedKeys extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'nodes:authorized-keys';
     protected $description = 'Print authorized_keys lines for enrolled nodes (used by sshd).';
 

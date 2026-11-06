@@ -24,7 +24,7 @@ use CodeIgniter\CLI\CLI;
  */
 class DatasetsOrganize extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'datasets:organize';
     protected $description = 'Categorise datasets for training and build a balanced, frozen training mix.';
     protected $usage       = 'datasets:organize [--standardize] [--mix] [--target 60000] [--dry-run]';

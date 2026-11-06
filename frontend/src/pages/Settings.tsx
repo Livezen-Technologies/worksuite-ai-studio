@@ -25,7 +25,7 @@ const GROUPS: GroupDef[] = [
     key: 'general', label: 'General', icon: BuildingOfficeIcon, description: 'Name, organisation and locale.',
     sections: [
       { title: 'Identity', description: 'How this installation names itself.', fields: [
-        { key: 'site_name', label: 'Site name', placeholder: 'OllamaHub' },
+        { key: 'site_name', label: 'Site name', placeholder: 'WorkSuite AI Studio' },
         { key: 'company_name', label: 'Company name' },
       ] },
       { title: 'Locale', description: 'Defaults for dates and the interface language.', fields: [

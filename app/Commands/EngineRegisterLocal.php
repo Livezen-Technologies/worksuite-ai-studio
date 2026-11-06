@@ -14,7 +14,7 @@ use CodeIgniter\CLI\CLI;
  */
 class EngineRegisterLocal extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'engine:register-local';
     protected $description = 'Register the Local models set (Whisper sizes + vision) as Engine candidate packages.';
     protected $usage       = 'engine:register-local [--dry-run]';

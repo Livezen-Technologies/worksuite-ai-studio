@@ -12,7 +12,7 @@ use CodeIgniter\CLI\CLI;
  */
 class DatasetsFreeze extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'datasets:freeze';
     protected $description = 'Freeze a rights-approved dataset into grouped train/dev/test splits (new manifest version).';
     protected $usage       = 'datasets:freeze <id> [--train 0.8] [--dev 0.1]';

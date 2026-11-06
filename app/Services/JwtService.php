@@ -6,7 +6,7 @@ namespace App\Services;
  * JwtService — self-contained HMAC-SHA256 JWT (no external deps).
  *
  * Issues short-lived access tokens and longer-lived refresh tokens for the
- * OllamaHub admin/dashboard API. Adapted from the Livezen POS pattern.
+ * WorkSuite AI Studio admin/dashboard API. Adapted from the Livezen POS pattern.
  */
 class JwtService
 {

@@ -13,7 +13,7 @@ class SettingsService
     /** group => [key => default] */
     public const DEFAULTS = [
         'general' => [
-            'site_name' => 'OllamaHub', 'company_name' => '', 'timezone' => 'UTC', 'language' => 'en',
+            'site_name' => 'WorkSuite AI Studio', 'company_name' => '', 'timezone' => 'UTC', 'language' => 'en',
         ],
         'ai' => [
             'default_model' => '', 'streaming' => '1', 'timeout' => '300',
@@ -21,7 +21,7 @@ class SettingsService
         ],
         'smtp' => [
             'host' => '', 'port' => '587', 'username' => '', 'password' => '',
-            'encryption' => 'tls', 'from_email' => '', 'from_name' => 'OllamaHub',
+            'encryption' => 'tls', 'from_email' => '', 'from_name' => 'WorkSuite AI Studio',
         ],
         'storage' => [
             'driver' => 'local', 's3_bucket' => '', 's3_region' => '',

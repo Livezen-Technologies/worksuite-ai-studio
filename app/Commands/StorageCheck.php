@@ -9,7 +9,7 @@ use CodeIgniter\CLI\CLI;
 /** `spark storage:check [node id]` — run storage health checks now (the scheduler does it every 5 minutes). */
 class StorageCheck extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'storage:check';
     protected $description = 'Check one storage node, or every node that is not retired, and evaluate alert rules.';
     protected $usage       = 'storage:check [node id]';

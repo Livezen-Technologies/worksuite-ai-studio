@@ -9,7 +9,7 @@ use CodeIgniter\CLI\CLI;
 /** `spark datasets:import-speech <dataset id> <zip>` — import a zip of recordings + transcripts on the server (large sets). */
 class DatasetsImportSpeech extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'datasets:import-speech';
     protected $description = 'Import a zip of recordings and transcripts into a speech dataset (as the Datasets page does).';
     protected $usage       = 'datasets:import-speech <dataset id> <zip path>';

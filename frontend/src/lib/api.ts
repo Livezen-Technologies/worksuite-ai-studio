@@ -1,5 +1,5 @@
 /**
- * The OllamaHub API client. Every JSON endpoint answers `{ status, message, data }`
+ * The WorkSuite AI Studio API client. Every JSON endpoint answers `{ status, message, data }`
  * (BaseApiController); `api()` returns `data` and throws ApiError with the server's message.
  * A 401 refreshes the access token once (POST /api/auth/refresh) and retries.
  */

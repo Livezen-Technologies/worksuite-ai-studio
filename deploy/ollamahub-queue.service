@@ -1,8 +1,8 @@
-# systemd unit: OllamaHub background queue worker.
+# systemd unit: WorkSuite AI Studio background queue worker.
 # Processes jobs in a loop (sleeps when idle). Install to
 # /etc/systemd/system/ollamahub-queue.service then: systemctl enable --now ollamahub-queue
 [Unit]
-Description=OllamaHub queue worker
+Description=WorkSuite AI Studio queue worker
 After=network.target mysql.service
 
 [Service]

@@ -11,7 +11,7 @@ use CodeIgniter\CLI\CLI;
 /** `spark training:finalize <job>` — build the job's custom LLM (merge → GGUF → quantize → Ollama). Started in the background. */
 class TrainingFinalize extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'training:finalize';
     protected $description = 'Finish a trained job: build its custom LLM (merge, GGUF, Ollama) or install its classifier.';
     protected $usage       = 'training:finalize <job id>';

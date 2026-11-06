@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# OllamaHub — one-time server provisioning for Ubuntu 24.04 (target: 40.160.57.17).
+# WorkSuite AI Studio — one-time server provisioning for Ubuntu 24.04 (target: 40.160.57.17).
 # Installs the runtime, creates the database, configures nginx + php-fpm, runs
 # migrations/seeds, installs Ollama (CPU-only), Prometheus + node_exporter, and a
 # systemd queue worker + cron. Idempotent where practical. Run as the ubuntu user
@@ -62,4 +62,4 @@ sudo systemctl enable --now ollamahub-queue
   echo "* * * * * cd ${APP_DIR} && ${PHP} spark schedule:run >/dev/null 2>&1" ) | crontab -
 
 echo "==> Done. Pull a baseline model:  ollama pull llama3.2"
-echo "    Then register this node in OllamaHub at  http://<host>/app/  (api_url http://127.0.0.1:11434)"
+echo "    Then register this node in WorkSuite AI Studio at  http://<host>/app/  (api_url http://127.0.0.1:11434)"

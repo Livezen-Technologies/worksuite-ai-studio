@@ -24,7 +24,7 @@ use CodeIgniter\CLI\CLI;
  */
 class DatasetsImport extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'datasets:import';
     protected $description = 'Import a server-side JSONL/JSON/CSV file into a dataset, recording source and rights.';
     protected $usage       = 'datasets:import <file> [--name N] [--dataset ID] [--language si] [--task text] [--description D] [--source S] [--use U] [--rights R] [--approve]';

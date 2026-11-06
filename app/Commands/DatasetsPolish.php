@@ -25,7 +25,7 @@ use CodeIgniter\CLI\CLI;
  */
 class DatasetsPolish extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'datasets:polish';
     protected $description = 'Normalise text, drop junk rows and remove duplicates (inside and across datasets) in SQL.';
     protected $usage       = 'datasets:polish [id …] [--cross] [--drop-empty] [--dry-run]';

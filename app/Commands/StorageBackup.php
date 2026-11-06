@@ -9,7 +9,7 @@ use CodeIgniter\CLI\CLI;
 /** `spark storage:backup <run id>` — the detached process behind one backup run (started by the scheduler or Run now). */
 class StorageBackup extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'storage:backup';
     protected $description = 'Dump the database for one backup run and store it in the object store.';
     protected $usage       = 'storage:backup <run id>';

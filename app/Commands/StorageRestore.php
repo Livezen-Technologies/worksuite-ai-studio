@@ -9,7 +9,7 @@ use CodeIgniter\CLI\CLI;
 /** `spark storage:restore` — the detached process behind a database restore started on the Backups tab. */
 class StorageRestore extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'storage:restore';
     protected $description = 'Run the pending database restore (started from Storage → Backups).';
 

@@ -8,7 +8,7 @@ use CodeIgniter\CLI\BaseCommand;
 /** `spark ml:train-table <model id> [task]` — the detached trainer behind a new table model (started by the API). */
 class MlTrainTable extends BaseCommand
 {
-    protected $group       = 'OllamaHub';
+    protected $group       = 'WorkSuite AI Studio';
     protected $name        = 'ml:train-table';
     protected $description = 'Train a table model (classic ML on its uploaded CSV) and register the result.';
     protected $usage       = 'ml:train-table <model id> [auto|classification|regression]';
