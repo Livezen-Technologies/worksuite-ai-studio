@@ -31,3 +31,32 @@ body { @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
 }
+
+/*
+ * Scrollbars: slim, rounded, theme-aware. WebKit/Blink get the pseudo-element styling (rounded thumb,
+ * hover state, inset via a transparent border); Firefox falls back to the standard properties.
+ */
+:root {
+  --scrollbar-thumb: var(--color-slate-300);
+  --scrollbar-thumb-hover: var(--color-slate-400);
+  --scrollbar-track: transparent;
+}
+.dark {
+  --scrollbar-thumb: var(--color-slate-700);
+  --scrollbar-thumb-hover: var(--color-slate-600);
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-clip: content-box;
+  min-height: 32px;
+}
+::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); }
+::-webkit-scrollbar-thumb:active { background-color: var(--scrollbar-thumb-hover); }
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+}
