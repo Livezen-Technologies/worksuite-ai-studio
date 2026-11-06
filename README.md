@@ -5,6 +5,8 @@ Self-hosted AI control plane, live at https://aistudio.livezentech.com (`/var/ww
 - **Backend:** CodeIgniter 4 (`app/`, `spark`). `composer install`, then `vendor/bin/phpunit` for the tests.
 - **Frontend:** React + Tailwind source in `frontend/`, built into `public/app/` (`cd frontend && npm ci && npm run build`;
   commit `public/app` with the change, CI checks they match).
+- **Docs:** [architecture](docs/architecture.md), [local development](docs/development.md),
+  [API reference](docs/api-reference.md).
 - **Deploy and operations:** [`docs/runbook.md`](docs/runbook.md) (deploy, backups, restore, server hardening).
   Scripts and configs are in `deploy/`. Copy `env` or `deploy/env.production.example` to `.env`; never commit `.env`.
 - **CI:** `.github/workflows/ci.yml` runs backend tests, the frontend type-check/tests/build and the MCP server build

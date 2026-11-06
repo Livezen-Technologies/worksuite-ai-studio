@@ -19,7 +19,9 @@ cat > /usr/local/bin/aistudio-node-keys <<EOF
 #!/bin/sh
 # sshd AuthorizedKeysCommand: keys of enrolled AI Studio nodes (see app/Services/NodeEnrolmentService.php).
 [ "\$1" = nodetunnel ] || exit 0
-exec ${PHP} ${APP}/spark --no-header nodes:authorized-keys 2>/dev/null
+# stdout must be keys only (sshd reads it); errors go to syslog instead of being dropped, so a
+# broken key lookup (all node tunnels refused) shows up in: journalctl -t aistudio-node-keys
+{ ${PHP} ${APP}/spark --no-header nodes:authorized-keys 2>&1 1>&3 3>&- | logger -t aistudio-node-keys; } 3>&1
 EOF
 chown root:root /usr/local/bin/aistudio-node-keys
 chmod 755 /usr/local/bin/aistudio-node-keys
