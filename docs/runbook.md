@@ -93,6 +93,13 @@ Do these once on the current production server.
    somewhere the sandbox now protects, add that directory as `ReadWritePaths=` in its unit.
    Alerts appear on Prometheus' `/alerts` page; add an Alertmanager to receive them by email or Slack.
 
+7. **Scheduler as www-data** (1.28.1): the per-minute `spark schedule:run` cron must run as the
+   owner of `writable/`, not as `ubuntu`:
+   ```bash
+   crontab -l | grep -v 'spark schedule:run' | crontab -
+   ( sudo crontab -u www-data -l 2>/dev/null | grep -v 'spark schedule:run' ; echo "* * * * * cd /var/www/ollamahub && php8.3 spark schedule:run >> /var/www/ollamahub/writable/logs/schedule.log 2>&1" ) | sudo crontab -u www-data -
+   ```
+
 ## Security behaviour to know
 
 - **Sign-in rate limits:** 5 attempts per account and 30 per IP per minute (HTTP 429), plus nginx
@@ -103,6 +110,9 @@ Do these once on the current production server.
   Workspace), speech datasets a zip up to 4 GB, knowledge documents text formats up to 20 MB.
 - **Audit log:** besides every change, it records downloads and exports and every sign-in attempt
   (the email tried, never the password). A failed audit write is logged to `writable/logs`.
+- **Administration ceiling:** outside super admin, nobody can assign, edit or delete a user or role
+  with more access than their own, change their own role, or grant permissions they lack. The last
+  active super admin cannot be demoted or suspended. Database backups are super-admin only.
 - **Server URLs:** node and provider URLs may be loopback or private (normal for Ollama nodes) but not
   link-local or cloud metadata addresses (e.g. `169.254.169.254`).
 

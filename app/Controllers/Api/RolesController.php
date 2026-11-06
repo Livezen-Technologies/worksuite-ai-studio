@@ -37,6 +37,9 @@ class RolesController extends BaseApiController
         if ($errors = $this->validateFields($in, ['label' => 'required|min_length[2]|max_length[100]'])) {
             return $this->failure('A role name is required.', 422, $errors);
         }
+        if (! $this->holdsPermissionIds((array) ($in['permission_ids'] ?? []))) {
+            return $this->failure('You can only grant permissions you have yourself.', 403);
+        }
         $slug = $this->slug($in['name'] ?? $in['label']);
         if ($this->roles()->where('name', $slug)->first()) {
             return $this->failure('A role with that name already exists.', 422);
@@ -56,8 +59,12 @@ class RolesController extends BaseApiController
         if ($r = $this->requirePermission('roles.manage')) return $r;
         $role = $this->roles()->find((int) $id);
         if (! $role) return $this->failure('Role not found.', 404);
+        if ($why = $this->roleEditProblem($role)) return $this->failure($why, 403);
 
         $in = $this->input();
+        if (array_key_exists('permission_ids', $in) && is_array($in['permission_ids']) && ! $this->holdsPermissionIds($in['permission_ids'])) {
+            return $this->failure('You can only grant permissions you have yourself.', 403);
+        }
         $data = [];
         foreach (['label', 'description'] as $f) {
             if (isset($in[$f])) $data[$f] = $in[$f];
@@ -79,6 +86,7 @@ class RolesController extends BaseApiController
         $role = $this->roles()->find((int) $id);
         if (! $role) return $this->failure('Role not found.', 404);
         if ((int) $role['is_system'] === 1) return $this->failure('System roles cannot be deleted.', 422);
+        if ($why = $this->roleEditProblem($role)) return $this->failure($why, 403);
 
         $inUse = \Config\Database::connect()->table('users')->where('role_id', $id)->where('deleted_at', null)->countAllResults();
         if ($inUse > 0) return $this->failure("This role is assigned to {$inUse} user(s).", 422);
@@ -90,5 +98,16 @@ class RolesController extends BaseApiController
     private function slug(string $s): string
     {
         return preg_replace('/[^a-z0-9_]+/', '_', strtolower(trim($s)));
+    }
+
+    /**
+     * Outside super admin: no editing your own role (that would raise your own access), and no
+     * editing a role more powerful than yours.
+     */
+    private function roleEditProblem(array $role): ?string
+    {
+        if ($this->isSuperAdmin()) return null;
+        if ($role['name'] === $this->userRole()) return 'You cannot change your own role. Ask someone above you.';
+        return $this->withinMyPrivileges($role) ? null : 'You cannot change a role with more access than your own.';
     }
 }

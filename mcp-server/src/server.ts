@@ -34,11 +34,11 @@ function inputShape(def: ToolDef): Record<string, ZodTypeAny> {
     shape[key] = def.params?.[key] ?? z.number().int().positive().describe(`${key}`);
   }
   if (def.query) {
-    shape.query = z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
+    shape.query = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional()
       .describe('Optional query-string filters, e.g. {"search":"llama","page":1,"per_page":50}');
   }
   if (def.body !== undefined) {
-    shape.data = z.record(z.any()).optional().describe(`Request body. Fields: ${def.body}`);
+    shape.data = z.record(z.string(), z.any()).optional().describe(`Request body. Fields: ${def.body}`);
   }
   return shape;
 }
@@ -87,8 +87,8 @@ export function buildServer(client: AiStudioClient, opts: { readOnly?: boolean }
       inputSchema: {
         method: z.enum(methods as unknown as [string, ...string[]]).describe('HTTP method'),
         path: z.string().regex(/^\/(?!auth\/)[\w\-/.]*$/, 'Path under /api, e.g. /servers/3 (auth routes are not allowed)').describe('Path relative to /api'),
-        query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Query-string parameters'),
-        data: z.record(z.any()).optional().describe('JSON body for POST/PUT/DELETE'),
+        query: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional().describe('Query-string parameters'),
+        data: z.record(z.string(), z.any()).optional().describe('JSON body for POST/PUT/DELETE'),
       },
       annotations: { title: API_REQUEST_TOOL.title, readOnlyHint: !!opts.readOnly, destructiveHint: !opts.readOnly, openWorldHint: false },
     },

@@ -22,6 +22,12 @@ sudo apt-get install -y nginx mysql-server redis-server \
 
 echo "==> Creating database + app DB user"
 DB_PASS="${OLLAMAHUB_DB_PASS:?set OLLAMAHUB_DB_PASS before running}"
+# The password goes into SQL, sed and .env: keep it to characters that are safe in all three.
+# Generate one with:  openssl rand -hex 24
+if ! [[ "${DB_PASS}" =~ ^[A-Za-z0-9._-]{16,}$ ]]; then
+  echo "OLLAMAHUB_DB_PASS must be 16+ characters of letters, digits, '.', '_' or '-' (try: openssl rand -hex 24)." >&2
+  exit 1
+fi
 sudo mysql <<SQL
 CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
@@ -83,8 +89,10 @@ echo "==> systemd queue worker + schedule cron"
 sudo cp "${APP_DIR}/deploy/ollamahub-queue.service" /etc/systemd/system/ollamahub-queue.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now ollamahub-queue
-( crontab -l 2>/dev/null | grep -v 'spark schedule:run' ; \
-  echo "* * * * * cd ${APP_DIR} && ${PHP} spark schedule:run >/dev/null 2>&1" ) | crontab -
+# Runs as www-data, the owner of writable/ (logs, cache, uploads), like PHP-FPM and the queue.
+( sudo crontab -u www-data -l 2>/dev/null | grep -v 'spark schedule:run' ; \
+  echo "* * * * * cd ${APP_DIR} && ${PHP} spark schedule:run >> ${APP_DIR}/writable/logs/schedule.log 2>&1" ) | sudo crontab -u www-data -
+crontab -l 2>/dev/null | grep -v 'spark schedule:run' | crontab - || true   # remove an old ubuntu-user entry
 
 echo "==> Nightly database backup (03:17) -> /var/backups/aistudio"
 sudo mkdir -p /var/backups/aistudio && sudo chmod 700 /var/backups/aistudio
@@ -95,7 +103,7 @@ echo "    Set BACKUP_RSYNC_TARGET in that cron line to copy backups off this ser
 echo "==> Log housekeeping: app logs kept 30 days, backup log rotated weekly"
 ( sudo crontab -l 2>/dev/null | grep -v 'writable/logs' ; \
   echo "41 4 * * * find ${APP_DIR}/writable/logs -name 'log-*.log' -mtime +30 -delete" ) | sudo crontab -
-printf '/var/log/aistudio-backup.log {\n  weekly\n  rotate 8\n  compress\n  missingok\n  notifempty\n}\n' | sudo tee /etc/logrotate.d/aistudio >/dev/null
+printf '/var/log/aistudio-backup.log %s/writable/logs/schedule.log {\n  weekly\n  rotate 8\n  compress\n  missingok\n  notifempty\n  copytruncate\n}\n' "${APP_DIR}" | sudo tee /etc/logrotate.d/aistudio >/dev/null
 
 echo "==> Firewall: SSH, HTTP, HTTPS only"
 if command -v ufw >/dev/null 2>&1; then

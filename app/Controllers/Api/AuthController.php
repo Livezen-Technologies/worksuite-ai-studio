@@ -196,6 +196,10 @@ class AuthController extends BaseApiController
         if ((int) ($full['token_version'] ?? 0) !== (int) ($payload['tv'] ?? 0)) {
             return $this->failure('Your session has ended. Please sign in again.', 401);
         }
+        // 2FA became required for this account: no new tokens until it is set up at sign-in.
+        if (! empty($full['two_factor_required']) && empty($full['totp_enabled_at'])) {
+            return $this->failure('Two-factor authentication is now required. Please sign in again to set it up.', 401);
+        }
 
         return $this->ok([
             'access_token' => $jwt->generateAccessToken([

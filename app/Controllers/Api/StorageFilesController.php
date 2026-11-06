@@ -52,6 +52,7 @@ class StorageFilesController extends BaseApiController
         $f = $this->request->getFile('file');
         if (! $f || ! $f->isValid()) return $this->failure('Choose a file to upload.', 422);
         $app = (string) ($this->request->getPost('app') ?: 'files');
+        if ($r = $this->guardBackups(['app' => $app])) return $r;
         $folder = trim((string) $this->request->getPost('folder'), '/');
         $key = (string) ($this->request->getPost('key') ?: ($folder !== '' ? $folder . '/' : '') . $f->getClientName());
         try {
@@ -82,6 +83,7 @@ class StorageFilesController extends BaseApiController
         if ($r = $this->requirePermission('storage.view')) return $r;
         $o = $this->live((int) $id);
         if (! $o) return $this->failure('File not found.', 404);
+        if ($r = $this->guardBackups($o)) return $r;
         try { $tmp = (new ObjectStoreService())->fetch($o); }
         catch (\RuntimeException $e) { return $this->failure($e->getMessage(), 503); }
         register_shutdown_function(fn () => @unlink($tmp));
@@ -93,6 +95,7 @@ class StorageFilesController extends BaseApiController
         if ($r = $this->requirePermission('storage.manage')) return $r;
         $o = $this->live((int) $id);
         if (! $o) return $this->failure('File not found.', 404);
+        if ($r = $this->guardBackups($o)) return $r;
         $key = trim(preg_replace('#/+#', '/', str_replace('\\', '/', (string) ($this->input()['key'] ?? ''))), '/');
         if ($key === '' || str_contains($key, '..')) return $this->failure('Give the file a path, e.g. reports/2026/q3.pdf.', 422);
         if ($this->db()->table('storage_objects')->where(['app' => $o['app'], 'object_key' => $key, 'deleted_at' => null])->where('id !=', $o['id'])->countAllResults()) {
@@ -105,7 +108,9 @@ class StorageFilesController extends BaseApiController
     public function delete($id = null)
     {
         if ($r = $this->requirePermission('storage.manage')) return $r;
-        if (! $this->live((int) $id)) return $this->failure('File not found.', 404);
+        $o = $this->live((int) $id);
+        if (! $o) return $this->failure('File not found.', 404);
+        if ($r = $this->guardBackups($o)) return $r;
         (new ObjectStoreService())->remove((int) $id);
         return $this->ok(null, 'Deleted. Its copies are removed in the background.');
     }
@@ -115,6 +120,7 @@ class StorageFilesController extends BaseApiController
         if ($r = $this->requirePermission('storage.manage')) return $r;
         $o = $this->live((int) $id);
         if (! $o) return $this->failure('File not found.', 404);
+        if ($r = $this->guardBackups($o)) return $r;
         $in = $this->input();
         $from = (int) ($in['from_node'] ?? 0);
         if (! in_array($from, array_map('intval', array_column($o['placements'], 'node_id')), true)) return $this->failure('That node holds no copy of this file.', 422);
@@ -231,5 +237,17 @@ class StorageFilesController extends BaseApiController
         } catch (\InvalidArgumentException $e) { return $this->failure($e->getMessage(), 422); }
         catch (\RuntimeException $e) { return $this->failure($e->getMessage(), 409); }
         return $this->ok($s, 'Restore started.');
+    }
+
+    /**
+     * Database backups are full dumps (password hashes, encrypted 2FA secrets, API key hashes):
+     * only a super admin may download, move, rename, delete or add files in the backups area.
+     */
+    private function guardBackups(array $object)
+    {
+        if (($object['app'] ?? '') === 'backups' && ! $this->isSuperAdmin()) {
+            return $this->failure('Only a super admin can access database backups.', 403);
+        }
+        return null;
     }
 }
