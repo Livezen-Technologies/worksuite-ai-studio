@@ -1,26 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { CpuChipIcon, StopIcon, WrenchScrewdriverIcon } from '@heroicons/react/24/outline';
 import {
-  ArrowUpTrayIcon, CpuChipIcon, DocumentDuplicateIcon, SparklesIcon, StopIcon, WrenchScrewdriverIcon, XMarkIcon,
-} from '@heroicons/react/24/outline';
-import {
-  Alert, Badge, Button, Card, CardHeader, CodeBlock, EmptyState, ErrorState, Input, Meter, PageHeader, Segmented,
-  Select, Skeleton, Textarea, useToast, cx,
+  Alert, Button, Card, CardHeader, EmptyState, ErrorState, Input, PageHeader, Segmented,
+  Select, Skeleton, Textarea, useToast,
 } from '../components/ui';
-import { ApiError, get, post, streamNdjson } from '../lib/api';
+import { get, streamNdjson } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { bytes } from '../lib/format';
 import { uploadWithProgress } from './SinLama/upload';
-
-interface Server { id: number; name: string; kind?: string; status?: string; is_enabled?: boolean }
-interface NodeModel { id: number; name: string; server_id: number }
-interface Preset { key: string; label: string; name: string; system: string; parameters: { temperature?: number; num_ctx?: number } }
-interface Blob { digest: string; filename: string; size: number }
-interface Upload { file: File; progress: number; blob?: Blob; error?: string }
-type Mode = 'customize' | 'import';
-
-const NAME_RE = /^[a-z0-9][a-z0-9._/-]*(:[a-z0-9._-]+)?$/i;
-const QUANTS = ['q4_K_M', 'q4_K_S', 'q8_0'];
+import AdvancedOptions from './Studio/AdvancedOptions';
+import BuildProgress from './Studio/BuildProgress';
+import CopyCard from './Studio/CopyCard';
+import ModelSource from './Studio/ModelSource';
+import PresetList from './Studio/PresetList';
+import { NAME_RE, QUANTS, type Blob, type Mode, type NodeModel, type Preset, type Server, type Upload } from './Studio/shared';
 
 export default function Studio() {
   const toast = useToast();
@@ -215,29 +208,11 @@ export default function Studio() {
                   />
                 </div>
 
-                {mode === 'customize' ? (
-                  <Select
-                    label="Base model (installed on the node)"
-                    required
-                    value={from}
-                    onChange={(e) => setFrom(e.target.value)}
-                    options={modelOptions}
-                    placeholder={models.isLoading ? 'Loading models…' : modelOptions.length ? 'Select a model' : 'No models on this node — install one first'}
-                    error={errors.from}
-                    disabled={disabled || !serverId}
-                  />
-                ) : (
-                  <FilePick
-                    label="Trained model (.gguf)"
-                    hint="A full GGUF exported by a training kit. Large files are fine — it is streamed into the node's blob store."
-                    upload={gguf}
-                    error={errors.gguf}
-                    disabled={disabled || !serverId}
-                    onPick={() => ggufInput.current?.click()}
-                    onClear={() => setGguf(null)}
-                  />
-                )}
-                <input ref={ggufInput} type="file" accept=".gguf" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f, 'gguf'); e.target.value = ''; }} />
+                <ModelSource
+                  mode={mode} from={from} setFrom={setFrom} modelOptions={modelOptions} modelsLoading={models.isLoading}
+                  gguf={gguf} setGguf={setGguf} errors={errors} disabled={disabled} serverId={serverId}
+                  ggufInput={ggufInput} onUpload={(f) => upload(f, 'gguf')}
+                />
 
                 <Textarea
                   label="System prompt (persona)"
@@ -255,30 +230,11 @@ export default function Studio() {
                   <Select label="Quantize (optional)" value={quantize} onChange={(e) => setQuantize(e.target.value)} options={QUANTS.map((q) => ({ value: q, label: q }))} placeholder="Keep as-is" disabled={disabled} />
                 </div>
 
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setShowAdvanced((v) => !v)}
-                    className="text-sm font-medium text-brand-600 hover:text-brand-500 dark:text-blue-400 dark:hover:text-blue-300"
-                    aria-expanded={showAdvanced}
-                  >
-                    {showAdvanced ? 'Hide' : 'Show'} advanced: LoRA adapter / chat template
-                  </button>
-                  {showAdvanced && (
-                    <div className="mt-4 space-y-4 rounded-lg border border-slate-200 p-4 dark:border-white/10">
-                      <FilePick
-                        label="LoRA adapter"
-                        hint="An adapter from a training run, applied on top of the base model."
-                        upload={adapter}
-                        disabled={disabled || !serverId}
-                        onPick={() => adapterInput.current?.click()}
-                        onClear={() => setAdapter(null)}
-                      />
-                      <input ref={adapterInput} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f, 'adapter'); e.target.value = ''; }} />
-                      <Textarea label="Chat template (rarely needed)" rows={4} value={template} onChange={(e) => setTemplate(e.target.value)} className="font-mono" placeholder="{{ .System }} {{ .Prompt }}" disabled={disabled} />
-                    </div>
-                  )}
-                </div>
+                <AdvancedOptions
+                  showAdvanced={showAdvanced} setShowAdvanced={setShowAdvanced} adapter={adapter} setAdapter={setAdapter}
+                  template={template} setTemplate={setTemplate} disabled={disabled} serverId={serverId}
+                  adapterInput={adapterInput} onUpload={(f) => upload(f, 'adapter')}
+                />
 
                 <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 pt-4 dark:border-white/10">
                   {building && <Button variant="secondary" icon={StopIcon} onClick={() => abortRef.current?.abort()}>Stop</Button>}
@@ -295,50 +251,12 @@ export default function Studio() {
             </Card>
 
             {(building || log.length > 0 || result) && (
-              <Card>
-                <CardHeader
-                  title="Build progress"
-                  actions={building ? <Badge tone="blue" dot>Building</Badge> : result ? <Badge tone={result.ok ? 'green' : 'red'}>{result.ok ? 'Done' : 'Failed'}</Badge> : null}
-                />
-                <div className="space-y-4 p-4 sm:p-6">
-                  {progress && building && <Meter value={progress.completed} max={progress.total} label={`${bytes(progress.completed)} of ${bytes(progress.total)}`} />}
-                  {log.length > 0 && <CodeBlock className="max-h-64 overflow-y-auto">{log.join('\n')}</CodeBlock>}
-                  {result && <Alert tone={result.ok ? 'success' : 'danger'}>{result.text}</Alert>}
-                </div>
-              </Card>
+              <BuildProgress building={building} log={log} progress={progress} result={result} />
             )}
           </div>
 
           <div className="min-w-0 space-y-6">
-            <Card>
-              <CardHeader title="SinLama presets" description="Sinhala personas with tuned parameters. Applying one fills the form." />
-              {presets.isError ? (
-                <ErrorState error={presets.error} onRetry={() => presets.refetch()} />
-              ) : presets.isLoading ? (
-                <div className="space-y-3 p-4"><Skeleton className="h-14" /><Skeleton className="h-14" /><Skeleton className="h-14" /></div>
-              ) : (
-                <ul className="divide-y divide-slate-100 dark:divide-white/5">
-                  {(presets.data ?? []).map((p) => (
-                    <li key={p.key}>
-                      <button
-                        type="button"
-                        onClick={() => applyPreset(p)}
-                        disabled={building}
-                        className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-slate-50 disabled:opacity-50 sm:px-6 dark:hover:bg-white/5"
-                      >
-                        <SparklesIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-brand-600 dark:text-blue-400" />
-                        <span className="min-w-0">
-                          <span className="block text-sm font-medium text-slate-900 dark:text-white">{p.label}</span>
-                          <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
-                            {p.name} · temp {p.parameters.temperature ?? '—'} · ctx {p.parameters.num_ctx ?? '—'}
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Card>
+            <PresetList presets={presets} building={building} applyPreset={applyPreset} />
 
             <CopyCard nodes={nodeOptions} defaultServer={serverId} canManage={canManage} />
 
@@ -349,98 +267,5 @@ export default function Studio() {
         </div>
       )}
     </>
-  );
-}
-
-function FilePick({ label, hint, upload, error, disabled, onPick, onClear }: {
-  label: string; hint: string; upload: Upload | null; error?: string; disabled?: boolean; onPick: () => void; onClear: () => void;
-}) {
-  const busy = upload !== null && !upload.blob && !upload.error;
-  return (
-    <div>
-      <p className="text-sm/6 font-medium text-slate-900 dark:text-white">{label}</p>
-      <div className={cx('mt-1.5 rounded-lg border border-dashed p-4', error ? 'border-red-400 dark:border-red-500/60' : 'border-slate-300 dark:border-white/15')}>
-        {upload ? (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-slate-900 dark:text-white">{upload.file.name}</p>
-                <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                  {bytes(upload.file.size)}
-                  {upload.blob && <> · <span className="font-mono">{upload.blob.digest.slice(0, 19)}…</span></>}
-                </p>
-              </div>
-              {upload.blob ? <Badge tone="green">On node</Badge> : upload.error ? <Badge tone="red">Failed</Badge> : <Badge tone="blue">{Math.round(upload.progress * 100)}%</Badge>}
-              {!busy && (
-                <button type="button" onClick={onClear} disabled={disabled} className="rounded p-1 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-200" aria-label="Remove file">
-                  <XMarkIcon className="size-4" />
-                </button>
-              )}
-            </div>
-            {busy && <Meter value={Math.round(upload.progress * 100)} label={upload.progress >= 1 ? 'Pushing to the node…' : 'Uploading…'} />}
-            {upload.error && <p className="text-sm text-red-600 dark:text-red-400">{upload.error}</p>}
-          </div>
-        ) : (
-          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-slate-500 dark:text-slate-400">{hint}</p>
-            <Button variant="secondary" size="sm" icon={ArrowUpTrayIcon} onClick={onPick} disabled={disabled}>Choose file</Button>
-          </div>
-        )}
-      </div>
-      {error && <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">{error}</p>}
-    </div>
-  );
-}
-
-function CopyCard({ nodes, defaultServer, canManage }: { nodes: { value: number; label: string }[]; defaultServer: string; canManage: boolean }) {
-  const toast = useToast();
-  const qc = useQueryClient();
-  const [serverId, setServerId] = useState(defaultServer);
-  const [source, setSource] = useState('');
-  const [destination, setDestination] = useState('');
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  useEffect(() => { if (!serverId && defaultServer) setServerId(defaultServer); }, [defaultServer, serverId]);
-  const models = useQuery({
-    queryKey: ['models', { server_id: serverId }],
-    queryFn: () => get<NodeModel[]>('/models', { server_id: serverId }),
-    enabled: Boolean(serverId),
-  });
-  const copy = useMutation({
-    mutationFn: () => post('/studio/copy', { server_id: Number(serverId), source, destination: destination.trim() }),
-    onSuccess: () => {
-      toast.success(`Cloned ${source} → ${destination.trim()}`);
-      setDestination('');
-      qc.invalidateQueries({ queryKey: ['models'] });
-    },
-    onError: (e) => { if (e instanceof ApiError) setErrors(e.fields); toast.error(e); },
-  });
-  function submit() {
-    const e: Record<string, string> = {};
-    if (!source) e.source = 'Pick the model to clone.';
-    if (!destination.trim()) e.destination = 'Name the copy.';
-    else if (!NAME_RE.test(destination.trim())) e.destination = 'Letters, numbers, ".", "_", "-" and an optional :tag only.';
-    setErrors(e);
-    if (!Object.keys(e).length) copy.mutate();
-  }
-  return (
-    <Card>
-      <CardHeader title="Clone a model" description="Copy an existing model under a new name on the same node." />
-      <div className="space-y-4 p-4 sm:p-6">
-        <Select label="Node" value={serverId} onChange={(e) => { setServerId(e.target.value); setSource(''); }} options={nodes} placeholder="Select a node" disabled={!canManage} />
-        <Select
-          label="Source model"
-          value={source}
-          onChange={(e) => setSource(e.target.value)}
-          options={(models.data ?? []).map((m) => ({ value: m.name, label: m.name }))}
-          placeholder={models.isLoading ? 'Loading…' : 'Select a model'}
-          error={errors.source}
-          disabled={!canManage || !serverId}
-        />
-        <Input label="New name" value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="sinlama-backup" error={errors.destination} disabled={!canManage} />
-        <div className="flex justify-end">
-          <Button variant="secondary" icon={DocumentDuplicateIcon} loading={copy.isPending} disabled={!canManage} onClick={submit}>Clone</Button>
-        </div>
-      </div>
-    </Card>
   );
 }
