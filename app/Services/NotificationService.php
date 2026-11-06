@@ -62,13 +62,25 @@ class NotificationService
     private function postWebhook(string $url, array $payload): string
     {
         try {
-            $client = \Config\Services::curlrequest([], null, null, false);
-            $res = $client->post($url, ['json' => $payload, 'http_errors' => false, 'timeout' => 8]);
-            $code = $res->getStatusCode();
-            return $code < 300 ? 'ok' : "http {$code}";
-        } catch (\Throwable $e) {
-            return 'error: ' . $e->getMessage();
+            $resolve = UrlGuard::pin($url);   // refuses metadata/link-local and unresolvable hosts; pins the vetted IP
+        } catch (\InvalidArgumentException $e) {
+            return 'refused: ' . $e->getMessage();
         }
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true, CURLOPT_POSTFIELDS => json_encode($payload), CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 5, CURLOPT_RESOLVE => $resolve,
+            CURLOPT_FOLLOWLOCATION => false, CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+        ]);
+        $res = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err = curl_error($ch);
+        curl_close($ch);
+        if ($res === false) {
+            log_message('error', 'Notification webhook failed: ' . $err);
+            return 'error: could not reach the webhook';
+        }
+        return $code < 300 ? 'ok' : "http {$code}";
     }
 
     private function sendEmail(string $title, string $body): string

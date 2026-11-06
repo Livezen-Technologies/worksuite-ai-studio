@@ -19,7 +19,9 @@ interface UserRow { user_id: number; user_name: string; cpu: number; maxCpu: num
 export default function ComputeUsage() {
   const [tab, setTab] = useState('jobs');
   const usage = useQuery({ queryKey: ['compute', 'usage'], queryFn: () => get<UsageData>('/compute/usage') });
-  const jobs = useQuery({ queryKey: ['compute', 'jobs'], queryFn: () => get<AdminJob[]>('/compute/jobs'), refetchInterval: 20000 });
+  const jobs = useQuery({ queryKey: ['compute', 'jobs'], queryFn: () => get<AdminJob[]>('/compute/jobs'),
+    refetchInterval: (query) => (query.state.data?.some((j) => ['unplaced', 'pending', 'running', 'partial'].includes(j.placement_status)) ? 20_000 : 60_000),
+  });
   const [placing, setPlacing] = useState<AdminJob | null>(null);
 
   const byUser = new Map<number, UserRow>();

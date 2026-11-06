@@ -18,6 +18,22 @@ scrape_configs:
         labels:
           instance: 'aistudio-main'
 
+  # Outside-in check of the public site (prometheus-blackbox-exporter on :9115). install-server.sh
+  # replaces __DOMAIN__ with AISTUDIO_DOMAIN.
+  - job_name: blackbox-site
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ['https://__DOMAIN__/api/ping']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: '127.0.0.1:9115'
+
   # Example for a future GPU node (uncomment + set its IP):
   # - job_name: node-gpu1
   #   static_configs:

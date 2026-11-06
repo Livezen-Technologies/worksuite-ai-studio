@@ -28,9 +28,14 @@ const SCHEDULES = [
   { value: 'hourly', label: 'Hourly' }, { value: 'daily', label: 'Daily' }, { value: 'weekly', label: 'Weekly' },
 ];
 
+const busy = (s?: Stats) => Boolean(s && (Number(s.pending) > 0 || Number(s.running) > 0));
+
 export default function Queue() {
   const [tab, setTab] = useState('jobs');
-  const stats = useQuery({ queryKey: ['queue', 'stats-only'], queryFn: () => get<Paged<Job> & { stats: Stats }>('/queue', { per_page: 1 }), refetchInterval: 10000 });
+  const stats = useQuery({ queryKey: ['queue', 'stats-only'], queryFn: () => get<Paged<Job> & { stats: Stats }>('/queue', { per_page: 1 }),
+    // Fast only while jobs are waiting or running; otherwise a slow heartbeat.
+    refetchInterval: (query) => (busy(query.state.data?.stats) ? 10_000 : 60_000),
+  });
   const cron = useQuery({ queryKey: ['cron'], queryFn: () => get<Cron[]>('/cron') });
   return (
     <>
@@ -63,7 +68,7 @@ function Jobs() {
   const q = useQuery({
     queryKey: ['queue', status, type, page],
     queryFn: () => get<Paged<Job> & { stats: Stats }>('/queue', { status, type, page }),
-    refetchInterval: 5000,
+    refetchInterval: (query) => (busy(query.state.data?.stats) ? 5_000 : 60_000),
   });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['queue'] });
   const work = useMutation({

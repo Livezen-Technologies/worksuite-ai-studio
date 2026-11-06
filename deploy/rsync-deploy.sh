@@ -23,6 +23,7 @@ echo "==> Building frontend (frontend/ -> public/app)"
 
 echo "==> Backing up the database on ${HOST}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
+# shellcheck disable=SC2029  # local values are passed to the remote on purpose
 ssh "${HOST}" "DEST='${DEST}' BACKUP_DIR='${BACKUP_DIR}' STAMP='${STAMP}' bash -s" <<'REMOTE'
 set -euo pipefail
 sudo mkdir -p "${BACKUP_DIR}" && sudo chown "$(id -un)" "${BACKUP_DIR}" && chmod 700 "${BACKUP_DIR}"
@@ -55,6 +56,7 @@ rsync -az --delete \
   "${LOCAL}/" "${HOST}:${DEST}/"
 
 echo "==> Installing PHP dependencies, migrating and restarting"
+# shellcheck disable=SC2029  # DEST is expanded locally on purpose
 if ! ssh "${HOST}" "set -e; cd '${DEST}' && composer install --no-dev --no-interaction --optimize-autoloader -q \
       && php8.3 spark migrate --all \
       && php8.3 spark cache:clear \
@@ -66,6 +68,12 @@ if ! ssh "${HOST}" "set -e; cd '${DEST}' && composer install --no-dev --no-inter
 fi
 
 echo "==> Health check"
-curl -fsS "${URL}/api/ping" >/dev/null && echo "    ok" || echo "    WARNING: ${URL}/api/ping did not answer 200"
+if ! curl -fsS --retry 3 --retry-delay 5 --retry-connrefused "${URL}/api/ping" >/dev/null; then
+  echo "!! Health check failed: ${URL}/api/ping did not answer 200. The database backup from before this deploy is:" >&2
+  echo "   ${HOST}:${BACKUP_DIR}/predeploy-${STAMP}.sql.gz" >&2
+  echo "   Restore: see docs/runbook.md (\"Restore the database\")." >&2
+  exit 1
+fi
+echo "    ok"
 
 echo "==> Deployed. ${URL}/app/"

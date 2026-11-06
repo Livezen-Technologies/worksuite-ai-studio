@@ -14,16 +14,26 @@ export class ApiError extends Error {
 }
 
 const ACCESS = 'aistudio.access';
-const REFRESH = 'aistudio.refresh';
+/** Non-secret hint that a refresh cookie was issued, so a reload knows to try restoring the session. */
+const HINT = 'aistudio.session';
+/** Pre-cookie builds kept the 14-day refresh token here; drop it for upgrading users. */
+const LEGACY_REFRESH = 'aistudio.refresh';
+write(LEGACY_REFRESH, null);
 
+/**
+ * The access token (1 h) stays in localStorage so reloads and other tabs keep working. The refresh
+ * token is never readable by script: the server keeps it in the HttpOnly `aistudio_refresh` cookie
+ * (Path=/api/auth), so an XSS cannot walk off with a 14-day credential.
+ */
 export const tokens = {
   get access() { return read(ACCESS); },
-  get refresh() { return read(REFRESH); },
-  set(access: string | null, refresh?: string | null) {
+  /** True when this browser was signed in, i.e. a refresh cookie may exist. */
+  get hasSession() { return Boolean(read(HINT)); },
+  set(access: string | null) {
     write(ACCESS, access);
-    if (refresh !== undefined) write(REFRESH, refresh);
+    if (access) write(HINT, '1');
   },
-  clear() { write(ACCESS, null); write(REFRESH, null); },
+  clear() { write(ACCESS, null); write(HINT, null); },
 };
 
 function read(k: string): string | null {
@@ -39,13 +49,13 @@ export function setSessionExpiredHandler(fn: () => void) { onSessionExpired = fn
 
 let refreshing: Promise<boolean> | null = null;
 
-async function refreshAccess(): Promise<boolean> {
-  const refresh = tokens.refresh;
-  if (!refresh) return false;
+/** POST /api/auth/refresh with the HttpOnly cookie (no token in the body); one in flight at a time. */
+export async function refreshAccess(): Promise<boolean> {
   refreshing ??= fetch('/api/auth/refresh', {
     method: 'POST',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ refresh_token: refresh }),
+    body: '{}',
   })
     .then(async (r) => {
       if (!r.ok) return false;
@@ -91,7 +101,7 @@ export async function authFetch(path: string, init: RequestInit & { query?: Quer
     return fetch(url(path, init.query), { ...init, headers });
   };
   let res = await go();
-  if (res.status === 401 && tokens.refresh && !path.startsWith('/auth/')) {
+  if (res.status === 401 && !path.startsWith('/auth/')) {
     if (await refreshAccess()) res = await go();
     else onSessionExpired();
   }

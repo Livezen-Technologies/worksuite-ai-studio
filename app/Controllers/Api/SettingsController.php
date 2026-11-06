@@ -27,7 +27,15 @@ class SettingsController extends BaseApiController
     {
         if ($r = $this->requirePermission('settings.manage')) return $r;
         if (! in_array($group, self::GROUPS, true)) return $this->failure('Unknown settings group.', 404);
-        (new SettingsService())->save($group, $this->input());
+        $in = $this->input();
+        if ($group === 'notifications') {
+            foreach (['webhook_url', 'slack_webhook', 'discord_webhook'] as $k) {
+                $v = trim((string) ($in[$k] ?? ''));
+                if ($v === '' || $v === '••••••••') continue;   // empty clears; masked means unchanged
+                if (($why = \App\Services\UrlGuard::reason($v)) !== null) return $this->failure("{$k}: {$why}", 422);
+            }
+        }
+        (new SettingsService())->save($group, $in);
         return $this->ok((new SettingsService())->group($group), 'Settings saved.');
     }
 }

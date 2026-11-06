@@ -20,7 +20,7 @@ class MlModelsController extends BaseApiController
     {
         if ($r = $this->requirePermission('models.view')) return $r;
         $rows = $this->db()->table('ml_models m')->select('m.*, d.name AS dataset_name')
-            ->join('datasets d', 'd.id = m.dataset_id', 'left')->orderBy('m.id', 'DESC')->get()->getResultArray();
+            ->join('datasets d', 'd.id = m.dataset_id', 'left')->orderBy('m.id', 'DESC')->limit(500)->get()->getResultArray();
         foreach ($rows as &$m) {
             $m['labels'] = json_decode((string) $m['labels'], true) ?: [];
             $m['metrics'] = json_decode((string) $m['metrics'], true) ?: null;

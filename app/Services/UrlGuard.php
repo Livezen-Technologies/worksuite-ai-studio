@@ -40,6 +40,37 @@ class UrlGuard
         return null;
     }
 
+    /**
+     * Vet $url and return a CURLOPT_RESOLVE list ("host:port:ip") pinning the request to the
+     * address that was checked, so a second DNS lookup by curl cannot be rebound elsewhere.
+     * Throws \InvalidArgumentException when the URL is refused or its host does not resolve.
+     *
+     * @return string[]
+     */
+    public static function pin(string $url): array
+    {
+        if (($why = self::reason($url)) !== null) {
+            throw new \InvalidArgumentException($why);
+        }
+        $parts = parse_url($url);
+        $host = strtolower(trim($parts['host'] ?? '', '[]'));
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            return [];
+        }
+        $port = (int) ($parts['port'] ?? (strtolower($parts['scheme'] ?? '') === 'https' ? 443 : 80));
+        $ips = self::resolve($host);
+        if (! $ips) {
+            throw new \InvalidArgumentException('That host does not resolve.');
+        }
+        foreach ($ips as $ip) {
+            if (self::blockedIp($ip)) {
+                throw new \InvalidArgumentException("That address ({$ip}) is link-local or reserved and cannot be used.");
+            }
+        }
+        $ip = $ips[0];
+        return ["{$host}:{$port}:" . (str_contains($ip, ':') ? "[{$ip}]" : $ip)];
+    }
+
     public static function blockedIp(string $ip): bool
     {
         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {

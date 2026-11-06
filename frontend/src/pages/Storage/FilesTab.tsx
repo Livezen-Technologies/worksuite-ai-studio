@@ -111,7 +111,9 @@ function MoveForm({ file, onClose, onSaved }: { file: FileRow; onClose: () => vo
 
 function FileDetailModal({ id, manage, onClose, onChanged }: { id: number; manage: boolean; onClose: () => void; onChanged: () => void }) {
   const toast = useToast();
-  const q = useQuery({ queryKey: ['storage-file', id], queryFn: () => get<FileDetail>(`/storage/files/${id}`), refetchInterval: 10_000 });
+  const q = useQuery({ queryKey: ['storage-file', id], queryFn: () => get<FileDetail>(`/storage/files/${id}`),
+    refetchInterval: (query) => (query.state.data?.tasks.some((t) => t.status === 'pending' || t.status === 'running') ? 10_000 : 60_000),
+  });
   const f = q.data;
   const move = useMutation({
     mutationFn: (from: number) => post(`/storage/files/${id}/transfer`, { from_node: from }),

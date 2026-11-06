@@ -92,7 +92,7 @@ ollama list                                  # installed models`}</CodeBlock>
         <CardHeader title="User guide" />
         <div className="prose-sm max-w-none space-y-5 p-4 text-sm text-slate-700 sm:px-6 dark:text-slate-300">
           <Step n={1} title="Before you start">
-            Install <a className="font-medium text-brand-600 dark:text-blue-400" href="https://ollama.com/download" target="_blank" rel="noreferrer">Ollama</a> on the computer and make sure it is running.
+            Install <a className="font-medium text-brand-600 dark:text-blue-400" href="https://ollama.com/download" target="_blank" rel="noopener noreferrer">Ollama</a> on the computer and make sure it is running.
             An NVIDIA GPU (or an Apple silicon Mac) makes models much faster but is not required. The computer only needs outbound internet access — no open ports, VPN or fixed IP.
           </Step>
           <Step n={2} title="Install the app">

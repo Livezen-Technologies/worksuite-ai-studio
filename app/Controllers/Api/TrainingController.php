@@ -41,14 +41,14 @@ class TrainingController extends BaseApiController
         if ($name === '' || $base === '') {
             return $this->failure('name and base_model are required.', 422);
         }
+        if ($why = TrainingService::nameProblem($name) ?? TrainingService::baseModelProblem($base)) return $this->failure($why, 422);
+        try { $hp = TrainingService::cleanHyperparams((array) ($in['hyperparams'] ?? [])); } catch (\InvalidArgumentException $e) { return $this->failure($e->getMessage(), 422); }
         $id = $this->jobs()->insert([
             'name'        => $name,
             'dataset_id'  => (int) ($in['dataset_id'] ?? 0) ?: null,
             'base_model'  => $base,
             'method'      => in_array($in['method'] ?? '', ['lora', 'qlora'], true) ? $in['method'] : 'qlora',
-            'hyperparams' => json_encode(
-                array_intersect_key((array) ($in['hyperparams'] ?? []), TrainingService::DEFAULT_HYPERPARAMS)
-            ),
+            'hyperparams' => json_encode($hp),
             'notes'       => $in['notes'] ?? null,
             'created_by'  => $this->userId(),
         ], true);
@@ -66,15 +66,17 @@ class TrainingController extends BaseApiController
         foreach (['name', 'base_model', 'notes', 'logs'] as $f) {
             if (array_key_exists($f, $in)) $upd[$f] = $in[$f];
         }
+        if (array_key_exists('name', $upd) && ($why = TrainingService::nameProblem(trim((string) $upd['name'])))) return $this->failure($why, 422);
+        if (array_key_exists('base_model', $upd) && ($why = TrainingService::baseModelProblem(trim((string) $upd['base_model'])))) return $this->failure($why, 422);
+        foreach (['name', 'base_model'] as $f) if (array_key_exists($f, $upd)) $upd[$f] = trim((string) $upd[$f]);
         if (isset($in['dataset_id'])) $upd['dataset_id'] = (int) $in['dataset_id'] ?: null;
         if (isset($in['method']) && in_array($in['method'], ['lora', 'qlora'], true)) $upd['method'] = $in['method'];
         if (isset($in['status']) && in_array($in['status'], ['draft', 'kit_ready', 'running', 'completed', 'failed', 'imported'], true)) {
             $upd['status'] = $in['status'];
         }
         if (isset($in['hyperparams']) && is_array($in['hyperparams'])) {
-            $upd['hyperparams'] = json_encode(
-                array_intersect_key($in['hyperparams'], TrainingService::DEFAULT_HYPERPARAMS)
-            );
+            try { $upd['hyperparams'] = json_encode(TrainingService::cleanHyperparams($in['hyperparams'])); }
+            catch (\InvalidArgumentException $e) { return $this->failure($e->getMessage(), 422); }
         }
         if ($upd) $this->jobs()->update((int) $id, $upd);
         return $this->ok($this->jobs()->find((int) $id), 'Job updated.');

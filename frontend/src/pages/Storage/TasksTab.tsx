@@ -9,7 +9,12 @@ import { TASK_TONE, type Task } from './shared';
 export function TasksTab({ manage }: { manage: boolean }) {
   const toast = useToast();
   const [status, setStatus] = useState('');
-  const q = useQuery({ queryKey: ['storage-tasks', status], queryFn: () => get<{ tasks: Task[]; counts: Record<string, number> }>('/storage/tasks', { status }), refetchInterval: 10_000 });
+  const q = useQuery({ queryKey: ['storage-tasks', status], queryFn: () => get<{ tasks: Task[]; counts: Record<string, number> }>('/storage/tasks', { status }),
+    refetchInterval: (query) => {
+      const c = query.state.data?.counts ?? {};
+      return Number(c.pending ?? 0) > 0 || Number(c.running ?? 0) > 0 ? 10_000 : 60_000;
+    },
+  });
   const retry = useMutation({ mutationFn: (t: Task) => post(`/storage/tasks/${t.id}/retry`), onSuccess: () => { toast.success('Queued again'); q.refetch(); }, onError: (e) => toast.error(e) });
   const c = q.data?.counts ?? {};
   const columns: Column<Task>[] = [

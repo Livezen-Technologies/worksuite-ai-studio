@@ -12,7 +12,7 @@ export function uploadWithProgress<T>(
 ): Promise<{ data: T; message?: string }> {
   // An expired access token answers 401 before the body is read; renew once and send again.
   return once<T>(path, form, onProgress, signal).catch(async (e) => {
-    if (e instanceof ApiError && e.status === 401 && tokens.refresh && (await renewSession())) return once<T>(path, form, onProgress, signal);
+    if (e instanceof ApiError && e.status === 401 && (await renewSession())) return once<T>(path, form, onProgress, signal);
     throw e;
   });
 }
