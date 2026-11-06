@@ -32,4 +32,28 @@ final class UrlGuardTest extends CIUnitTestCase
             ['http://user:pw@10.0.0.1/'], ['http://100.100.100.200/'],
         ];
     }
+
+    public function testPinLeavesLiteralIpsAlone(): void
+    {
+        $this->assertSame([], UrlGuard::pin('http://10.0.0.5:9000/bucket'));
+    }
+
+    public function testPinPinsLocalhostToVettedAddress(): void
+    {
+        $entry = UrlGuard::pin('https://localhost/hook')[0] ?? '';
+        $this->assertMatchesRegularExpression('/^localhost:443:/', $entry);
+    }
+
+    public function testPinRefusesBlockedAndUnresolvable(): void
+    {
+        foreach (['http://169.254.169.254/', 'http://metadata.google.internal/', 'http://no-such-host.invalid/', 'file:///etc/passwd'] as $url) {
+            try { UrlGuard::pin($url); $this->fail("{$url} was pinned"); } catch (\InvalidArgumentException) { $this->addToAssertionCount(1); }
+        }
+    }
+
+    public function testS3DriverRefusesMetadataEndpoint(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        \App\Libraries\Storage\StorageDriver::for(['kind' => 's3'], ['endpoint' => 'http://169.254.169.254', 'bucket' => 'bucket'], ['access_key' => 'a', 'secret_key' => 'b']);
+    }
 }

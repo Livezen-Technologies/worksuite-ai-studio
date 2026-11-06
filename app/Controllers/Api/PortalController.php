@@ -234,6 +234,8 @@ class PortalController extends BaseApiController
         $name = trim((string) ($in['name'] ?? ''));
         $base = trim((string) ($in['base_model'] ?? ''));
         if ($name === '' || $base === '') return $this->failure('name and base_model are required.', 422);
+        if ($why = TrainingService::nameProblem($name) ?? TrainingService::baseModelProblem($base)) return $this->failure($why, 422);
+        try { $hp = TrainingService::cleanHyperparams((array) ($in['hyperparams'] ?? [])); } catch (\InvalidArgumentException $e) { return $this->failure($e->getMessage(), 422); }
         $dsId = (int) ($in['dataset_id'] ?? 0);
         if ($dsId && ! $this->visibleDataset($dsId)) return $this->failure('Dataset not found.', 404);
 
@@ -249,7 +251,7 @@ class PortalController extends BaseApiController
             'dataset_id'  => $dsId ?: null,
             'base_model'  => $base,
             'method'      => in_array($in['method'] ?? '', ['lora', 'qlora'], true) ? $in['method'] : 'qlora',
-            'hyperparams' => json_encode(array_intersect_key((array) ($in['hyperparams'] ?? []), TrainingService::DEFAULT_HYPERPARAMS)),
+            'hyperparams' => json_encode($hp),
             'notes'       => $in['notes'] ?? null,
             'created_by'  => $this->userId(),
         ], true);

@@ -39,6 +39,14 @@ class ApiKeyFilter implements FilterInterface
             return $this->deny($response, 'This API key has expired.', 403);
         }
 
+        // A key dies with its owner: the owning user must still exist, be active and not deleted.
+        if (! empty($row['user_id'])) {
+            $owner = \Config\Database::connect()->table('users')->select('status, deleted_at')->where('id', (int) $row['user_id'])->get()->getRowArray();
+            if (! $owner || ($owner['status'] ?? null) !== 'active' || ! empty($owner['deleted_at'])) {
+                return $this->deny($response, 'This API key is disabled.', 403);
+            }
+        }
+
         // IP allowlist.
         $allowedIps = $row['allowed_ips'] ? json_decode($row['allowed_ips'], true) : null;
         if (is_array($allowedIps) && $allowedIps && ! in_array($request->getIPAddress(), $allowedIps, true)) {

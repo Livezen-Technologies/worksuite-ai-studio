@@ -18,7 +18,7 @@ echo "==> Updating apt and installing packages"
 sudo apt-get update -y
 sudo apt-get install -y nginx mysql-server redis-server \
   ${PHP}-fpm ${PHP}-cli ${PHP}-mysql ${PHP}-mbstring ${PHP}-xml ${PHP}-curl ${PHP}-intl ${PHP}-zip \
-  prometheus prometheus-node-exporter curl unzip git
+  prometheus prometheus-node-exporter prometheus-blackbox-exporter curl unzip git
 
 echo "==> Creating database + app DB user"
 DB_PASS="${OLLAMAHUB_DB_PASS:?set OLLAMAHUB_DB_PASS before running}"
@@ -48,6 +48,7 @@ echo "==> nginx vhost"
 DOMAIN="${AISTUDIO_DOMAIN:?set AISTUDIO_DOMAIN (e.g. aistudio.example.com) before running}"
 CERT_EMAIL="${AISTUDIO_CERT_EMAIL:?set AISTUDIO_CERT_EMAIL for certificate expiry notices}"
 sudo cp "${APP_DIR}/deploy/nginx-security-headers.conf" /etc/nginx/snippets/aistudio-security.conf
+# shellcheck disable=SC2016  # $binary_remote_addr is an nginx variable, not shell
 echo 'limit_req_zone $binary_remote_addr zone=aistudio_auth:10m rate=30r/m;' | sudo tee /etc/nginx/conf.d/aistudio-ratelimit.conf >/dev/null
 sed "s/__DOMAIN__/${DOMAIN}/" "${APP_DIR}/deploy/nginx-ollamahub.conf" | sudo tee /etc/nginx/sites-available/ollamahub >/dev/null
 sudo ln -sf /etc/nginx/sites-available/ollamahub /etc/nginx/sites-enabled/ollamahub
@@ -80,10 +81,15 @@ ${PHP} spark migrate --all
 ${PHP} spark db:seed AuthSeeder
 sudo chown -R www-data:www-data "${APP_DIR}/writable"
 
-echo "==> Prometheus scrape config (this node's node_exporter)"
-sudo cp "${APP_DIR}/deploy/prometheus-ollamahub.yml" /etc/prometheus/prometheus.yml
+echo "==> Prometheus: node_exporter (+ systemd units), blackbox probe of https://${DOMAIN}/api/ping, alerts"
+sed "s/__DOMAIN__/${DOMAIN}/" "${APP_DIR}/deploy/prometheus-ollamahub.yml" | sudo tee /etc/prometheus/prometheus.yml >/dev/null
 sudo cp "${APP_DIR}/deploy/prometheus-alerts.yml" /etc/prometheus/aistudio-alerts.yml
-sudo systemctl restart prometheus prometheus-node-exporter
+# ServiceDown alert: export the state of the app's systemd units.
+echo 'ARGS="--collector.systemd --collector.systemd.unit-include=(ollamahub-queue|aistudio-asr|aistudio-ml|php8.3-fpm|nginx|mysql)\.service"' \
+  | sudo tee /etc/default/prometheus-node-exporter >/dev/null
+sudo systemctl enable --now prometheus-blackbox-exporter
+sudo systemctl restart prometheus prometheus-node-exporter prometheus-blackbox-exporter
+echo "    Alerts show on Prometheus' /alerts page. Add Alertmanager for email/Slack (docs/runbook.md)."
 
 echo "==> systemd queue worker + schedule cron"
 sudo cp "${APP_DIR}/deploy/ollamahub-queue.service" /etc/systemd/system/ollamahub-queue.service
@@ -98,6 +104,9 @@ echo "==> Nightly database backup (03:17) -> /var/backups/aistudio"
 sudo mkdir -p /var/backups/aistudio && sudo chmod 700 /var/backups/aistudio
 ( sudo crontab -l 2>/dev/null | grep -v 'deploy/backup-db.sh' ; \
   echo "17 3 * * * APP_DIR=${APP_DIR} bash ${APP_DIR}/deploy/backup-db.sh >> /var/log/aistudio-backup.log 2>&1" ) | sudo crontab -
+# Weekly restore test of the newest nightly dump (Sunday 05:23), BackupRestoreStale alert.
+( sudo crontab -l 2>/dev/null | grep -v 'deploy/verify-backup.sh' ; \
+  echo "23 5 * * 0 APP_DIR=${APP_DIR} bash ${APP_DIR}/deploy/verify-backup.sh >> /var/log/aistudio-backup.log 2>&1" ) | sudo crontab -
 echo "    Set BACKUP_RSYNC_TARGET in that cron line to copy backups off this server (see docs/runbook.md)."
 
 echo "==> Log housekeeping: app logs kept 30 days, backup log rotated weekly"

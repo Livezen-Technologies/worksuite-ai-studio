@@ -132,6 +132,7 @@ class S3Driver extends StorageDriver
         $this->pathStyle = ! array_key_exists('path_style', $config) || (bool) $config['path_style'];
         $this->prefix = trim((string) ($config['prefix'] ?? 'aistudio'), '/');
         if (! preg_match('#^https?://#', $this->endpoint)) throw new \InvalidArgumentException('Give the S3 endpoint URL, e.g. https://s3.eu-central-1.amazonaws.com.');
+        if (($why = \App\Services\UrlGuard::reason($this->endpoint)) !== null) throw new \InvalidArgumentException('S3 endpoint refused: ' . $why);
         if (! preg_match('/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/', $this->bucket)) throw new \InvalidArgumentException('Give a valid bucket name.');
         if (empty($secret['access_key']) || empty($secret['secret_key'])) throw new \InvalidArgumentException('Give the access key and secret key.');
     }
@@ -163,9 +164,12 @@ class S3Driver extends StorageDriver
         foreach ([$this->region, 's3', 'aws4_request'] as $part) $k = hash_hmac('sha256', $part, $k, true);
         $sig = hash_hmac('sha256', $toSign, $k);
         $auth = "AWS4-HMAC-SHA256 Credential={$this->secret['access_key']}/{$scope}, SignedHeaders={$signed}, Signature={$sig}";
+        try { $resolve = \App\Services\UrlGuard::pin($url); }
+        catch (\InvalidArgumentException $e) { log_message('error', "S3 endpoint {$url} refused: " . $e->getMessage()); throw new \RuntimeException('Cannot reach the S3 endpoint (address refused or not resolvable).'); }
         $ch = curl_init($url . ($qs !== '' ? "?{$qs}" : ''));
         $h = ["Authorization: {$auth}", "x-amz-content-sha256: {$hash}", "x-amz-date: {$amz}", 'Expect:'];
-        $opts = [CURLOPT_CUSTOMREQUEST => $method, CURLOPT_HTTPHEADER => $h, CURLOPT_TIMEOUT => 600, CURLOPT_CONNECTTIMEOUT => 10, CURLOPT_RETURNTRANSFER => $saveTo === null];
+        $opts = [CURLOPT_CUSTOMREQUEST => $method, CURLOPT_HTTPHEADER => $h, CURLOPT_TIMEOUT => 600, CURLOPT_CONNECTTIMEOUT => 10, CURLOPT_RETURNTRANSFER => $saveTo === null,
+                 CURLOPT_RESOLVE => $resolve, CURLOPT_FOLLOWLOCATION => false, CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS];
         $fh = null; $out = null;
         if ($isFile) { $fh = fopen($body, 'rb'); $opts += [CURLOPT_UPLOAD => true, CURLOPT_INFILE => $fh, CURLOPT_INFILESIZE => filesize($body)]; }
         elseif ($body !== '') $opts[CURLOPT_POSTFIELDS] = $body;
@@ -174,7 +178,7 @@ class S3Driver extends StorageDriver
         curl_setopt_array($ch, $opts);
         $res = curl_exec($ch); $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch);
         curl_close($ch); if ($fh) fclose($fh); if ($out) fclose($out);
-        if ($res === false) throw new \RuntimeException("Cannot reach {$this->endpoint}: {$err}");
+        if ($res === false) { log_message('error', "S3 request to {$this->endpoint} failed: {$err}"); throw new \RuntimeException('Cannot reach the S3 endpoint. Check the endpoint URL and network; details are in the server log.'); }
         return [$code, $saveTo === null ? (string) $res : ''];
     }
 

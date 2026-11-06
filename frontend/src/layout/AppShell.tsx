@@ -233,7 +233,7 @@ function ThemeMenu() {
 }
 
 function UserMenu() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, can } = useAuth();
   const navigate = useNavigate();
   const initials = (user?.name ?? '?').split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
   return (
@@ -258,11 +258,13 @@ function UserMenu() {
             <FingerPrintIcon aria-hidden className="size-4 text-slate-400" /> Account security
           </Link>
         </MenuItem>
-        <MenuItem>
-          <Link to="/settings" className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 data-focus:bg-slate-50 dark:text-slate-200 dark:data-focus:bg-white/5">
-            <UserCircleIcon aria-hidden className="size-4 text-slate-400" /> Settings
-          </Link>
-        </MenuItem>
+        {can('settings.view') && (
+          <MenuItem>
+            <Link to="/settings" className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 data-focus:bg-slate-50 dark:text-slate-200 dark:data-focus:bg-white/5">
+              <UserCircleIcon aria-hidden className="size-4 text-slate-400" /> Settings
+            </Link>
+          </MenuItem>
+        )}
         <MenuItem>
           <button type="button" onClick={() => { signOut(); navigate('/login'); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 data-focus:bg-slate-50 dark:text-slate-200 dark:data-focus:bg-white/5">
             <ArrowRightStartOnRectangleIcon aria-hidden className="size-4 text-slate-400" /> Sign out

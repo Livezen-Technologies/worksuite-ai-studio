@@ -32,7 +32,7 @@ class TrainingPipelinesController extends BaseApiController
             ->select('p.*, d.name AS dataset_name, s.name AS server_name, j.status AS last_status, j.progress_pct AS last_progress, j.error AS last_error,
                       j.output_status AS last_output_status, j.output_model AS last_output_model, j.phase AS last_phase')
             ->join('datasets d', 'd.id = p.dataset_id', 'left')->join('servers s', 's.id = p.server_id', 'left')
-            ->join('training_jobs j', 'j.id = p.last_job_id', 'left')->orderBy('p.id')->get()->getResultArray();
+            ->join('training_jobs j', 'j.id = p.last_job_id', 'left')->orderBy('p.id', 'DESC')->limit(500)->get()->getResultArray();
         foreach ($rows as &$p) {
             $p['hyperparams'] = json_decode((string) $p['hyperparams'], true) ?: (object) [];
             $p['output'] = json_decode((string) ($p['output'] ?? ''), true) ?: null;

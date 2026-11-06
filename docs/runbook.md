@@ -13,7 +13,7 @@ bash deploy/rsync-deploy.sh
 It builds the frontend, **backs up the database on the server first**
 (`/var/backups/aistudio/predeploy-*.sql.gz`, last 10 kept), syncs the code, runs `composer install`,
 `php spark migrate --all`, clears the cache, restarts the queue worker and PHP-FPM, then pings
-`/api/ping`. It never deletes server-only files: `.env`, `writable/`, `public/node/downloads/`
+`/api/ping` (3 tries; a failure exits non-zero and prints the pre-deploy backup). It never deletes server-only files: `.env`, `writable/`, `public/node/downloads/`
 (desktop installers) and `public/uploads/`.
 
 Override the target with `DEPLOY_HOST`, `DEPLOY_DIR`, `DEPLOY_URL`.
@@ -28,6 +28,11 @@ If a step fails, the script prints the backup to restore from (next section).
   `BACKUP_RSYNC_TARGET=backup@other-host:/srv/aistudio/` to the cron line (`sudo crontab -e`) and give
   root an SSH key that can write there.
 - **In the app:** Storage → Backups also runs backups and can restore (Super Admin only).
+
+- **Restore test:** `deploy/verify-backup.sh` runs from root's crontab on Sundays at 05:23. It restores
+  the newest nightly dump into `ollamahub_restore_check`, checks `users`, `roles` and `settings` have
+  rows, drops it, and feeds the `BackupRestoreStale` alert (> 8 days). Log: `/var/log/aistudio-backup.log`.
+  Run it by hand: `sudo bash /var/www/ollamahub/deploy/verify-backup.sh`.
 
 Check the latest backup: `ls -lt /var/backups/aistudio | head`.
 
@@ -74,7 +79,7 @@ Do these once on the current production server.
    ```
 5. **Nightly backup and firewall** (if the server predates them):
    ```bash
-   ( sudo crontab -l 2>/dev/null; echo "17 3 * * * APP_DIR=/var/www/ollamahub bash /var/www/ollamahub/deploy/backup-db.sh >> /var/log/aistudio-backup.log 2>&1" ) | sudo crontab -
+   ( sudo crontab -l 2>/dev/null | grep -v 'deploy/backup-db.sh' ; echo "17 3 * * * APP_DIR=/var/www/ollamahub bash /var/www/ollamahub/deploy/backup-db.sh >> /var/log/aistudio-backup.log 2>&1" ) | sudo crontab -
    sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw --force enable
    ```
 
@@ -86,8 +91,9 @@ Do these once on the current production server.
    sudo cp deploy/ml/aistudio-ml.service /etc/systemd/system/
    sudo systemctl daemon-reload && sudo systemctl restart ollamahub-queue aistudio-asr aistudio-ml
    sudo cp deploy/prometheus-alerts.yml /etc/prometheus/aistudio-alerts.yml
-   sudo cp deploy/prometheus-ollamahub.yml /etc/prometheus/prometheus.yml && sudo systemctl restart prometheus
-   ( sudo crontab -l 2>/dev/null; echo "41 4 * * * find /var/www/ollamahub/writable/logs -name 'log-*.log' -mtime +30 -delete" ) | sudo crontab -
+   sed "s/__DOMAIN__/aistudio.livezentech.com/" deploy/prometheus-ollamahub.yml | sudo tee /etc/prometheus/prometheus.yml >/dev/null
+   sudo systemctl restart prometheus
+   ( sudo crontab -l 2>/dev/null | grep -v 'writable/logs' ; echo "41 4 * * * find /var/www/ollamahub/writable/logs -name 'log-*.log' -mtime +30 -delete" ) | sudo crontab -
    ```
    Check each service is still `active` with `systemctl status`. If one fails because it writes
    somewhere the sandbox now protects, add that directory as `ReadWritePaths=` in its unit.
@@ -96,9 +102,39 @@ Do these once on the current production server.
 7. **Scheduler as www-data** (1.28.1): the per-minute `spark schedule:run` cron must run as the
    owner of `writable/`, not as `ubuntu`:
    ```bash
-   crontab -l | grep -v 'spark schedule:run' | crontab -
+   crontab -l 2>/dev/null | grep -v 'spark schedule:run' | crontab -   # as ubuntu: drop the old entry
    ( sudo crontab -u www-data -l 2>/dev/null | grep -v 'spark schedule:run' ; echo "* * * * * cd /var/www/ollamahub && php8.3 spark schedule:run >> /var/www/ollamahub/writable/logs/schedule.log 2>&1" ) | sudo crontab -u www-data -
    ```
+
+8. **nginx hardening, compression, restore tests and outside monitoring** (third audit round):
+   ```bash
+   cd /var/www/ollamahub
+   # nginx: only /index.php reaches PHP-FPM (any other *.php is 404) and gzip for text/JSON/SVG.
+   # Merge the `location = /index.php`, `location ~ \.php$ { return 404; }` and gzip lines of
+   # deploy/nginx-ollamahub.conf into the live vhost (keep certbot's 443/certificate lines), then:
+   sudo nginx -t && sudo systemctl reload nginx
+   curl -sI https://aistudio.livezentech.com/x.php | head -1                    # 404
+   curl -s -o /dev/null -w '%{http_code}\n' https://aistudio.livezentech.com/api/ping   # 200
+   # Weekly restore test (root's crontab)
+   ( sudo crontab -l 2>/dev/null | grep -v 'deploy/verify-backup.sh' ; echo "23 5 * * 0 APP_DIR=/var/www/ollamahub bash /var/www/ollamahub/deploy/verify-backup.sh >> /var/log/aistudio-backup.log 2>&1" ) | sudo crontab -
+   sudo APP_DIR=/var/www/ollamahub bash deploy/verify-backup.sh                  # first run now
+   # Blackbox probe of /api/ping + systemd unit states + new alerts
+   sudo apt-get install -y prometheus-blackbox-exporter
+   echo 'ARGS="--collector.systemd --collector.systemd.unit-include=(ollamahub-queue|aistudio-asr|aistudio-ml|php8.3-fpm|nginx|mysql)\.service"' | sudo tee /etc/default/prometheus-node-exporter
+   sed "s/__DOMAIN__/aistudio.livezentech.com/" deploy/prometheus-ollamahub.yml | sudo tee /etc/prometheus/prometheus.yml >/dev/null
+   sudo cp deploy/prometheus-alerts.yml /etc/prometheus/aistudio-alerts.yml
+   sudo systemctl enable --now prometheus-blackbox-exporter
+   sudo systemctl restart prometheus prometheus-node-exporter
+   ```
+   Check on Prometheus' `/targets` that `blackbox-site` is up and `/alerts` lists `SiteDown`,
+   `ServiceDown` and `BackupRestoreStale`.
+
+   **Remaining: Alertmanager.** Alerts are only visible on `/alerts` until an Alertmanager routes
+   them. Install `prometheus-alertmanager`, configure a receiver in `/etc/prometheus/alertmanager.yml`
+   with the owner's email (SMTP host and credentials) or Slack webhook, and add to prometheus.yml:
+   `alerting: { alertmanagers: [ { static_configs: [ { targets: ['127.0.0.1:9093'] } ] } ] }`.
+   Note the blackbox probe runs on the same server, so it catches nginx/PHP/TLS failures but not a
+   whole-server outage; an external uptime check covers that.
 
 ## Security behaviour to know
 

@@ -1,5 +1,6 @@
 # Checks every pull request and every push to main: backend tests, frontend type-check, tests and
-# build (and that the committed public/app build matches the source), and the MCP server build.
+# build (and that the committed public/app build matches the source), the MCP server build,
+# dependency audits (composer audit, npm audit for runtime deps) and shellcheck on deploy/ scripts.
 name: CI
 
 on:
@@ -28,8 +29,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/composer
-          key: composer-${{ hashFiles('composer.lock') }}
+          key: composer-php8.3-${{ hashFiles('composer.lock') }}
       - run: composer install --no-interaction --no-progress --prefer-dist
+      - name: Composer audit (known vulnerabilities)
+        run: composer audit --no-interaction
       - name: PHP syntax
         run: find app -name '*.php' -print0 | xargs -0 -n1 -P4 php -l > /dev/null
       - run: mkdir -p writable/{cache,logs,session,uploads,debugbar}
@@ -48,6 +51,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-audit --no-fund
+      - name: npm audit (runtime deps, high+)
+        run: npm audit --omit=dev --audit-level=high
       - run: npx tsc -b --noEmit
       - run: npx vitest run
       - run: npx vite build
@@ -73,4 +78,13 @@ jobs:
           cache: npm
           cache-dependency-path: mcp-server/package-lock.json
       - run: npm ci --no-audit --no-fund
+      - name: npm audit (runtime deps, high+)
+        run: npm audit --omit=dev --audit-level=high
       - run: npx tsc
+
+  shellcheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck deploy scripts
+        run: find deploy -name '*.sh' -print0 | xargs -0 shellcheck

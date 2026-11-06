@@ -45,8 +45,9 @@ class ModelStudioController extends BaseApiController
         }
 
         $file = $this->request->getFile('file');
-        if (! $file || ! $file->isValid()) {
-            return $this->failure('No file received (check the upload size limit).', 422);
+        // GGUF weights, or a LoRA adapter (GGUF / safetensors / PyTorch .bin); 64 GB ceiling.
+        if ($why = $this->uploadProblem($file, ['gguf', 'safetensors', 'bin'], 65536)) {
+            return $this->failure($why, 422);
         }
 
         $tmp    = $file->getTempName();

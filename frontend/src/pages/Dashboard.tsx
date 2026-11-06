@@ -43,7 +43,6 @@ export default function Dashboard() {
     queryKey: ['dashboard'],
     queryFn: () => get<{ stats: DashboardStats; charts: DashboardCharts }>('/dashboard'),
     refetchInterval: 15_000,
-    refetchIntervalInBackground: true,
   });
   const canLogs = can('logs.view');
   const logs = useQuery({

@@ -21,6 +21,40 @@ class DownloadsController extends BaseApiController
 {
     private function key(): array { return $_SERVER['ohub_api_key'] ?? []; }
 
+    /** Package states that count as released for download. Candidate/quarantined/verified/evaluated/approved/revoked are not. */
+    private const RELEASED_STATES = ['staged', 'active', 'retired'];
+
+    /** Shared datasets, or private ones owned by the key's owner. */
+    /**
+     * Shared datasets, the key owner's own, and admin datasets (created by someone who manages
+     * datasets in the admin area) may leave through the gateway. A portal user's private dataset
+     * may not. Rights approval is checked separately by the caller.
+     */
+    private function datasetVisible(array $d): bool
+    {
+        if (($d['visibility'] ?? 'private') === 'shared') return true;
+        $creator = (int) ($d['created_by'] ?? 0);
+        $owner = (int) ($this->key()['user_id'] ?? 0);
+        if ($owner > 0 && $creator === $owner) return true;
+        return $creator > 0 && $this->managesDatasets($creator);
+    }
+
+    /** True when the user's role is admin/super_admin or holds models.manage (the admin datasets area). */
+    private array $managesCache = [];
+
+    private function managesDatasets(int $userId): bool
+    {
+        $cache = &$this->managesCache;
+        if (isset($cache[$userId])) return $cache[$userId];
+        $db = \Config\Database::connect();
+        $role = $db->table('users u')->select('r.id, r.name')->join('roles r', 'r.id = u.role_id', 'left')
+            ->where('u.id', $userId)->get()->getRowArray();
+        if (! $role) return $cache[$userId] = false;
+        if (in_array($role['name'], ['super_admin', 'admin'], true)) return $cache[$userId] = true;
+        return $cache[$userId] = $db->table('role_permissions rp')->join('permissions p', 'p.id = rp.permission_id')
+            ->where(['rp.role_id' => $role['id'], 'p.name' => 'models.manage'])->countAllResults() > 0;
+    }
+
     private function has(string $scope): bool
     {
         return in_array($scope, explode(',', (string) ($this->key()['scopes'] ?? '')), true);
@@ -42,7 +76,7 @@ class DownloadsController extends BaseApiController
         if ($this->has('download_models')) {
             $svc = new EnginePackageService();
             $out['packages'] = [];
-            foreach ($db->table('engine_packages')->where('state !=', 'revoked')->orderBy('id')->get()->getResultArray() as $p) {
+            foreach ($db->table('engine_packages')->whereIn('state', self::RELEASED_STATES)->orderBy('id')->get()->getResultArray() as $p) {
                 $files = [];
                 foreach (json_decode((string) $p['artifacts'], true) ?: [] as $a) {
                     if (! is_file($svc->artifactDir($p) . $a['path'])) continue; // only files actually stored for download
@@ -61,6 +95,7 @@ class DownloadsController extends BaseApiController
         if ($this->has('download_datasets')) {
             $out['datasets'] = [];
             foreach ($db->table('datasets')->where('rights_status', 'approved')->where('item_count >', 0)->orderBy('id')->get()->getResultArray() as $d) {
+                if (! $this->datasetVisible($d)) continue;
                 $frozen = ! empty($d['manifest_hash']);
                 $out['datasets'][] = [
                     'id' => (int) $d['id'], 'name' => $d['name'], 'category' => $d['category'] ?? null, 'language' => $d['language'],
@@ -79,7 +114,7 @@ class DownloadsController extends BaseApiController
         if ($r = $this->need('download_models')) return $r;
         $db  = \Config\Database::connect();
         $pkg = $db->table('engine_packages')->where('package_id', (string) $packageId)->get()->getRowArray();
-        if (! $pkg || $pkg['state'] === 'revoked') return $this->failure('Package not found.', 404);
+        if (! $pkg || ! in_array($pkg['state'], self::RELEASED_STATES, true)) return $this->failure('Package not found.', 404);
         $path = (string) ($this->request->getGet('path') ?? '');
         $art  = null;
         foreach (json_decode((string) $pkg['artifacts'], true) ?: [] as $a) {
@@ -128,7 +163,7 @@ class DownloadsController extends BaseApiController
     {
         if ($r = $this->need('download_datasets')) return $r;
         $ds = \Config\Database::connect()->table('datasets')->where('id', (int) $id)->get()->getRowArray();
-        if (! $ds) return $this->failure('Dataset not found.', 404);
+        if (! $ds || ! $this->datasetVisible($ds)) return $this->failure('Dataset not found.', 404);
         if ($ds['rights_status'] !== 'approved') return $this->failure('Only rights-approved datasets can be downloaded.', 403);
 
         $want   = array_values(array_filter(array_map('trim', explode(',', (string) ($this->request->getGet('split') ?? '')))));

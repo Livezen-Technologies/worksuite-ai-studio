@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, api, get, setSessionExpiredHandler, tokens, url } from './api';
+import { ApiError, api, get, refreshAccess, setSessionExpiredHandler, tokens, url } from './api';
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -22,20 +22,23 @@ describe('api()', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('returns data and sends the bearer token', async () => {
-    tokens.set('A1', 'R1');
+    tokens.set('A1');
     fetchMock.mockResolvedValueOnce(json(200, { status: 200, data: { ok: true } }));
     await expect(get('/servers')).resolves.toEqual({ ok: true });
     expect(new Headers(fetchMock.mock.calls[0][1].headers).get('Authorization')).toBe('Bearer A1');
   });
 
   it('refreshes once on 401 and retries with the new token', async () => {
-    tokens.set('OLD', 'R1');
+    tokens.set('OLD');
     fetchMock
       .mockResolvedValueOnce(json(401, { status: 'error', message: 'expired' }))
       .mockResolvedValueOnce(json(200, { data: { access_token: 'NEW' } }))
       .mockResolvedValueOnce(json(200, { data: [1, 2] }));
     await expect(get('/models')).resolves.toEqual([1, 2]);
     expect(fetchMock.mock.calls[1][0]).toBe('/api/auth/refresh');
+    // The refresh token rides in the HttpOnly cookie, never in the body or localStorage.
+    expect(fetchMock.mock.calls[1][1].credentials).toBe('same-origin');
+    expect(fetchMock.mock.calls[1][1].body).toBe('{}');
     expect(new Headers(fetchMock.mock.calls[2][1].headers).get('Authorization')).toBe('Bearer NEW');
     expect(tokens.access).toBe('NEW');
   });
@@ -43,12 +46,29 @@ describe('api()', () => {
   it('signs out when the session was revoked (refresh refused)', async () => {
     const expired = vi.fn();
     setSessionExpiredHandler(expired);
-    tokens.set('OLD', 'REVOKED');
+    tokens.set('OLD');
     fetchMock
       .mockResolvedValueOnce(json(401, { status: 'error', message: 'Unauthorized: session revoked' }))
       .mockResolvedValueOnce(json(401, { status: 'error', message: 'Your session has ended.' }));
     await expect(get('/models')).rejects.toBeInstanceOf(ApiError);
     expect(expired).toHaveBeenCalledOnce();
+  });
+
+  it('never stores a refresh token and drops the legacy key', async () => {
+    localStorage.setItem('aistudio.refresh', 'LEGACY');
+    vi.resetModules();
+    const fresh = await import('./api');
+    expect(localStorage.getItem('aistudio.refresh')).toBeNull();
+    fresh.tokens.set('A1');
+    expect(Object.keys(localStorage).sort()).toEqual(['aistudio.access', 'aistudio.session']);
+    fresh.tokens.clear();
+    expect(fresh.tokens.hasSession).toBe(false);
+  });
+
+  it('restores a session from the cookie alone', async () => {
+    fetchMock.mockResolvedValueOnce(json(200, { data: { access_token: 'FROM_COOKIE' } }));
+    await expect(refreshAccess()).resolves.toBe(true);
+    expect(tokens.access).toBe('FROM_COOKIE');
   });
 
   it('surfaces the server message and field errors', async () => {

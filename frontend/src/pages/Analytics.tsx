@@ -30,7 +30,7 @@ export default function Analytics() {
   const q = useQuery({
     queryKey: ['analytics', days],
     queryFn: () => get<Overview>('/analytics', { days }),
-    refetchInterval: 15_000,
+    refetchInterval: 60_000,
     placeholderData: keepPreviousData,
   });
   const d = q.data;

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { CpuChipIcon, StopIcon, WrenchScrewdriverIcon } from '@heroicons/react/24/outline';
 import {
   Alert, Button, Card, CardHeader, EmptyState, ErrorState, Input, PageHeader, Segmented,
@@ -16,6 +17,7 @@ import PresetList from './Studio/PresetList';
 import { NAME_RE, QUANTS, type Blob, type Mode, type NodeModel, type Preset, type Server, type Upload } from './Studio/shared';
 
 export default function Studio() {
+  const navigate = useNavigate();
   const toast = useToast();
   const qc = useQueryClient();
   const { can } = useAuth();
@@ -167,7 +169,7 @@ export default function Studio() {
             icon={CpuChipIcon}
             title="Register an Ollama node first"
             description="Custom models are created on an Ollama node. Add one under Servers, then come back."
-            action={<Button onClick={() => { window.location.assign('/servers'); }}>Go to Servers</Button>}
+            action={<Button onClick={() => navigate('/servers')}>Go to Servers</Button>}
           />
         </Card>
       ) : (

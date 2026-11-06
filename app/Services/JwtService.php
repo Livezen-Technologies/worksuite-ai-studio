@@ -93,6 +93,11 @@ class JwtService
         return $this->accessTtl;
     }
 
+    public function refreshTtl(): int
+    {
+        return $this->refreshTtl;
+    }
+
     /** Validate + decode. Returns payload array, or null if invalid/expired. */
     public function decode(string $token): ?array
     {

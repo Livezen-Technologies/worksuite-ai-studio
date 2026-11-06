@@ -25,6 +25,28 @@ use RuntimeException;
  */
 class AuthController extends BaseApiController
 {
+    public const REFRESH_COOKIE = 'aistudio_refresh';
+
+    /**
+     * Set (or, with $maxAge < 0, clear) the HttpOnly refresh cookie, scoped to /api/auth.
+     * Secure over HTTPS and always in production; plain HTTP is allowed only for local dev.
+     */
+    private function refreshCookie(string $value, int $maxAge): void
+    {
+        $secure = $this->request->isSecure() || ENVIRONMENT === 'production';
+        $this->response->setCookie([
+            'name'     => self::REFRESH_COOKIE,
+            'value'    => $value,
+            'expire'   => $maxAge < 0 ? -1 : $maxAge,
+            'path'     => '/api/auth',
+            'prefix'   => '',
+            'domain'   => '',
+            'secure'   => $secure,
+            'httponly' => true,
+            'samesite' => 'Strict',
+        ]);
+    }
+
     public function login()
     {
         $in = $this->input();
@@ -180,7 +202,9 @@ class AuthController extends BaseApiController
     {
         if ($r = $this->limit('refresh', $this->request->getIPAddress(), 30)) return $r;
         $in    = $this->input();
+        // API clients (MCP server) post the token; the web app relies on the HttpOnly cookie.
         $token = (string) ($in['refresh_token'] ?? '');
+        if ($token === '') $token = (string) ($this->request->getCookie(self::REFRESH_COOKIE) ?? '');
         $jwt   = new JwtService();
         $payload = $token ? $jwt->decode($token) : null;
 
@@ -226,6 +250,7 @@ class AuthController extends BaseApiController
         // Revoke every token for this user: signing out ends the session on all devices, so a
         // copied or stolen token stops working too.
         (new UserModel())->revokeTokens($this->userId());
+        $this->refreshCookie('', -1);
         return $this->ok(null, 'Signed out.');
     }
 
@@ -237,6 +262,8 @@ class AuthController extends BaseApiController
 
         $full = $users->withRoleAndPermissions($userId);
         $jwt  = new JwtService();
+        $refresh = $jwt->generateRefreshToken($userId, (int) ($full['token_version'] ?? 0));
+        $this->refreshCookie($refresh, (new JwtService())->refreshTtl());
 
         return $this->ok([
             'user'          => $full,
@@ -244,7 +271,8 @@ class AuthController extends BaseApiController
                 'id' => $full['id'], 'email' => $full['email'], 'name' => $full['name'],
                 'role' => $full['role'] ?? 'viewer', 'token_version' => $full['token_version'] ?? 0,
             ]),
-            'refresh_token' => $jwt->generateRefreshToken($userId, (int) ($full['token_version'] ?? 0)),
+            // Still returned for API clients; the web app keeps only the HttpOnly cookie.
+            'refresh_token' => $refresh,
             'token_type'    => 'Bearer',
             'expires_in'    => $jwt->accessTtl(),
         ] + $extra, $message);

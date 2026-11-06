@@ -121,4 +121,70 @@ final class AuthSessionTest extends CIUnitTestCase
         $this->assertSame(401, (int) $row['status']);
         $this->assertStringNotContainsString('hunter2', json_encode($row));
     }
+
+    /** Sign in as a fresh account: the per-email limiter outlives cache()->clean() between tests. */
+    private function cookieLogin()
+    {
+        $email = 'cookie-' . bin2hex(random_bytes(4)) . '@example.com';
+        $this->db->table('users')->insert([
+            'name' => 'Cookie', 'email' => $email, 'password_hash' => password_hash('correct horse', PASSWORD_DEFAULT),
+            'role_id' => 2, 'status' => 'active', 'token_version' => 0,
+        ]);
+        return $this->login('correct horse', $email);
+    }
+
+    private function refreshCookieFrom($res): ?\CodeIgniter\Cookie\Cookie
+    {
+        $jar = $res->response()->getCookieStore();
+        return $jar->has('aistudio_refresh') ? $jar->get('aistudio_refresh') : null;
+    }
+
+    public function testLoginSetsHttpOnlyRefreshCookie(): void
+    {
+        $res = $this->cookieLogin();
+        $res->assertStatus(200);
+        $c = $this->refreshCookieFrom($res);
+        $this->assertNotNull($c);
+        $this->assertTrue($c->isHTTPOnly());
+        $this->assertSame('/api/auth', $c->getPath());
+        $this->assertSame('Strict', $c->getSameSite());
+        $this->assertSame('', $c->getPrefix());
+        $this->assertSame(1209600, $c->getMaxAge(), '', 5);
+        $this->assertSame(json_decode($res->getJSON(), true)['data']['refresh_token'], $c->getValue());
+    }
+
+    public function testRefreshWorksFromCookieWithoutBody(): void
+    {
+        $cookie = $this->refreshCookieFrom($this->cookieLogin())->getValue();
+        service('superglobals')->setCookie('aistudio_refresh', $cookie);
+        try {
+            $res = $this->withBodyFormat('json')->post('api/auth/refresh', []);
+        } finally {
+            service('superglobals')->setCookieArray([]);
+        }
+        $res->assertStatus(200);
+        $this->assertNotEmpty(json_decode($res->getJSON(), true)['data']['access_token']);
+    }
+
+    public function testLogoutClearsCookieAndOldCookieNoLongerRefreshes(): void
+    {
+        $login  = $this->cookieLogin();
+        $access = json_decode($login->getJSON(), true)['data']['access_token'];
+        $cookie = $this->refreshCookieFrom($login)->getValue();
+
+        $out = $this->withHeaders(['Authorization' => "Bearer {$access}"])->withBodyFormat('json')->post('api/auth/logout', []);
+        $out->assertStatus(200);
+        $cleared = $this->refreshCookieFrom($out);
+        $this->assertNotNull($cleared);
+        $this->assertSame('', $cleared->getValue());
+        $this->assertTrue($cleared->isExpired());
+
+        service('superglobals')->setCookie('aistudio_refresh', $cookie);
+        try {
+            $res = $this->withBodyFormat('json')->post('api/auth/refresh', []);
+        } finally {
+            service('superglobals')->setCookieArray([]);
+        }
+        $res->assertStatus(401);
+    }
 }

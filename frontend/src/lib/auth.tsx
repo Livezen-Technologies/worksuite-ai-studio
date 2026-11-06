@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, setSessionExpiredHandler, tokens } from './api';
+import { api, refreshAccess, setSessionExpiredHandler, tokens } from './api';
 import { getPasskey, type RequestOptionsJSON } from './webauthn';
 
 export interface User {
@@ -14,7 +14,7 @@ export interface User {
 }
 
 /** What /auth/login, /auth/mfa, /auth/passkey… answer once sign-in is complete. */
-export interface Session { user: User; access_token: string; refresh_token: string; recovery_codes?: string[] }
+export interface Session { user: User; access_token: string; refresh_token?: string; recovery_codes?: string[] }
 
 /** A password sign-in either finishes, or needs a 2FA code, or (2FA enforced) needs an authenticator set up first. */
 export type SignInResult =
@@ -38,7 +38,7 @@ const Ctx = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(Boolean(tokens.access || tokens.refresh));
+  const [loading, setLoading] = useState(Boolean(tokens.access || tokens.hasSession));
 
   const signOut = useCallback(() => {
     if (tokens.access) api('/auth/logout', { method: 'POST' }).catch(() => {});
@@ -53,12 +53,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setSessionExpiredHandler(() => { tokens.clear(); setUser(null); });
-    if (!tokens.access && !tokens.refresh) return;
-    refreshProfile().catch(() => tokens.clear()).finally(() => setLoading(false));
+    // Nothing stored and never signed in here: straight to login, no loading flash.
+    if (!tokens.access && !tokens.hasSession) return;
+    // A returning user may hold only the HttpOnly refresh cookie: restore the access token first.
+    (async () => {
+      if (!tokens.access && !(await refreshAccess())) throw new Error('no session');
+      await refreshProfile();
+    })().catch(() => tokens.clear()).finally(() => setLoading(false));
   }, [refreshProfile]);
 
   const completeSession = useCallback((s: Session) => {
-    tokens.set(s.access_token, s.refresh_token);
+    // The refresh token in the body is for API clients; the browser keeps it as an HttpOnly cookie.
+    tokens.set(s.access_token);
     setUser(s.user);
   }, []);
 

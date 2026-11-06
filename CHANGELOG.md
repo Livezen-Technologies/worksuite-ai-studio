@@ -3,6 +3,15 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.28.2] — 2026-11-06 — Security hardening, round three
+- **Framework security update**: CodeIgniter 4.7.6 fixes two critical, one high and one medium advisory in 4.7.3.
+- **Sessions**: the 14-day sign-in (refresh) token now lives in a secure, script-proof cookie instead of browser storage.
+- **Gateway**: API keys stop working when their owner is suspended or removed; gateway downloads serve only released packages, and portal users' private datasets stay private.
+- **Outbound requests**: S3 storage and notification webhooks cannot reach internal or cloud-metadata addresses, and the checked address is pinned for the request.
+- **Training kits** validate the base model, name and settings, and the generated script can no longer carry injected code.
+- **Operations**: a failed health check fails the deploy, only `index.php` runs PHP, assets are compressed, CI audits dependencies and checks deploy scripts, a weekly test restores the latest backup, and site/service monitoring with alerts.
+- Quieter dashboards: pages poll quickly only while jobs are running.
+
 ## [1.28.1] — 2026-11-06 — Tighter administration rights
 - **No privilege escalation**: managing users or roles no longer lets anyone reach more access than they have. Only a super admin can create or edit super admins; nobody can widen their own role or grant permissions they lack; the last active super admin cannot be demoted or suspended.
 - **Database backups** in Storage are now super-admin only (they contain password hashes).
