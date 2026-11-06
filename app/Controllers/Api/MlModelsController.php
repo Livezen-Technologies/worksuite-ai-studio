@@ -41,7 +41,7 @@ class MlModelsController extends BaseApiController
             $rows = isset($in['rows']) && is_array($in['rows']) ? $in['rows'] : [is_array($in['row'] ?? null) ? $in['row'] : []];
             try { return $this->ok(['model' => $m['name'], 'results' => (new MlModelService())->predictTable($m, $rows, (int) ($in['top'] ?? 3))]); }
             catch (\InvalidArgumentException $e) { return $this->failure($e->getMessage(), 422); }
-            catch (\Throwable $e) { return $this->failure($e->getMessage(), 503); }
+            catch (\Throwable $e) { return $this->failException($e, 'The model service is unavailable.', 503); }
         }
         $texts = isset($in['texts']) && is_array($in['texts']) ? $in['texts'] : [(string) ($in['text'] ?? '')];
         try {
@@ -49,7 +49,7 @@ class MlModelsController extends BaseApiController
         } catch (\InvalidArgumentException $e) {
             return $this->failure($e->getMessage(), 422);
         } catch (\Throwable $e) {
-            return $this->failure($e->getMessage(), 503);
+            return $this->failException($e, 'The model service is unavailable.', 503);
         }
     }
 

@@ -244,7 +244,7 @@ class ServersController extends BaseApiController
             $tags = (new ServerService())->clientFor($server)->tags();
             return $this->ok($tags['models'] ?? []);
         } catch (\Throwable $e) {
-            return $this->failure('Provider unreachable: ' . $e->getMessage(), 502);
+            return $this->failException($e, 'Provider unreachable.', 502);
         }
     }
 

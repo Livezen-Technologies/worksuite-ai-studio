@@ -104,7 +104,9 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full min-h-0">
       <SectionRail onNavigate={onNavigate} />
-      <SectionPanel onNavigate={onNavigate} />
+      <div className={cx('flex min-h-0', !onNavigate && 'max-xl:hidden')}>
+        <SectionPanel onNavigate={onNavigate} />
+      </div>
     </div>
   );
 }
@@ -131,7 +133,7 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
             <div className="grid grid-cols-1">
               <ComboboxInput
                 autoFocus
-                className="col-start-1 row-start-1 h-12 w-full bg-transparent pr-4 pl-11 text-base text-slate-900 outline-hidden placeholder:text-slate-400 sm:text-sm dark:text-white"
+                className="col-start-1 row-start-1 h-12 w-full bg-transparent pr-4 pl-11 text-base text-slate-900 outline-hidden placeholder:text-slate-500 sm:text-sm dark:text-white dark:placeholder:text-slate-400"
                 placeholder="Go to a page…"
                 onChange={(e) => setQuery(e.target.value)}
                 onBlur={() => setQuery('')}
@@ -147,7 +149,7 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
                       <span className="block text-sm font-medium text-slate-900 group-data-focus:text-white dark:text-white">{item.label}</span>
                       <span className="block text-xs text-slate-500 group-data-focus:text-blue-100 dark:text-slate-400">{item.description}</span>
                     </span>
-                    <span className="text-xs text-slate-400 group-data-focus:text-blue-100">{item.section}</span>
+                    <span className="text-xs text-slate-500 group-data-focus:text-blue-100 dark:text-slate-400">{item.section}</span>
                   </ComboboxOption>
                 ))}
               </ComboboxOptions>
@@ -191,7 +193,7 @@ function NotificationsBell() {
             <li key={n.id} className={cx('px-4 py-3', !n.read_at && 'bg-brand-50/50 dark:bg-blue-500/5')}>
               <p className="text-sm font-medium text-slate-900 dark:text-white">{n.title ?? n.type ?? 'Notification'}</p>
               {(n.message ?? n.body) && <p className="mt-0.5 line-clamp-2 text-sm text-slate-500 dark:text-slate-400">{n.message ?? n.body}</p>}
-              <p className="mt-1 text-xs text-slate-400">{ago(n.created_at)}</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{ago(n.created_at)}</p>
             </li>
           ))}
           {!data?.rows?.length && <li className="px-4 py-8 text-center text-sm text-slate-500">You're all caught up.</li>}
@@ -243,7 +245,7 @@ function UserMenu() {
         <span className="flex size-8 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">{initials}</span>
         <span className="hidden text-left lg:block">
           <span className="block text-sm/5 font-semibold text-white">{user?.name}</span>
-          {(user?.role_label || user?.role) && <span className="block text-xs text-slate-400">{String(user?.role_label ?? user?.role)}</span>}
+          {(user?.role_label || user?.role) && <span className="block text-xs text-slate-300">{String(user?.role_label ?? user?.role)}</span>}
         </span>
         <ChevronDownIcon aria-hidden className="hidden size-5 text-slate-400 lg:block" />
       </MenuButton>
@@ -283,7 +285,7 @@ function Breadcrumbs() {
     <nav aria-label="Breadcrumb" className="mb-4 flex">
       <ol role="list" className="flex items-center gap-2 text-sm">
         <li><Link to="/" className="text-slate-400 hover:text-slate-500"><HomeIcon aria-hidden className="size-4" /><span className="sr-only">Dashboard</span></Link></li>
-        <li className="flex items-center gap-2 text-slate-400"><ChevronRightIcon aria-hidden className="size-4" />{item.section}</li>
+        <li className="flex items-center gap-2 text-slate-500 dark:text-slate-400"><ChevronRightIcon aria-hidden className="size-4 text-slate-400" />{item.section}</li>
         <li className="flex items-center gap-2"><ChevronRightIcon aria-hidden className="size-4 text-slate-400" />
           <Link to={item.to} aria-current="page" className="font-medium text-slate-600 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white">{item.label}</Link>
         </li>
@@ -313,7 +315,7 @@ export function AppShell() {
     <div className="min-h-full">
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[70] focus:rounded-md focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:shadow">Skip to content</a>
 
-      <Dialog open={mobileOpen} onClose={setMobileOpen} className="relative z-50 lg:hidden">
+      <Dialog open={mobileOpen} onClose={setMobileOpen} className="relative z-50 xl:hidden">
         <DialogBackdrop transition className="fixed inset-0 bg-slate-900/60 transition-opacity duration-300 ease-linear data-closed:opacity-0" />
         <div className="fixed inset-0 flex">
           <DialogPanel transition className="relative mr-16 flex w-fit max-w-[calc(100vw-4rem)] flex-1 transform transition duration-300 ease-in-out data-closed:-translate-x-full">
@@ -331,7 +333,7 @@ export function AppShell() {
       </Dialog>
 
       <header className="fixed inset-x-0 top-0 z-40 flex h-16 items-center gap-x-4 bg-slate-900 px-4 shadow-sm sm:px-6 dark:border-b dark:border-white/10 dark:bg-slate-950">
-        <button type="button" onClick={() => setMobileOpen(true)} className="-m-2.5 p-2.5 text-slate-300 hover:text-white lg:hidden">
+        <button type="button" onClick={() => setMobileOpen(true)} className="-m-2.5 p-2.5 text-slate-300 hover:text-white xl:hidden">
           <span className="sr-only">Open sidebar</span>
           <Bars3Icon aria-hidden className="size-6" />
         </button>
@@ -340,11 +342,11 @@ export function AppShell() {
           <button
             type="button"
             onClick={() => setPaletteOpen(true)}
-            className="flex w-full max-w-xl items-center gap-2 rounded-full bg-white/5 px-4 py-2 text-left text-sm text-slate-400 ring-1 ring-white/10 transition-colors hover:bg-white/10 hover:text-slate-200"
+            className="flex w-full max-w-xl items-center gap-2 rounded-full bg-white/5 px-4 py-2 text-left text-sm text-slate-300 ring-1 ring-white/10 transition-colors hover:bg-white/10 hover:text-slate-200"
           >
             <MagnifyingGlassIcon aria-hidden className="size-5 shrink-0" />
             <span className="flex-1 truncate">Search pages…</span>
-            <kbd className="hidden rounded border border-white/15 px-1.5 font-sans text-xs text-slate-400 sm:inline">Ctrl K</kbd>
+            <kbd className="hidden rounded border border-white/15 px-1.5 font-sans text-xs text-slate-300 sm:inline">Ctrl K</kbd>
           </button>
         </div>
         <div className="flex items-center gap-x-4 lg:gap-x-6">
@@ -359,7 +361,7 @@ export function AppShell() {
         <Sidebar />
       </div>
 
-      <div className="pt-16 lg:pl-84">
+      <div className="pt-16 lg:pl-20 xl:pl-84">
         <main id="main" className="py-6 sm:py-8">
           <div className="w-full px-4 sm:px-6 lg:px-8">
             <Breadcrumbs />

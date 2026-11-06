@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FingerPrintIcon, KeyIcon, PencilSquareIcon, PlusIcon, ShieldCheckIcon, TrashIcon } from '@heroicons/react/24/outline';
 import {
@@ -6,7 +6,8 @@ import {
 } from '../components/ui';
 import { RecoveryCodes, TotpEnrol } from '../components/security';
 import { ApiError, del, get, post, put } from '../lib/api';
-import { useAuth } from '../lib/auth';
+import { useAuth, type Session } from '../lib/auth';
+import { MIN_PASSWORD_LENGTH, validatePasswordChange, type PasswordChangeErrors } from './passwordChange';
 import { ago, dateTime } from '../lib/format';
 import { createPasskey, passkeysSupported, type CreationOptionsJSON } from '../lib/webauthn';
 
@@ -33,6 +34,7 @@ export default function Account() {
         <div className="space-y-6">
           <TwoFactorCard s={q.data} />
           <PasskeysCard passkeys={q.data.passkeys} />
+          <PasswordCard />
         </div>
       )}
     </>
@@ -205,4 +207,51 @@ function defaultName(): string {
   const os = /iPhone|iPad/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'This device';
   const browser = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : '';
   return browser ? `${os} · ${browser}` : os;
+}
+
+/** Change password: on success the server revokes other sessions and hands back a fresh one. */
+function PasswordCard() {
+  const toast = useToast();
+  const { user, completeSession } = useAuth();
+  const [form, setForm] = useState({ current: '', next: '', confirm: '' });
+  const [errors, setErrors] = useState<PasswordChangeErrors>({});
+  const set = (k: keyof typeof form) => (e: ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const change = useMutation({
+    mutationFn: () => post<Session>('/account/security/password', { current_password: form.current, new_password: form.next }),
+    onSuccess: (d) => {
+      completeSession(d);
+      setForm({ current: '', next: '', confirm: '' });
+      setErrors({});
+      toast.success('Password changed. Other devices were signed out.');
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError && e.status === 422) setErrors(e.fields);
+      toast.error(e instanceof ApiError && e.status === 429 ? 'Too many attempts. Try again in a few minutes.' : e instanceof Error ? e.message : 'Failed');
+    },
+  });
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const errs = validatePasswordChange(form, user?.email);
+    setErrors(errs);
+    if (Object.keys(errs).length === 0) change.mutate();
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><KeyIcon aria-hidden className="size-5 text-slate-400" /> Password</span>}
+        description="Changing it signs you out everywhere else."
+      />
+      <form onSubmit={submit} noValidate className="max-w-md space-y-4 px-4 py-5 sm:px-6">
+        <input type="text" name="username" autoComplete="username" value={user?.email ?? ''} readOnly hidden />
+        <Input label="Current password" type="password" autoComplete="current-password" required value={form.current} onChange={set('current')} error={errors.current_password} />
+        <Input label="New password" type="password" autoComplete="new-password" required value={form.next} onChange={set('next')} error={errors.new_password}
+          hint={`At least ${MIN_PASSWORD_LENGTH} characters. Not your email or a common password.`} />
+        <Input label="Confirm new password" type="password" autoComplete="new-password" required value={form.confirm} onChange={set('confirm')} error={errors.confirm} />
+        <Button type="submit" variant="primary" loading={change.isPending}>Change password</Button>
+      </form>
+    </Card>
+  );
 }

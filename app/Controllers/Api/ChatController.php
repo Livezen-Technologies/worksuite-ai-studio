@@ -167,7 +167,7 @@ class ChatController extends BaseApiController
                 'total_ms' => $final['total_ms'] ?? null,
             ]);
         } catch (\Throwable $e) {
-            $emit(['error' => $e->getMessage(), 'session_id' => $sessionId, 'done' => true]);
+            $emit(['error' => $this->publicError($e, 'The model request failed.'), 'session_id' => $sessionId, 'done' => true]);
         }
         exit;
     }
@@ -199,7 +199,7 @@ class ChatController extends BaseApiController
                 });
             $emit(['done' => true]);
         } catch (\Throwable $e) {
-            $emit(['error' => $e->getMessage(), 'done' => true]);
+            $emit(['error' => $this->publicError($e, 'The model request failed.'), 'done' => true]);
         }
         exit;
     }

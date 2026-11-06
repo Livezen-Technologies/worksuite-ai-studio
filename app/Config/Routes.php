@@ -45,6 +45,7 @@ $routes->group('api/account/security', ['namespace' => 'App\Controllers\Api', 'f
     $routes->post('totp/enable', 'SecurityController::totpEnable');
     $routes->post('totp/disable', 'SecurityController::totpDisable');
     $routes->post('recovery-codes', 'SecurityController::recoveryCodes');
+    $routes->post('password', 'SecurityController::changePassword');
     $routes->post('passkeys/options', 'SecurityController::passkeyOptions');
     $routes->post('passkeys', 'SecurityController::passkeyCreate');
     $routes->put('passkeys/(:num)', 'SecurityController::passkeyRename/$1');

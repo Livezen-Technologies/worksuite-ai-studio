@@ -61,8 +61,10 @@ class DatasetsController extends BaseApiController
                     file_get_contents($file->getTempName()),
                     $file->getClientExtension() ?: 'jsonl'
                 );
-            } catch (\Throwable $e) {
+            } catch (\InvalidArgumentException $e) {
                 return $this->failure('Dataset created but import failed: ' . $e->getMessage(), 422, ['dataset_id' => $id]);
+            } catch (\Throwable $e) {
+                return $this->failException($e, 'Dataset created but import failed.', 500, ['dataset_id' => $id]);
             }
         }
         return $this->ok(
@@ -119,8 +121,10 @@ class DatasetsController extends BaseApiController
             $result = (new DatasetService())->import(
                 (int) $id, file_get_contents($file->getTempName()), $file->getClientExtension() ?: 'jsonl'
             );
-        } catch (\Throwable $e) {
+        } catch (\InvalidArgumentException $e) {
             return $this->failure('Import failed: ' . $e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failException($e, 'Import failed.', 500);
         }
         return $this->ok($result + ['dataset' => $this->datasets()->find((int) $id)],
             "{$result['imported']} rows imported, {$result['skipped']} skipped.");
@@ -136,8 +140,10 @@ class DatasetsController extends BaseApiController
         @set_time_limit(0);
         try {
             $r = (new \App\Services\SpeechDatasetService())->importZip((int) $id, $file->getTempName());
-        } catch (\Throwable $e) {
+        } catch (\InvalidArgumentException $e) {
             return $this->failure('Import failed: ' . $e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failException($e, 'Import failed.', 500);
         }
         return $this->ok($r + ['dataset' => $this->datasets()->find((int) $id)],
             "{$r['imported']} recordings imported" . ($r['skipped'] ? ", {$r['skipped']} skipped" : '') . '.');

@@ -52,6 +52,20 @@ class StorageBackupService
 
     public function start(array $b, string $trigger): int
     {
+        // Serialise the check-then-insert: on MySQL a named lock, elsewhere (SQLite tests) no lock is needed.
+        $mysql = $this->db->DBDriver === 'MySQLi';
+        if ($mysql && (int) ($this->db->query("SELECT GET_LOCK('aistudio_backup', 0) AS l")->getRow()->l ?? 0) !== 1) {
+            throw new \RuntimeException('Another backup is starting. Try again in a moment.');
+        }
+        try {
+            return $this->startLocked($b, $trigger);
+        } finally {
+            if ($mysql) $this->db->query("SELECT RELEASE_LOCK('aistudio_backup')");
+        }
+    }
+
+    private function startLocked(array $b, string $trigger): int
+    {
         if ($this->running((int) $b['id'])) throw new \RuntimeException('This backup is already running.');
         $now = date('Y-m-d H:i:s');
         $this->db->table('storage_backup_runs')->insert(['backup_id' => $b['id'], 'status' => 'running', 'trigger' => $trigger, 'started_at' => $now]);

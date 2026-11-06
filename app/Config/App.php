@@ -178,9 +178,36 @@ class App extends BaseConfig
      *         '192.168.5.0/24' => 'X-Real-IP',
      *     ]
      *
+     * Default: empty — nginx talks to PHP-FPM directly, so REMOTE_ADDR already is the client.
+     * Behind a load balancer / reverse proxy set it from .env as a comma list of `ip|cidr=header`:
+     *     app.proxyIPs = "10.0.1.200=X-Forwarded-For, 192.168.5.0/24=X-Real-IP"
+     * (CI4's own `app.proxyIPs.<key>` override cannot be used: IP keys contain dots.) Parsed in __construct().
+     *
      * @var array<string, string>
      */
     public array $proxyIPs = [];
+
+    public function __construct()
+    {
+        parent::__construct();
+        $list = env('app.proxyIPs');
+        if (is_string($list) && trim($list) !== '') {
+            $this->proxyIPs = self::parseProxyIPs($list);
+        }
+    }
+
+    /** "10.0.0.1=X-Forwarded-For, 10.1.0.0/16=X-Real-IP" -> ['10.0.0.1' => 'X-Forwarded-For', ...] (bad entries skipped). */
+    public static function parseProxyIPs(string $list): array
+    {
+        $out = [];
+        foreach (explode(',', $list) as $entry) {
+            [$ip, $header] = array_map('trim', explode('=', $entry, 2)) + [1 => ''];
+            $addr = explode('/', $ip, 2)[0];
+            if ($ip === '' || ! filter_var($addr, FILTER_VALIDATE_IP) || ! preg_match('/^[A-Za-z0-9-]+$/', $header)) continue;
+            $out[$ip] = $header;
+        }
+        return $out;
+    }
 
     /**
      * --------------------------------------------------------------------------

@@ -154,7 +154,9 @@ class TrainingPipelinesController extends BaseApiController
     public function retry($id = null)
     {
         if ($r = $this->requirePermission('models.manage')) return $r;
-        try { $this->svc()->retry((int) $id); } catch (\Throwable $e) { return $this->failure($e->getMessage(), 409); }
+        try { $this->svc()->retry((int) $id); }
+        catch (\InvalidArgumentException | \RuntimeException $e) { return $this->failure($e->getMessage(), 409); }
+        catch (\Throwable $e) { return $this->failException($e, 'Could not queue the job again.', 500); }
         return $this->ok(null, 'Job queued again.');
     }
 

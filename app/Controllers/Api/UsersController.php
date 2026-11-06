@@ -2,6 +2,7 @@
 
 namespace App\Controllers\Api;
 
+use App\Libraries\PasswordPolicy;
 use App\Models\UserModel;
 use App\Models\RoleModel;
 
@@ -60,10 +61,13 @@ class UsersController extends BaseApiController
         if ($errors = $this->validateFields($in, [
             'name'     => 'required|min_length[2]|max_length[120]',
             'email'    => 'required|valid_email|is_unique[users.email]',
-            'password' => 'required|min_length[8]',
+            'password' => 'required',
             'role_id'  => 'required|is_natural_no_zero',
         ])) {
             return $this->failure('Please check the fields.', 422, $errors);
+        }
+        if ($why = PasswordPolicy::problem((string) $in['password'], (string) $in['email'])) {
+            return $this->failure($why, 422, ['password' => $why]);
         }
         if ($why = $this->roleProblem((int) $in['role_id'])) return $this->failure($why, 403);
         if (isset($in['status']) && ! in_array($in['status'], self::STATUSES, true)) {
@@ -113,7 +117,9 @@ class UsersController extends BaseApiController
             $data['email'] = strtolower(trim($in['email']));
         }
         if (! empty($in['password'])) {
-            if (strlen($in['password']) < 8) return $this->failure('Password must be at least 8 characters.', 422);
+            if ($why = PasswordPolicy::problem((string) $in['password'], (string) ($data['email'] ?? $row['email']))) {
+                return $this->failure($why, 422, ['password' => $why]);
+            }
             $data['password_hash'] = $m->hash($in['password']);
         }
         if (isset($in['two_factor_required'])) $data['two_factor_required'] = $in['two_factor_required'] ? 1 : 0;

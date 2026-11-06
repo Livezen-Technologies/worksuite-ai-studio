@@ -130,8 +130,12 @@ class TotpService
             $last = isset($user['totp_last_step']) ? (int) $user['totp_last_step'] : null;
             $step = $this->verify($secret, $code, $last);
             if ($step !== null) {
-                \Config\Database::connect()->table('users')->where('id', $user['id'])->update(['totp_last_step' => $step]);
-                return true;
+                // Claim the step atomically: two concurrent requests with the same code cannot both win.
+                $db = \Config\Database::connect();
+                $db->query('UPDATE ' . $db->prefixTable('users') . ' SET totp_last_step = ? WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)',
+                    [$step, (int) $user['id'], $step]);
+                if ($db->affectedRows() > 0) return true;
+                return false; // replay: this (or a later) step was already used
             }
         }
         return $this->useRecoveryCode((int) $user['id'], $code);

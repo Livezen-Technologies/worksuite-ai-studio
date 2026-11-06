@@ -1,5 +1,8 @@
 # systemd unit: WorkSuite AI Studio background queue worker.
-# Processes jobs in a loop (sleeps when idle). Install to
+# `spark queue:work` exits as soon as the queue is empty, so a small loop polls every 5 s instead
+# of systemd restarting the unit every 5 s (which would flood the journal with start/stop lines).
+# A crashing run is logged by PHP and retried on the next pass; if the loop itself dies, Restart=
+# brings it back.
 # /etc/systemd/system/ollamahub-queue.service then: systemctl enable --now ollamahub-queue
 [Unit]
 Description=WorkSuite AI Studio queue worker
@@ -9,7 +12,7 @@ After=network.target mysql.service
 Type=simple
 User=www-data
 WorkingDirectory=/var/www/ollamahub
-ExecStart=/bin/sh -c 'while true; do php8.3 spark queue:work --limit 25; sleep 5; done'
+ExecStart=/bin/sh -c 'while true; do /usr/bin/php8.3 spark queue:work --limit 25 || echo "queue:work exited with $$?" >&2; sleep 5; done'
 Restart=always
 RestartSec=5
 # Sandboxing: no privilege escalation, read-only /usr /boot /etc, kernel settings off-limits.

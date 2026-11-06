@@ -1,7 +1,8 @@
 {
   "name": "worksuite-ai-studio-frontend",
   "private": true,
-  "version": "1.28.2",
+  "version": "1.28.3",
+  "license": "UNLICENSED",
   "type": "module",
   "scripts": {
     "dev": "vite",

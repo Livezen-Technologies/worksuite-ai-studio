@@ -68,6 +68,16 @@ class TrainingProgressController extends BaseApiController
         exit;
     }
 
+    /** Most pieces one output file may be split into. */
+    public const MAX_OUTPUT_PARTS = 10000;
+
+    /** Total bytes one job may store under output/ (env training.maxOutputGb, default 50). */
+    public static function maxOutputBytes(): int
+    {
+        $gb = (float) (env('training.maxOutputGb') ?: 50);
+        return (int) (max(0.000001, $gb) * 1073741824);
+    }
+
     public function output($id = null, $name = null)
     {
         if (! $this->jobForToken($id)) return $this->failure('Invalid job or token.', 401);
@@ -81,10 +91,23 @@ class TrainingProgressController extends BaseApiController
         $part  = max(0, (int) ($this->request->getGet('part') ?? 0));
         $parts = max(1, (int) ($this->request->getGet('parts') ?? 1));
         if ($part >= $parts) return $this->failure('part must be below parts.', 422);
+        if ($parts > self::MAX_OUTPUT_PARTS) return $this->failure('Too many parts (at most ' . self::MAX_OUTPUT_PARTS . ').', 413);
         $tmp  = $dir . $name . '.part';
         if ($part > 0 && ! is_file($tmp)) return $this->failure('Upload part 0 first.', 409);
         $body = $this->request->getBody() ?? '';
         if ($body === '') return $this->failure('Empty upload.', 422);
+        // Cap what one job may store: everything already in its output folder, minus what this upload replaces.
+        clearstatcache();
+        $used = 0;
+        foreach (glob($dir . '*') ?: [] as $f) {
+            if (! is_file($f)) continue;
+            if ($f === $dir . $name || ($part === 0 && $f === $tmp)) continue;
+            $used += filesize($f);
+        }
+        $cap = self::maxOutputBytes();
+        if ($used + strlen($body) > $cap) {
+            return $this->failure('This job has reached its output storage limit (' . round($cap / 1073741824, 2) . ' GB).', 413);
+        }
         file_put_contents($tmp, $body, $part === 0 ? 0 : FILE_APPEND);
         clearstatcache(true, $tmp);                                      // is_file() above cached the old size
         $n = filesize($tmp);

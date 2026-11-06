@@ -111,6 +111,11 @@ does this) so the secret never lands in log files.
 | `MCP_AUTH_SECRET` / `MCP_AUTH_SECRETS` | Required for `--http`; the second is a comma-separated list, one per client |
 | `MCP_ALLOW_URL_SECRET` | `true` accepts `/mcp/<secret>` for connectors that cannot send headers (default off) |
 | `PORT` | HTTP port, default 8787 |
+| `HOST` | Listen address, default `127.0.0.1` (put a reverse proxy in front); `0.0.0.0` exposes it on all interfaces |
+| `TRUST_PROXY` | Express `trust proxy` value (e.g. `loopback` behind nginx on the same host) so rate limits see the real client IP; unset = ignore `X-Forwarded-For` |
+
+Rate limits (HTTP mode): 120 requests/minute per client IP on `/mcp`, and 20 failed authentications
+per 15 minutes per IP; over the limit the server answers 429.
 
 ## Notes
 

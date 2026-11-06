@@ -71,6 +71,14 @@ class StorageController extends BaseApiController
             'agent' => ['server_id' => (int) ($c['server_id'] ?? 0), 'path' => rtrim(trim((string) ($c['path'] ?? '')), '/') ?: 'aistudio-storage'],
             default => ['path' => rtrim(trim((string) ($c['path'] ?? '')), '/')],
         };
+        // New or changed local/mounted folders must be under the allowed base; unchanged paths of
+        // nodes saved before the allowlist existed are left alone.
+        $existingConfig = json_decode((string) ($existing['config'] ?? ''), true) ?: [];
+        class_exists(\App\Libraries\Storage\StorageDriver::class); // loads LocalDriver (same file)
+        if (in_array($kind, ['local', 'mounted'], true) && ($config['path'] ?? '') !== ($existingConfig['path'] ?? null)
+            && ! \App\Libraries\Storage\LocalDriver::allowedRoot((string) ($config['path'] ?? ''))) {
+            throw new \InvalidArgumentException('Local storage must be a folder under ' . \App\Libraries\Storage\LocalDriver::localBase() . ' (or the app\'s writable folder), with no "..".');
+        }
         if ($kind === 'agent' && (str_contains($config['path'], '..') || preg_match('/[^\w.\/-]/', $config['path']))) throw new \InvalidArgumentException('Use a plain folder path on the node, e.g. /data/aistudio or aistudio-storage.');
         if ($kind === 'agent' && $this->db()->table('storage_nodes')->where(['kind' => 'agent', 'deleted_at' => null])->where('status !=', 'retired')
                 ->like('config', '"server_id":' . $config['server_id'] . ',', 'both')->where('id !=', (int) ($existing['id'] ?? 0))->countAllResults()) {

@@ -93,6 +93,24 @@ abstract class BaseApiController extends ResourceController
         ], $status);
     }
 
+    /**
+     * Log an unexpected exception and return the text that is safe to show the client: the
+     * public message, plus the exception's own message outside production (for debugging).
+     */
+    protected function publicError(\Throwable $e, string $publicMessage): string
+    {
+        log_message('error', '{class}: {msg} at {file}:{line}', [
+            'class' => $e::class, 'msg' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine(),
+        ]);
+        return ENVIRONMENT === 'production' ? $publicMessage : $publicMessage . ' (' . $e->getMessage() . ')';
+    }
+
+    /** Error envelope for an unexpected exception; internal detail is hidden in production. */
+    protected function failException(\Throwable $e, string $publicMessage, int $status = 500, $data = null)
+    {
+        return $this->failure($this->publicError($e, $publicMessage), $status, $data);
+    }
+
     /** Validate input against rules; returns field=>message map (empty if OK). */
     protected function validateFields(array $data, array $rules): array
     {

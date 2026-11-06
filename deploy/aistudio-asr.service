@@ -3,6 +3,8 @@ Description=WorkSuite AI Studio speech-to-text (Whisper Sinhala)
 After=network.target
 
 [Service]
+# Later: move to /opt/aistudio-asr with a dedicated system user (see docs/runbook.md, "Later").
+# Kept in /home/ubuntu for now so live paths do not change.
 User=ubuntu
 Environment=ASR_THREADS=6
 ExecStart=/home/ubuntu/sinhala-build/.venv-asr/bin/python /home/ubuntu/sinhala-build/asr_service.py

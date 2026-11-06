@@ -177,7 +177,7 @@ class GatewayController extends BaseApiController
             } catch (\InvalidArgumentException $e) {
                 return $this->logged($endpoint, $model, $server['id'], 422, $e->getMessage());
             } catch (\Throwable $e) {
-                $lastErr = $e->getMessage(); // try the next node (failover)
+                $lastErr = $this->publicError($e, 'The model node failed.'); // try the next node (failover)
             }
         }
         return $this->logged($endpoint, $model, null, 502, $lastErr);

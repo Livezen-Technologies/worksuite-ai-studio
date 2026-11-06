@@ -24,10 +24,14 @@ echo "==> Building frontend (frontend/ -> public/app)"
 echo "==> Backing up the database on ${HOST}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 # shellcheck disable=SC2029  # local values are passed to the remote on purpose
-ssh "${HOST}" "DEST='${DEST}' BACKUP_DIR='${BACKUP_DIR}' STAMP='${STAMP}' bash -s" <<'REMOTE'
+ssh "${HOST}" "sudo DEST='${DEST}' BACKUP_DIR='${BACKUP_DIR}' STAMP='${STAMP}' bash -s" <<'REMOTE'
 set -euo pipefail
-sudo mkdir -p "${BACKUP_DIR}" && sudo chown "$(id -un)" "${BACKUP_DIR}" && chmod 700 "${BACKUP_DIR}"
-env_get() { grep -E "^\s*$1\s*=" "${DEST}/.env" | head -1 | sed -E 's/^[^=]+=\s*//; s/^"(.*)"$/\1/; s/\s+$//'; }
+# Runs as root (sudo bash -s below): the backup dir stays root:root 0700, like the nightly backups.
+install -d -o root -g root -m 700 "${BACKUP_DIR}"
+# Same exact-key lookup as deploy/lib-env.sh (inlined: the server may not have it before the first sync).
+env_get() {
+  awk -F= -v k="$1" '{key=$1; gsub(/^[ \t]+|[ \t]+$/, "", key)} key==k {sub(/^[^=]*=[ \t]*/, ""); sub(/[ \t\r]+$/, ""); if ($0 ~ /^".*"$/ || $0 ~ /^\x27.*\x27$/) $0 = substr($0, 2, length($0) - 2); print; exit}' "${DEST}/.env"
+}
 DB=$(env_get database.default.database); USER=$(env_get database.default.username); PASS=$(env_get database.default.password)
 HOSTDB=$(env_get database.default.hostname); HOSTDB=${HOSTDB:-127.0.0.1}
 MYSQL_PWD="${PASS}" mysqldump --single-transaction --routines --no-tablespaces -h "${HOSTDB}" -u "${USER}" "${DB}" \
