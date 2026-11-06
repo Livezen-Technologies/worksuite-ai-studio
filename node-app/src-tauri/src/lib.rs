@@ -72,14 +72,48 @@ fn analytics(app: State<App>, range_secs: i64) -> Analytics {
     }
 }
 
+/// The enrolment token and node key travel to this address, so it must be HTTPS. Plain HTTP is
+/// only accepted for this computer itself (a server running locally for testing).
+fn server_address_ok(server: &str) -> bool {
+    if server.starts_with("https://") {
+        return server.len() > "https://".len();
+    }
+    let Some(rest) = server.strip_prefix("http://") else { return false };
+    let host = rest.split('/').next().unwrap_or("");
+    let host = if host.starts_with('[') {
+        host.split(']').next().unwrap_or("").trim_start_matches('[')
+    } else {
+        host.split(':').next().unwrap_or("")
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
+#[cfg(test)]
+mod server_address_tests {
+    use super::server_address_ok;
+
+    #[test]
+    fn https_required_except_localhost() {
+        assert!(server_address_ok("https://aistudio.example.com"));
+        assert!(server_address_ok("http://localhost:8080"));
+        assert!(server_address_ok("http://127.0.0.1"));
+        assert!(server_address_ok("http://[::1]:8080/x"));
+        assert!(!server_address_ok("http://aistudio.example.com"));
+        assert!(!server_address_ok("http://192.168.1.10"));
+        assert!(!server_address_ok("http://localhost.evil.com"));
+        assert!(!server_address_ok("ftp://example.com"));
+        assert!(!server_address_ok("https://"));
+    }
+}
+
 #[tauri::command]
 fn enrol(app: State<App>, server: String, token: String, name: String) -> Result<Enrolment, String> {
     if Enrolment::load().is_some() {
         return Err("This computer is already connected. Disconnect it first.".into());
     }
     let server = server.trim().trim_end_matches('/').to_string();
-    if !server.starts_with("https://") && !server.starts_with("http://") {
-        return Err("The server address must start with https://".into());
+    if !server_address_ok(&server) {
+        return Err("The server address must start with https:// (plain http:// only works for this computer, e.g. http://localhost).".into());
     }
     let mut settings = Settings::load();
     settings.server = server.clone();

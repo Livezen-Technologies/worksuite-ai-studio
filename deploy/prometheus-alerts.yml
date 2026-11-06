@@ -1,0 +1,33 @@
+# Alert rules for WorkSuite AI Studio (loaded by prometheus-ollamahub.yml). Firing alerts show
+# on Prometheus' /alerts page; add an Alertmanager to get them by email/Slack.
+groups:
+  - name: aistudio
+    rules:
+      - alert: NodeDown
+        expr: up == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.instance }} ({{ $labels.job }}) is not answering"
+
+      - alert: DiskAlmostFull
+        expr: (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) > 0.85
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} {{ $labels.mountpoint }} is over 85% full"
+
+      - alert: MemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} has under 10% memory available"
+
+      - alert: BackupStale
+        # node_exporter textfile collector: deploy/backup-db.sh writes aistudio_backup_last_success_seconds.
+        expr: time() - aistudio_backup_last_success_seconds > 30 * 3600
+        for: 30m
+        labels: { severity: critical }
+        annotations:
+          summary: "No successful database backup for over 30 hours"

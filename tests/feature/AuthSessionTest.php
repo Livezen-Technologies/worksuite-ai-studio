@@ -22,6 +22,7 @@ final class AuthSessionTest extends CIUnitTestCase
     {
         parent::setUp();
         cache()->clean();
+        unset($_SERVER['ci_jwt_payload']); // set per request by the auth filter; tests share one process
         $forge = \Config\Database::forge($this->DBGroup);
         foreach (['roles', 'users', 'role_permissions', 'permissions', 'audit_logs'] as $t) $forge->dropTable($t, true);
         $forge->addField(['id' => ['type' => 'INTEGER', 'auto_increment' => true], 'name' => ['type' => 'VARCHAR', 'constraint' => 64], 'label' => ['type' => 'VARCHAR', 'constraint' => 100]])
@@ -40,6 +41,13 @@ final class AuthSessionTest extends CIUnitTestCase
             'two_factor_required' => ['type' => 'INTEGER', 'default' => 0], 'token_version' => ['type' => 'INTEGER', 'default' => 0],
             'created_at' => ['type' => 'DATETIME', 'null' => true], 'updated_at' => ['type' => 'DATETIME', 'null' => true], 'deleted_at' => ['type' => 'DATETIME', 'null' => true],
         ])->addKey('id', true)->createTable('users');
+        $forge->addField([
+            'id' => ['type' => 'INTEGER', 'auto_increment' => true], 'user_id' => ['type' => 'INTEGER', 'null' => true],
+            'user_name' => ['type' => 'VARCHAR', 'constraint' => 120, 'null' => true], 'action' => ['type' => 'VARCHAR', 'constraint' => 120],
+            'method' => ['type' => 'VARCHAR', 'constraint' => 8, 'null' => true], 'path' => ['type' => 'VARCHAR', 'constraint' => 191, 'null' => true],
+            'status' => ['type' => 'INTEGER', 'null' => true], 'ip' => ['type' => 'VARCHAR', 'constraint' => 64, 'null' => true],
+            'meta' => ['type' => 'TEXT', 'null' => true], 'created_at' => ['type' => 'DATETIME', 'null' => true],
+        ])->addKey('id', true)->createTable('audit_logs');
         $this->db->table('roles')->insertBatch([['name' => 'super_admin', 'label' => 'Super admin'], ['name' => 'viewer', 'label' => 'Viewer']]);
         $this->db->table('users')->insert([
             'name' => 'Admin', 'email' => 'admin@example.com', 'password_hash' => password_hash('correct horse', PASSWORD_DEFAULT),
@@ -99,5 +107,14 @@ final class AuthSessionTest extends CIUnitTestCase
             $this->assertSame(401, $this->login('wrong', 'stuffing@example.com')->response()->getStatusCode(), "attempt {$i}");
         }
         $this->login('wrong', 'stuffing@example.com')->assertStatus(429);
+    }
+
+    public function testFailedSignInIsAuditedWithTheEmailButNotThePassword(): void
+    {
+        $this->login('hunter2-secret', 'audit-probe@example.com')->assertStatus(401);
+        $row = $this->db->table('audit_logs')->orderBy('id', 'DESC')->get()->getRowArray();
+        $this->assertSame('sign-in attempt: audit-probe@example.com', $row['user_name']);
+        $this->assertSame(401, (int) $row['status']);
+        $this->assertStringNotContainsString('hunter2', json_encode($row));
     }
 }

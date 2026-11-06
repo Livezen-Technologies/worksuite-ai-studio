@@ -12,6 +12,15 @@ WorkingDirectory=/var/www/ollamahub
 ExecStart=/bin/sh -c 'while true; do php8.3 spark queue:work --limit 25; sleep 5; done'
 Restart=always
 RestartSec=5
+# Sandboxing: no privilege escalation, read-only /usr /boot /etc, kernel settings off-limits.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target

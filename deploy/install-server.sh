@@ -52,8 +52,20 @@ echo "==> HTTPS (Let's Encrypt) + redirect HTTP -> HTTPS"
 sudo apt-get install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d "${DOMAIN}" --redirect --non-interactive --agree-tos -m "${CERT_EMAIL}"
 
-echo "==> App: composer install (no-dev), migrate, seed"
+echo "==> App configuration (.env, only if missing)"
 cd "${APP_DIR}"
+if [ ! -f .env ]; then
+  # Fresh secrets every install: the app refuses placeholder or default secrets in production.
+  sed -e "s|^app.baseURL = .*|app.baseURL = 'https://${DOMAIN}/'|" \
+      -e "s|^database.default.password = .*|database.default.password = ${DB_PASS}|" \
+      -e "s|^JWT_SECRET = .*|JWT_SECRET = $(openssl rand -hex 32)|" \
+      -e "s|^app.forceGlobalSecureRequests = .*|app.forceGlobalSecureRequests = true|" \
+      deploy/env.production.example > .env
+  chmod 640 .env && sudo chown "$(id -un)":www-data .env
+  echo "    wrote .env (JWT_SECRET generated)"
+fi
+
+echo "==> App: composer install (no-dev), migrate, seed"
 if [ ! -f vendor/autoload.php ]; then
   curl -sS https://getcomposer.org/installer | ${PHP} -- --install-dir=/usr/local/bin --filename=composer
   composer install --no-dev --optimize-autoloader
@@ -64,6 +76,7 @@ sudo chown -R www-data:www-data "${APP_DIR}/writable"
 
 echo "==> Prometheus scrape config (this node's node_exporter)"
 sudo cp "${APP_DIR}/deploy/prometheus-ollamahub.yml" /etc/prometheus/prometheus.yml
+sudo cp "${APP_DIR}/deploy/prometheus-alerts.yml" /etc/prometheus/aistudio-alerts.yml
 sudo systemctl restart prometheus prometheus-node-exporter
 
 echo "==> systemd queue worker + schedule cron"
@@ -78,6 +91,11 @@ sudo mkdir -p /var/backups/aistudio && sudo chmod 700 /var/backups/aistudio
 ( sudo crontab -l 2>/dev/null | grep -v 'deploy/backup-db.sh' ; \
   echo "17 3 * * * APP_DIR=${APP_DIR} bash ${APP_DIR}/deploy/backup-db.sh >> /var/log/aistudio-backup.log 2>&1" ) | sudo crontab -
 echo "    Set BACKUP_RSYNC_TARGET in that cron line to copy backups off this server (see docs/runbook.md)."
+
+echo "==> Log housekeeping: app logs kept 30 days, backup log rotated weekly"
+( sudo crontab -l 2>/dev/null | grep -v 'writable/logs' ; \
+  echo "41 4 * * * find ${APP_DIR}/writable/logs -name 'log-*.log' -mtime +30 -delete" ) | sudo crontab -
+printf '/var/log/aistudio-backup.log {\n  weekly\n  rotate 8\n  compress\n  missingok\n  notifempty\n}\n' | sudo tee /etc/logrotate.d/aistudio >/dev/null
 
 echo "==> Firewall: SSH, HTTP, HTTPS only"
 if command -v ufw >/dev/null 2>&1; then

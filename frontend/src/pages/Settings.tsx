@@ -76,7 +76,7 @@ const GROUPS: GroupDef[] = [
       { title: 'Object storage', description: 'Only used by the S3 and MinIO drivers.', fields: [
         { key: 's3_bucket', label: 'Bucket' },
         { key: 's3_region', label: 'Region', placeholder: 'us-east-1' },
-        { key: 's3_key', label: 'Access key' },
+        { key: 's3_key', label: 'Access key', type: 'password' },
         { key: 's3_secret', label: 'Secret key', type: 'password' },
         { key: 's3_endpoint', label: 'Endpoint (MinIO)', type: 'url', placeholder: 'https://minio.example.com', wide: true },
       ] },
@@ -91,7 +91,7 @@ const GROUPS: GroupDef[] = [
       { title: 'Webhooks', description: 'Leave a field blank to turn that channel off.', fields: [
         { key: 'slack_webhook', label: 'Slack webhook URL', type: 'url', wide: true },
         { key: 'discord_webhook', label: 'Discord webhook URL', type: 'url', wide: true },
-        { key: 'webhook_url', label: 'Generic webhook URL', type: 'url', wide: true },
+        { key: 'webhook_url', label: 'Generic webhook URL', type: 'password', wide: true },
       ] },
       { title: 'Telegram', fields: [
         { key: 'telegram_bot_token', label: 'Bot token', type: 'password' },

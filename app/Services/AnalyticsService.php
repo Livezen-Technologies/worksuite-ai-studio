@@ -17,6 +17,8 @@ class AnalyticsService
 
     public function overview(int $days = 30): array
     {
+        $this->days = max(1, min(366, $days));
+        $days = $this->days;
         return [
             'daily_requests'  => $this->dailyRequests($days),
             'token_usage'     => $this->dailyTokens($days),
@@ -32,15 +34,22 @@ class AnalyticsService
      * to (created_at, model, pt, ct, ms). All request/token/model/latency metrics
      * read from this so both sources are counted.
      */
+    private int $days = 30;
+
+    /**
+     * $this->days bounds both halves of the union (indexed created_at), so no report scans the
+     * whole history; the outer queries still filter for their own window.
+     */
     private function events(): string
     {
+        $since = "created_at >= CURDATE() - INTERVAL " . (int) $this->days . " DAY";
         return "SELECT created_at, COALESCE(model,'unknown') AS model,
                        COALESCE(prompt_tokens,0) AS pt, COALESCE(completion_tokens,0) AS ct, total_ms AS ms
-                FROM chat_messages WHERE role='assistant'
+                FROM chat_messages WHERE role='assistant' AND {$since}
                 UNION ALL
                 SELECT created_at, COALESCE(model,'unknown') AS model,
                        COALESCE(prompt_tokens,0) AS pt, COALESCE(completion_tokens,0) AS ct, processing_ms AS ms
-                FROM api_logs";
+                FROM api_logs WHERE {$since}";
     }
 
     private function dailyRequests(int $days): array
@@ -84,7 +93,7 @@ class AnalyticsService
         if (! $this->db->tableExists('api_logs')) return [];
         $rows = $this->db->query(
             "SELECT CASE WHEN status < 300 THEN 'success' WHEN status < 500 THEN 'client error' ELSE 'server error' END label,
-             COUNT(*) n FROM api_logs GROUP BY label"
+             COUNT(*) n FROM api_logs WHERE created_at >= CURDATE() - INTERVAL ? DAY GROUP BY label", [$this->days]
         )->getResultArray();
         return array_map(static fn ($r) => ['label' => $r['label'], 'value' => (int) $r['n']], $rows);
     }

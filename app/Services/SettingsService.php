@@ -43,7 +43,7 @@ class SettingsService
     ];
 
     /** keys whose values are masked when read back. */
-    private const SECRET_KEYS = ['password', 's3_secret', 'telegram_bot_token'];
+    private const SECRET_KEYS = ['password', 's3_key', 's3_secret', 'telegram_bot_token', 'webhook_url']; // webhook URLs (Slack, Teams) embed their own secret
 
     public function __construct()
     {

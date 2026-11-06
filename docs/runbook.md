@@ -78,12 +78,31 @@ Do these once on the current production server.
    sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw --force enable
    ```
 
+6. **Service sandboxing, alerts and log cleanup** (second audit round):
+   ```bash
+   cd /var/www/ollamahub
+   sudo cp deploy/ollamahub-queue.service /etc/systemd/system/
+   sudo cp deploy/aistudio-asr.service /etc/systemd/system/
+   sudo cp deploy/ml/aistudio-ml.service /etc/systemd/system/
+   sudo systemctl daemon-reload && sudo systemctl restart ollamahub-queue aistudio-asr aistudio-ml
+   sudo cp deploy/prometheus-alerts.yml /etc/prometheus/aistudio-alerts.yml
+   sudo cp deploy/prometheus-ollamahub.yml /etc/prometheus/prometheus.yml && sudo systemctl restart prometheus
+   ( sudo crontab -l 2>/dev/null; echo "41 4 * * * find /var/www/ollamahub/writable/logs -name 'log-*.log' -mtime +30 -delete" ) | sudo crontab -
+   ```
+   Check each service is still `active` with `systemctl status`. If one fails because it writes
+   somewhere the sandbox now protects, add that directory as `ReadWritePaths=` in its unit.
+   Alerts appear on Prometheus' `/alerts` page; add an Alertmanager to receive them by email or Slack.
+
 ## Security behaviour to know
 
 - **Sign-in rate limits:** 5 attempts per account and 30 per IP per minute (HTTP 429), plus nginx
   damping on `/api/auth/login`.
 - **Sessions:** signing out, a password change, a role or status change, or "reset sign-in methods"
   revokes the user's tokens at once. Suspended users and role changes take effect on the next request.
+- **Uploads:** dataset imports accept jsonl/json/csv/tsv/txt (UTF-8, up to 200 MB; 100 MB in My
+  Workspace), speech datasets a zip up to 4 GB, knowledge documents text formats up to 20 MB.
+- **Audit log:** besides every change, it records downloads and exports and every sign-in attempt
+  (the email tried, never the password). A failed audit write is logged to `writable/logs`.
 - **Server URLs:** node and provider URLs may be loopback or private (normal for Ollama nodes) but not
   link-local or cloud metadata addresses (e.g. `169.254.169.254`).
 

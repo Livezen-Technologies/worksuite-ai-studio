@@ -9,11 +9,15 @@ use CodeIgniter\HTTP\ResponseInterface;
 /**
  * AuditFilter — after-filter that records every mutating API request
  * (POST/PUT/PATCH/DELETE) to `audit_logs`, capturing the acting user (from the
- * JWT payload), method, path, response status and IP. Read requests are ignored.
+ * JWT payload), method, path, response status and IP. Reads are ignored, except
+ * downloads and exports (data leaving the system), which are recorded too.
+ * Sign-in attempts record the email tried (never the password).
  */
 class AuditFilter implements FilterInterface
 {
     private const MUTATING = ['POST', 'PUT', 'PATCH', 'DELETE'];
+    /** GET routes that hand out data: dataset exports, kits, files, manifests, gateway downloads. */
+    private const DOWNLOAD = '#/(download|export|kit|manifest)$|/api/v1/(datasets/\d+/download|packages/[^/]+/files)#';
 
     public function before(RequestInterface $request, $arguments = null)
     {
@@ -22,32 +26,51 @@ class AuditFilter implements FilterInterface
     public function after(RequestInterface $request, ResponseInterface $response, $arguments = null)
     {
         $method = strtoupper($request->getMethod());
-        if (! in_array($method, self::MUTATING, true)) {
+        $path = $request->getUri()->getPath();
+        $download = $method === 'GET' && preg_match(self::DOWNLOAD, $path);
+        if (! in_array($method, self::MUTATING, true) && ! $download) {
             return;
         }
 
-        $path = $request->getUri()->getPath();
         // Skip noisy/irrelevant endpoints.
         if (str_contains($path, 'api/auth/refresh')) {
             return;
         }
 
         $payload = $_SERVER['ci_jwt_payload'] ?? [];
+        $who = $payload['name'] ?? ($payload['email'] ?? null);
+        if (str_contains($path, 'api/auth/login')) {
+            $who = $this->attemptedEmail($request);
+        }
 
         try {
             \Config\Database::connect()->table('audit_logs')->insert([
                 'user_id'    => $payload['sub'] ?? null,
-                'user_name'  => $payload['name'] ?? ($payload['email'] ?? null),
-                'action'     => $this->action($method, $path),
+                'user_name'  => $who,
+                'action'     => $download ? 'download ' . $this->resource($path) : $this->action($method, $path),
                 'method'     => $method,
                 'path'       => '/' . ltrim($path, '/'),
                 'status'     => $response->getStatusCode(),
                 'ip'         => $request->getIPAddress(),
                 'created_at' => date('Y-m-d H:i:s'),
             ]);
-        } catch (\Throwable) {
-            // Auditing must never break the request.
+        } catch (\Throwable $e) {
+            // Auditing must never break the request, but a lost audit record must be visible.
+            log_message('error', 'Audit log write failed for {method} {path}: {msg}', ['method' => $method, 'path' => $path, 'msg' => $e->getMessage()]);
         }
+    }
+
+    private function attemptedEmail(RequestInterface $request): ?string
+    {
+        $body = json_decode((string) $request->getBody(), true);
+        $email = is_array($body) ? ($body['email'] ?? null) : $request->getPost('email');
+        return is_string($email) && $email !== '' ? 'sign-in attempt: ' . mb_substr($email, 0, 100) : null;
+    }
+
+    private function resource(string $path): string
+    {
+        $segments = array_values(array_filter(explode('/', $path), static fn ($s) => $s !== '' && $s !== 'api' && $s !== 'v1'));
+        return $segments[0] ?? 'resource';
     }
 
     /** Derive a human action label from the verb + resource path. */

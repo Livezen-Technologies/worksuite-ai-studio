@@ -83,8 +83,13 @@ class ApiGatewayService
     private function orderByLeastBusy(array $rows): array
     {
         $since = date('Y-m-d H:i:s', time() - 300);
+        $ids = array_map(static fn ($r) => (int) $r['id'], $rows);
+        // One grouped query instead of one count per server on every gateway request.
+        $load = $ids ? array_column($this->db->table('api_logs')->select('server_id, COUNT(*) AS n')
+            ->whereIn('server_id', $ids)->where('created_at >=', $since)->groupBy('server_id')
+            ->get()->getResultArray(), 'n', 'server_id') : [];
         foreach ($rows as &$r) {
-            $r['_load'] = $this->db->table('api_logs')->where('server_id', $r['id'])->where('created_at >=', $since)->countAllResults();
+            $r['_load'] = (int) ($load[$r['id']] ?? 0);
         }
         unset($r);
         usort($rows, static fn ($a, $b) => $a['_load'] <=> $b['_load']);

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { CubeIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { ArrowUturnLeftIcon, CubeIcon, PlusIcon } from '@heroicons/react/24/outline';
 import {
-  Alert, Button, Card, DataTable, EmptyState, FormModal, Input, PageHeader, SearchInput, Select, Textarea, Toolbar, useToast,
+  Alert, Button, Card, ConfirmDialog, DataTable, EmptyState, FormModal, Input, PageHeader, SearchInput, Select, Textarea, Toolbar, useToast,
   type Column,
 } from '../../components/ui';
 import { post } from '../../lib/api';
@@ -23,7 +23,11 @@ export default function EnginePackages() {
 function PackageList() {
   const { can } = useAuth();
   const canManage = can('engine.manage');
+  const canSign = can('engine.sign');
   const nav = useNavigate();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [confirmRollback, setConfirmRollback] = useState(false);
   const [params, setParams] = useSearchParams();
   const [q, setQ] = useState('');
   const [task, setTask] = useState('');
@@ -34,6 +38,17 @@ function PackageList() {
 
   const rows = (list.data ?? []).filter((p) => (!task || p.task === task) && (!state || p.state === state)
     && (!q || `${p.version} ${p.package_id} ${p.base_model ?? ''} ${p.license_id} ${p.runtime_name}`.toLowerCase().includes(q.toLowerCase())));
+
+  // Restore the previous approved release of the selected task (standard profile).
+  const rollback = useMutation({
+    mutationFn: () => post<PackageSummary>('/engine/packages/rollback', { task }),
+    onSuccess: (p) => {
+      setConfirmRollback(false);
+      toast.success(`Rolled ${taskLabel(task)} back to v${p?.version ?? '?'}`);
+      qc.invalidateQueries({ queryKey: ['engine'] });
+    },
+    onError: (e) => { setConfirmRollback(false); toast.error(refusalText(e)); },
+  });
 
   const openNew = () => setParams((p) => { p.set('new', '1'); return p; });
   const closeNew = () => setParams((p) => { p.delete('new'); return p; });
@@ -55,7 +70,26 @@ function PackageList() {
       <PageHeader
         title="Package registry"
         description="Every engine package and where it is in the release lifecycle."
-        actions={canManage ? <Button variant="primary" icon={PlusIcon} onClick={openNew}>Register candidate</Button> : undefined}
+        actions={(canManage || canSign) ? (
+          <>
+            {canSign && (
+              <Button icon={ArrowUturnLeftIcon} disabled={!task} title={task ? undefined : 'Choose a task in the filter first'} onClick={() => setConfirmRollback(true)}>
+                Roll back release
+              </Button>
+            )}
+            {canManage && <Button variant="primary" icon={PlusIcon} onClick={openNew}>Register candidate</Button>}
+          </>
+        ) : undefined}
+      />
+      <ConfirmDialog
+        open={confirmRollback}
+        onClose={() => setConfirmRollback(false)}
+        onConfirm={() => rollback.mutate()}
+        busy={rollback.isPending}
+        tone="danger"
+        title={`Roll back ${task ? taskLabel(task) : ''}?`}
+        message="The standard profile goes back to the previous approved, signed package for this task. Devices pick it up on their next update check."
+        confirmLabel="Roll back"
       />
       <Card>
         <Toolbar right={

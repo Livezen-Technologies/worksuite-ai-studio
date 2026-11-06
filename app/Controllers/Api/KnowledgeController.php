@@ -73,6 +73,10 @@ class KnowledgeController extends BaseApiController
         // File upload or pasted text.
         $file = $this->request->getFile('file');
         if ($file && $file->isValid()) {
+            $exts = ['txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log', 'html', 'htm', 'xml', 'yml', 'yaml'];
+            if ($why = $this->uploadProblem($file, $exts, 20, true)) {
+                return $this->failure($why, 422);
+            }
             $text = $this->extractText($file);
             if ($text === null) {
                 return $this->failure('Unsupported file type. Use txt, md, csv, html, json (or paste text).', 422);

@@ -249,7 +249,7 @@ export const TOOLS: ToolDef[] = [
   r('engine_packages_manifest', 'Package manifest', '/engine/packages/{id}/manifest', 'A package\'s manifest.', { params: { id: id('Package') } }),
   w('engine_packages_create', 'Create package', 'POST', '/engine/packages', 'Create a model package.', { body: 'evaluation_uuid, base_model, quantization, runtime_name, runtime_lock, languages, hardware, min_ram_gib, min_disk_gib, notes' }),
   w('engine_packages_transition', 'Transition package', 'POST', '/engine/packages/{id}/transition', 'Move a package through its lifecycle (e.g. candidate -> released).', { params: { id: id('Package') }, body: 'to (target state), reason' }),
-  w('engine_packages_rollback', 'Roll back package', 'POST', '/engine/packages/rollback', 'Roll back to a previous package.', { body: 'package_id, reason', kind: 'destructive' }),
+  w('engine_packages_rollback', 'Roll back package', 'POST', '/engine/packages/rollback', 'Roll a task back to its previous approved signed package (standard profile).', { body: 'task (required)', kind: 'destructive' }),
   w('engine_packages_delete_artifact', 'Delete artifact', 'DELETE', '/engine/packages/{id}/artifacts', 'Remove an artifact from a package.', { params: { id: id('Package') }, body: 'Artifact identifier' }),
   r('engine_approvals', 'Approvals', '/engine/approvals', 'Items waiting for your approval.'),
   r('engine_bindings', 'Bindings', '/engine/bindings', 'Active pack per task and device profile.'),
