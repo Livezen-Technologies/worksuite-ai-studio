@@ -17,52 +17,94 @@ import { cx } from '../components/ui';
 import { NAV, ALL_ITEMS, findItem } from './nav';
 import { Logo } from './Logo';
 
-function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+function useActiveSection() {
+  const { pathname } = useLocation();
+  const item = findItem(pathname);
+  return NAV.find((s) => s.heading === item?.section) ?? NAV[0];
+}
+
+/** Narrow icon rail: one entry per section; picking one opens its first page. */
+function SectionRail({ onNavigate }: { onNavigate?: () => void }) {
   const { can } = useAuth();
+  const active = useActiveSection();
   return (
-    <div className="flex grow flex-col gap-y-5 overflow-y-auto border-r border-slate-200 bg-white px-4 pb-4 dark:border-white/10 dark:bg-slate-900">
-      <div className="flex h-16 shrink-0 items-center px-2">
-        <Link to="/" onClick={onNavigate} aria-label="WorkSuite AI Studio home"><Logo /></Link>
+    <nav aria-label="Sections" className="flex w-20 shrink-0 flex-col items-stretch gap-1 overflow-y-auto border-r border-slate-200 bg-white px-1.5 py-3 dark:border-white/10 dark:bg-slate-900">
+      {NAV.map((section) => {
+        const first = section.items.find((i) => can(i.perm));
+        if (!first) return null;
+        const isActive = section === active;
+        return (
+          <Link
+            key={section.heading}
+            to={first.to}
+            onClick={onNavigate}
+            title={section.heading}
+            aria-current={isActive ? 'true' : undefined}
+            className={cx(
+              'group flex flex-col items-center gap-1 rounded-lg px-1 py-2 text-[11px] leading-tight font-medium transition-colors',
+              isActive
+                ? 'bg-brand-50 text-brand-700 dark:bg-blue-500/15 dark:text-blue-300'
+                : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white',
+            )}
+          >
+            <section.icon aria-hidden className="size-6 shrink-0" />
+            <span className="w-full truncate text-center">{section.short}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** Secondary panel: the active section's title, summary and pages. */
+function SectionPanel({ onNavigate }: { onNavigate?: () => void }) {
+  const { can } = useAuth();
+  const section = useActiveSection();
+  const items = section.items.filter((i) => can(i.perm));
+  return (
+    <div className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900">
+      <div className="border-b border-slate-100 px-5 py-4 dark:border-white/5">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+          <section.icon aria-hidden className="size-5 text-brand-600 dark:text-blue-400" />
+          {section.heading}
+        </div>
+        <p className="mt-1 text-xs/5 text-slate-500 dark:text-slate-400">{section.description}</p>
       </div>
-      <nav className="flex flex-1 flex-col" aria-label="Main">
-        <ul role="list" className="flex flex-1 flex-col gap-y-6">
-          {NAV.map((section) => {
-            const items = section.items.filter((i) => can(i.perm));
-            if (!items.length) return null;
-            return (
-              <li key={section.heading}>
-                <div className="px-2 text-xs/6 font-semibold tracking-wide text-slate-400 uppercase dark:text-slate-500">{section.heading}</div>
-                <ul role="list" className="mt-1 space-y-0.5">
-                  {items.map((item) => (
-                    <li key={item.to}>
-                      <NavLink
-                        to={item.to}
-                        end={item.to === '/'}
-                        onClick={onNavigate}
-                        className={({ isActive }) =>
-                          cx(
-                            'group flex items-center gap-x-3 rounded-md px-2 py-1.5 text-sm/6 font-medium transition-colors',
-                            isActive
-                              ? 'bg-brand-50 text-brand-700 dark:bg-white/5 dark:text-white'
-                              : 'text-slate-700 hover:bg-slate-50 hover:text-brand-700 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white',
-                          )
-                        }
-                      >
-                        {({ isActive }) => (
-                          <>
-                            <item.icon aria-hidden className={cx('size-5 shrink-0', isActive ? 'text-brand-600 dark:text-white' : 'text-slate-400 group-hover:text-brand-600 dark:group-hover:text-white')} />
-                            {item.label}
-                          </>
-                        )}
-                      </NavLink>
-                    </li>
-                  ))}
-                </ul>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
+      <ul role="list" className="space-y-0.5 p-3">
+        {items.map((item) => (
+          <li key={item.to}>
+            <NavLink
+              to={item.to}
+              end={item.to === '/' || ALL_ITEMS.some((o) => o.to !== item.to && o.to.startsWith(item.to + '/'))}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                cx(
+                  'group relative flex items-center gap-x-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  isActive
+                    ? 'bg-brand-50 text-brand-700 before:absolute before:inset-y-1.5 before:-left-3 before:w-1 before:rounded-r before:bg-brand-600 dark:bg-blue-500/15 dark:text-blue-300 dark:before:bg-blue-400'
+                    : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/5 dark:hover:text-white',
+                )
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  <item.icon aria-hidden className={cx('size-5 shrink-0', isActive ? 'text-brand-600 dark:text-blue-300' : 'text-slate-400 group-hover:text-slate-600 dark:group-hover:text-white')} />
+                  <span className="truncate">{item.label}</span>
+                </>
+              )}
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <div className="flex h-full min-h-0">
+      <SectionRail onNavigate={onNavigate} />
+      <SectionPanel onNavigate={onNavigate} />
     </div>
   );
 }
@@ -128,11 +170,11 @@ function NotificationsBell() {
   const unread = data?.unread ?? 0;
   return (
     <Popover className="relative">
-      <PopoverButton className="relative -m-2.5 rounded-md p-2.5 text-slate-400 hover:text-slate-600 focus-visible:outline-2 focus-visible:outline-brand-600 dark:hover:text-white">
+      <PopoverButton className="relative -m-2.5 rounded-md p-2.5 text-slate-300 hover:text-white focus-visible:outline-2 focus-visible:outline-brand-500">
         <span className="sr-only">Notifications{unread ? `, ${unread} unread` : ''}</span>
         <BellIcon aria-hidden className="size-6" />
         {unread > 0 && (
-          <span className="absolute top-1.5 right-1.5 flex min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white tabular-nums ring-2 ring-white dark:ring-slate-900">
+          <span className="absolute top-1.5 right-1.5 flex min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white tabular-nums ring-2 ring-slate-900 dark:ring-slate-950">
             {unread > 9 ? '9+' : unread}
           </span>
         )}
@@ -173,7 +215,7 @@ function ThemeMenu() {
   const Current = themes.find((t) => t.value === theme)?.icon ?? ComputerDesktopIcon;
   return (
     <Menu as="div" className="relative">
-      <MenuButton className="-m-2.5 rounded-md p-2.5 text-slate-400 hover:text-slate-600 focus-visible:outline-2 focus-visible:outline-brand-600 dark:hover:text-white">
+      <MenuButton className="-m-2.5 rounded-md p-2.5 text-slate-300 hover:text-white focus-visible:outline-2 focus-visible:outline-brand-500">
         <span className="sr-only">Theme</span>
         <Current aria-hidden className="size-6" />
       </MenuButton>
@@ -199,10 +241,11 @@ function UserMenu() {
       <MenuButton className="-m-1.5 flex items-center gap-2 rounded-md p-1.5 focus-visible:outline-2 focus-visible:outline-brand-600">
         <span className="sr-only">Open user menu</span>
         <span className="flex size-8 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">{initials}</span>
-        <span className="hidden lg:flex lg:items-center">
-          <span className="text-sm/6 font-semibold text-slate-900 dark:text-white">{user?.name}</span>
-          <ChevronDownIcon aria-hidden className="ml-1 size-5 text-slate-400" />
+        <span className="hidden text-left lg:block">
+          <span className="block text-sm/5 font-semibold text-white">{user?.name}</span>
+          {(user?.role_label || user?.role) && <span className="block text-xs text-slate-400">{String(user?.role_label ?? user?.role)}</span>}
         </span>
+        <ChevronDownIcon aria-hidden className="hidden size-5 text-slate-400 lg:block" />
       </MenuButton>
       <MenuItems transition anchor="bottom end" className="z-50 mt-2.5 w-56 rounded-md bg-white py-1 shadow-lg ring-1 ring-slate-900/5 transition data-closed:scale-95 data-closed:opacity-0 data-enter:duration-100 dark:bg-slate-800 dark:ring-white/10">
         <div className="border-b border-slate-100 px-3 py-2.5 dark:border-white/10">
@@ -271,7 +314,7 @@ export function AppShell() {
       <Dialog open={mobileOpen} onClose={setMobileOpen} className="relative z-50 lg:hidden">
         <DialogBackdrop transition className="fixed inset-0 bg-slate-900/60 transition-opacity duration-300 ease-linear data-closed:opacity-0" />
         <div className="fixed inset-0 flex">
-          <DialogPanel transition className="relative mr-16 flex w-full max-w-xs flex-1 transform transition duration-300 ease-in-out data-closed:-translate-x-full">
+          <DialogPanel transition className="relative mr-16 flex w-fit max-w-[calc(100vw-4rem)] flex-1 transform transition duration-300 ease-in-out data-closed:-translate-x-full">
             <TransitionChild>
               <div className="absolute top-0 left-full flex w-16 justify-center pt-5 duration-300 ease-in-out data-closed:opacity-0">
                 <button type="button" onClick={() => setMobileOpen(false)} className="-m-2.5 p-2.5">
@@ -285,36 +328,36 @@ export function AppShell() {
         </div>
       </Dialog>
 
-      <div className="hidden lg:fixed lg:inset-y-0 lg:z-40 lg:flex lg:w-64 lg:flex-col">
+      <header className="fixed inset-x-0 top-0 z-40 flex h-16 items-center gap-x-4 bg-slate-900 px-4 shadow-sm sm:px-6 dark:border-b dark:border-white/10 dark:bg-slate-950">
+        <button type="button" onClick={() => setMobileOpen(true)} className="-m-2.5 p-2.5 text-slate-300 hover:text-white lg:hidden">
+          <span className="sr-only">Open sidebar</span>
+          <Bars3Icon aria-hidden className="size-6" />
+        </button>
+        <Link to="/" aria-label="WorkSuite AI Studio home" className="shrink-0"><Logo onDark /></Link>
+        <div className="flex flex-1 justify-center px-2">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="flex w-full max-w-xl items-center gap-2 rounded-full bg-white/5 px-4 py-2 text-left text-sm text-slate-400 ring-1 ring-white/10 transition-colors hover:bg-white/10 hover:text-slate-200"
+          >
+            <MagnifyingGlassIcon aria-hidden className="size-5 shrink-0" />
+            <span className="flex-1 truncate">Search pages…</span>
+            <kbd className="hidden rounded border border-white/15 px-1.5 font-sans text-xs text-slate-400 sm:inline">Ctrl K</kbd>
+          </button>
+        </div>
+        <div className="flex items-center gap-x-4 lg:gap-x-6">
+          <ThemeMenu />
+          <NotificationsBell />
+          <div aria-hidden className="hidden h-6 w-px bg-white/10 lg:block" />
+          <UserMenu />
+        </div>
+      </header>
+
+      <div className="hidden lg:fixed lg:top-16 lg:bottom-0 lg:left-0 lg:z-30 lg:flex">
         <Sidebar />
       </div>
 
-      <div className="lg:pl-64">
-        <div className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-x-4 border-b border-slate-200 bg-white/90 px-4 shadow-xs backdrop-blur sm:gap-x-6 sm:px-6 lg:px-8 dark:border-white/10 dark:bg-slate-900/90 dark:shadow-none">
-          <button type="button" onClick={() => setMobileOpen(true)} className="-m-2.5 p-2.5 text-slate-700 lg:hidden dark:text-slate-400">
-            <span className="sr-only">Open sidebar</span>
-            <Bars3Icon aria-hidden className="size-6" />
-          </button>
-          <div aria-hidden className="h-6 w-px bg-slate-900/10 lg:hidden dark:bg-white/10" />
-          <div className="flex flex-1 items-center gap-x-4 self-stretch lg:gap-x-6">
-            <button
-              type="button"
-              onClick={() => setPaletteOpen(true)}
-              className="flex flex-1 items-center gap-2 text-left text-sm text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-            >
-              <MagnifyingGlassIcon aria-hidden className="size-5" />
-              <span>Search pages…</span>
-              <kbd className="ml-2 hidden rounded border border-slate-200 px-1.5 font-sans text-xs text-slate-400 sm:inline dark:border-white/10">⌘K</kbd>
-            </button>
-            <div className="flex items-center gap-x-4 lg:gap-x-6">
-              <ThemeMenu />
-              <NotificationsBell />
-              <div aria-hidden className="hidden lg:block lg:h-6 lg:w-px lg:bg-slate-900/10 dark:lg:bg-white/10" />
-              <UserMenu />
-            </div>
-          </div>
-        </div>
-
+      <div className="pt-16 lg:pl-84">
         <main id="main" className="py-6 sm:py-8">
           <div className="w-full px-4 sm:px-6 lg:px-8">
             <Breadcrumbs />
