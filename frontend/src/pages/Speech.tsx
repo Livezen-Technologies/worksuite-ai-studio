@@ -43,7 +43,7 @@ function Uploader({ onPicked, disabled, maxMb }: { onPicked: (f: File) => void; 
         <button type="button" disabled={disabled} onClick={() => input.current?.click()} className="font-semibold text-brand-600 hover:text-brand-500 dark:text-blue-400">choose a file</button>
       </p>
       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Audio: WAV, MP3, M4A, OGG, WebM, FLAC · Video: MP4, MOV, WebM · up to {maxMb} MB</p>
-      <input ref={input} type="file" accept={ACCEPT} className="sr-only" onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
+      <input ref={input} type="file" accept={ACCEPT} className="sr-only" tabIndex={-1} aria-label="Audio or video file" onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
     </div>
   );
 }

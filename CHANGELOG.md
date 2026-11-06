@@ -1,6 +1,15 @@
-# Changelog — OllamaHub
+# Changelog — WorkSuite AI Studio
 
-All notable changes to the OllamaHub control plane are documented here.
+All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
+also published as a post on the public blog.
+
+## [1.28.0] — 2026-11-06 — Security hardening and a new look
+- **New admin layout**: a dark header with search, a section rail and a page panel, full-width pages, and restyled cards, tables, stat tiles and badges in light and dark mode. The product is WorkSuite AI Studio everywhere.
+- **Sessions you can end**: signing out ends your sessions on every device, and a password, role or status change takes effect at once. Sign-in is rate-limited per account and per address, and every sign-in attempt is in the audit log (never the password).
+- **Safer by default**: the server refuses to start without its own signing secret, node and provider URLs cannot point at cloud metadata addresses, uploads are checked for type, size and text encoding, and downloads and exports are audited.
+- **MCP server** (`mcp-server/`): manage AI Studio from Claude or ChatGPT, with read-only mode and per-client secrets.
+- **Operations**: a deploy script that backs up the database before migrating, nightly backups, HTTPS and security headers in the nginx config, service sandboxing, Prometheus alerts and a runbook. Every pull request now runs the backend and frontend tests.
+- Package rollback in the release registry; faster analytics and gateway routing on large logs.
 
 ## [1.27.0] — 2026-10-27 — One-click database restore
 - **Restore** on every good run in Storage → Backups: puts the whole Studio database back to that backup. Super Admin only, and you type RESTORE to confirm.

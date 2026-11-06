@@ -74,7 +74,11 @@ final class AuthSessionTest extends CIUnitTestCase
     public function testLoginIssuesWorkingTokens(): void
     {
         [$access] = $this->tokens();
-        $this->profile($access)->assertStatus(200);
+        $res = $this->profile($access);
+        $res->assertStatus(200);
+        // secureheaders filter: present on API responses even without the nginx snippet.
+        $res->assertHeader('X-Frame-Options', 'SAMEORIGIN');
+        $res->assertHeader('X-Content-Type-Options', 'nosniff');
     }
 
     public function testLogoutRevokesAccessAndRefreshTokens(): void

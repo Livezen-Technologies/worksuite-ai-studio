@@ -292,7 +292,7 @@ export default function Chat() {
   return (
     <div className="flex h-[calc(100dvh-9rem)] min-h-[28rem] gap-4">
       {/* Conversations: a column on desktop, a drawer on phones */}
-      <aside className="hidden w-64 shrink-0 overflow-hidden rounded-xl bg-white shadow-xs ring-1 ring-slate-900/5 md:block dark:bg-white/[0.03] dark:ring-white/10">{sidebar}</aside>
+      <aside className="hidden w-64 shrink-0 overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] md:block dark:border-white/10 dark:bg-slate-900 dark:shadow-none">{sidebar}</aside>
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
           <div className="absolute inset-0 bg-slate-900/50 dark:bg-slate-950/70" onClick={() => setSidebarOpen(false)} />
@@ -300,8 +300,8 @@ export default function Chat() {
         </div>
       )}
 
-      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-white shadow-xs ring-1 ring-slate-900/5 dark:bg-white/[0.03] dark:ring-white/10">
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2.5 sm:px-4 dark:border-white/10">
+      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-white/10 dark:bg-slate-900 dark:shadow-none">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-2.5 sm:px-4 dark:border-white/10">
           <IconButton label="Conversations" icon={Bars3Icon} className="md:hidden" onClick={() => setSidebarOpen(true)} />
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-semibold text-slate-900 dark:text-white">{current?.title ?? (sessionId ? 'Conversation' : 'New conversation')}</h1>

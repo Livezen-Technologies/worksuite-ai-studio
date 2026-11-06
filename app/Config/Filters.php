@@ -82,7 +82,9 @@ class Filters extends BaseFilters
         ],
         'after' => [
             // 'honeypot',
-            // 'secureheaders',
+            // Defence in depth: the same headers nginx adds (deploy/nginx-security-headers.conf),
+            // so API responses carry them even behind a different proxy.
+            'secureheaders',
         ],
     ];
 
