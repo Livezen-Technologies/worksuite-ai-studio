@@ -39,11 +39,12 @@ abstract class BaseApiController extends ResourceController
     }
 
     /** Permission slugs granted to the current user's role (cached per request). */
+    private ?array $permissionCache = null;
+
     protected function userPermissions(): array
     {
-        static $cache = null;
-        if ($cache !== null) {
-            return $cache;
+        if ($this->permissionCache !== null) {
+            return $this->permissionCache;
         }
         $rows = \Config\Database::connect()->table('role_permissions rp')
             ->select('p.name')
@@ -51,7 +52,7 @@ abstract class BaseApiController extends ResourceController
             ->join('roles r', 'r.id = rp.role_id')
             ->where('r.name', $this->userRole())
             ->get()->getResultArray();
-        return $cache = array_column($rows, 'name');
+        return $this->permissionCache = array_column($rows, 'name');
     }
 
     /** True when the current user may perform $slug (admins bypass). */
@@ -138,5 +139,47 @@ abstract class BaseApiController extends ResourceController
             }
         }
         return null;
+    }
+
+    /**
+     * Privilege ceiling for user and role administration: a caller may only hand out, or act on
+     * someone holding, a role that is no more powerful than their own. super_admin may do
+     * anything; admin may manage every role except super_admin; anyone else only roles whose
+     * permissions they themselves hold.
+     */
+    protected function withinMyPrivileges(?array $role): bool
+    {
+        if ($this->isSuperAdmin()) {
+            return true;
+        }
+        if (! $role) {
+            return false;
+        }
+        $name = (string) ($role['name'] ?? '');
+        if ($name === 'super_admin') {
+            return false;
+        }
+        if ($this->userRole() === 'admin') {
+            return true;
+        }
+        if ($name === 'admin') {
+            return false;
+        }
+        $theirs = (new \App\Models\UserModel())->permissionsForRole((int) $role['id']);
+        return ! array_diff($theirs, $this->userPermissions());
+    }
+
+    /** True when every permission id is one the caller holds (admins and super admins hold all). */
+    protected function holdsPermissionIds(array $ids): bool
+    {
+        if (in_array($this->userRole(), ['super_admin', 'admin'], true)) {
+            return true;
+        }
+        $ids = array_values(array_filter(array_map('intval', $ids)));
+        if (! $ids) {
+            return true;
+        }
+        $names = array_column(\Config\Database::connect()->table('permissions')->select('name')->whereIn('id', $ids)->get()->getResultArray(), 'name');
+        return count($names) === count(array_unique($ids)) && ! array_diff($names, $this->userPermissions());
     }
 }

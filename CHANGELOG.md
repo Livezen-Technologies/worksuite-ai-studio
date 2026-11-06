@@ -3,6 +3,12 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.28.1] — 2026-11-06 — Tighter administration rights
+- **No privilege escalation**: managing users or roles no longer lets anyone reach more access than they have. Only a super admin can create or edit super admins; nobody can widen their own role or grant permissions they lack; the last active super admin cannot be demoted or suspended.
+- **Database backups** in Storage are now super-admin only (they contain password hashes).
+- **Two-factor required means now**: turning on "require 2FA" (or changing a user's email) signs that user out everywhere until they set it up.
+- Installer rejects database passwords that would break the setup, and the scheduler runs as the web user. MCP server dependencies are free of known vulnerabilities.
+
 ## [1.28.0] — 2026-11-06 — Security hardening and a new look
 - **New admin layout**: a dark header with search, a section rail and a page panel, full-width pages, and restyled cards, tables, stat tiles and badges in light and dark mode. The product is WorkSuite AI Studio everywhere.
 - **Sessions you can end**: signing out ends your sessions on every device, and a password, role or status change takes effect at once. Sign-in is rate-limited per account and per address, and every sign-in attempt is in the audit log (never the password).
