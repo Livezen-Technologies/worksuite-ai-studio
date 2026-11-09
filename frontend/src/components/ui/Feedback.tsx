@@ -54,7 +54,14 @@ export function EmptyState({
 }
 
 export function ErrorState({ error, onRetry, className }: { error: unknown; onRetry?: () => void; className?: string }) {
-  const message = error instanceof Error ? error.message : 'Something went wrong.';
+  // Server errors (ApiError, which carries an HTTP status) are written for people; anything else is a
+  // network failure or a bug, whose raw text means nothing to the reader.
+  const status = (error as { status?: unknown } | null)?.status;
+  const message = typeof status === 'number' && error instanceof Error
+    ? error.message
+    : error instanceof TypeError && /fetch|network/i.test(error.message)
+      ? 'The server could not be reached. Check your connection and try again.'
+      : 'Something went wrong while loading this. Try again, or reload the page.';
   return (
     <div role="alert" className={cx('px-6 py-12 text-center', className)}>
       <ExclamationTriangleIcon aria-hidden className="mx-auto size-10 text-red-500" />

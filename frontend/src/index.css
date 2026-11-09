@@ -40,10 +40,17 @@ body { @apply bg-slate-100/70 text-slate-900 antialiased dark:bg-slate-950 dark:
   --scrollbar-thumb: var(--color-slate-300);
   --scrollbar-thumb-hover: var(--color-slate-400);
   --scrollbar-track: transparent;
+  /* chart tooltips (Recharts) */
+  --tooltip-bg: #fff;
+  --tooltip-fg: var(--color-slate-900);
+  --tooltip-border: var(--color-slate-200);
 }
 .dark {
   --scrollbar-thumb: var(--color-slate-700);
   --scrollbar-thumb-hover: var(--color-slate-600);
+  --tooltip-bg: var(--color-slate-800);
+  --tooltip-fg: var(--color-slate-100);
+  --tooltip-border: var(--color-slate-700);
 }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: var(--scrollbar-track); }

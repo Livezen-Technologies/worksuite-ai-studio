@@ -1,4 +1,4 @@
-import { useState, type ComponentType, type ReactNode, type SVGProps } from 'react';
+import { useState, type ComponentType, type ReactNode, type SVGProps, useRef } from 'react';
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle, Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { ArrowsPointingInIcon, ArrowsPointingOutIcon, EllipsisVerticalIcon, ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { Button } from './Button';
@@ -18,15 +18,17 @@ function useExpanded(key?: string): [boolean, (v: boolean) => void] {
   }];
 }
 
-export function Modal({ open, onClose, title, description, children, footer, size = 'md', expandKey }: {
+export function Modal({ open, onClose, title, description, children, footer, size = 'md', expandKey, dismissible = true }: {
   open: boolean; onClose: () => void; title: ReactNode; description?: ReactNode; children?: ReactNode; footer?: ReactNode; size?: keyof typeof widths;
+  /** false: no close button, and Esc / backdrop do nothing (the footer must offer the way out). */
+  dismissible?: boolean;
   /** Shows a full-window toggle; the choice is remembered under this key. */
   expandKey?: string;
 }) {
   const [expanded, setExpanded] = useExpanded(expandKey);
   const full = !!expandKey && expanded;
   return (
-    <Dialog open={open} onClose={onClose} className="relative z-50">
+    <Dialog open={open} onClose={dismissible ? onClose : () => {}} className="relative z-50">
       <DialogBackdrop transition className="fixed inset-0 bg-slate-900/50 transition-opacity data-closed:opacity-0 data-enter:duration-200 data-enter:ease-out data-leave:duration-150 data-leave:ease-in dark:bg-slate-950/70" />
       <div className="fixed inset-0 z-10 w-screen overflow-y-auto">
         <div className={cx('flex min-h-full justify-center', full ? 'items-stretch p-2 sm:p-3' : 'items-end p-4 sm:items-center sm:p-6')}>
@@ -50,10 +52,10 @@ export function Modal({ open, onClose, title, description, children, footer, siz
                     {full ? <ArrowsPointingInIcon aria-hidden className="size-5" /> : <ArrowsPointingOutIcon aria-hidden className="size-5" />}
                   </button>
                 )}
-                <button type="button" onClick={onClose} className="rounded-md p-1 text-slate-400 hover:text-slate-600 focus-visible:outline-2 focus-visible:outline-brand-600 dark:hover:text-white">
+                {dismissible && <button type="button" onClick={onClose} className="rounded-md p-1 text-slate-400 hover:text-slate-600 focus-visible:outline-2 focus-visible:outline-brand-600 dark:hover:text-white">
                   <span className="sr-only">Close</span>
                   <XMarkIcon aria-hidden className="size-5" />
-                </button>
+                </button>}
               </div>
             </div>
             {children && <div className={cx('overflow-y-auto px-5 py-5', full ? 'min-h-0 flex-1' : 'max-h-[70vh]')}>{children}</div>}
@@ -88,6 +90,11 @@ export function FormModal({ open, onClose, title, description, onSubmit, submitL
 export function ConfirmDialog({ open, onClose, onConfirm, title, message, confirmLabel = 'Delete', busy, tone = 'danger' }: {
   open: boolean; onClose: () => void; onConfirm: () => void; title: string; message: ReactNode; confirmLabel?: string; busy?: boolean; tone?: 'danger' | 'primary';
 }) {
+  // Callers usually clear the target when closing, so title/message turn into "undefined" during the
+  // close animation. Keep showing what was there while the dialog was open.
+  const shown = useRef({ title, message, confirmLabel });
+  if (open) shown.current = { title, message, confirmLabel };
+  ({ title, message, confirmLabel } = shown.current);
   return (
     <Dialog open={open} onClose={onClose} className="relative z-50">
       <DialogBackdrop transition className="fixed inset-0 bg-slate-900/50 transition-opacity data-closed:opacity-0 data-enter:duration-200 data-leave:duration-150 dark:bg-slate-950/70" />

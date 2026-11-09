@@ -13,6 +13,9 @@ import { ACCELERATORS, AVAILABILITY, DEPLOYMENTS, HealthScore, KINDS, Utilizatio
 
 interface NodeModel { name: string; size?: number; details?: { parameter_size?: string; quantization_level?: string; family?: string } }
 
+/** Chart tooltip that follows the theme (Recharts draws a white box otherwise). */
+const TOOLTIP = { fontSize: 12, borderRadius: 6, background: 'var(--tooltip-bg, #fff)', color: 'var(--tooltip-fg, #0f172a)', border: '1px solid var(--tooltip-border, #e2e8f0)' };
+
 export default function ServerDetail({ id, onClose, onEdit, onControl }: {
   id: number; onClose: () => void; onEdit: (s: Server) => void; onControl: (s: Server, a: ControlAction) => void;
 }) {
@@ -134,7 +137,7 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
                         <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.25} />
                         <XAxis dataKey="t" tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" />
                         <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" />
-                        <Tooltip contentStyle={{ fontSize: 12, borderRadius: 6 }} />
+                        <Tooltip contentStyle={TOOLTIP} labelStyle={{ color: 'inherit' }} />
                         <Line type="monotone" dataKey="score" name="Health" stroke="#4f46e5" strokeWidth={2} dot={false} isAnimationActive={false} />
                       </LineChart>
                     </ResponsiveContainer>
@@ -147,7 +150,7 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
           </div>
           {selfHosted && (
             <Card>
-              <CardHeader title="Utilization" description={s.metrics_fresh ? `Reported by the node agent ${ago(s.metrics_at!)}` : 'Install the node agent (Servers → Enrol a node) to report GPU, VRAM, CPU, RAM and disk use.'} />
+              <CardHeader title="Utilization" description={s.metrics_fresh ? `Reported by the node agent ${ago(s.metrics_at!)}` : 'Install the node agent (Servers → Connect a node) to report GPU, VRAM, CPU, RAM and disk use.'} />
               <div className="space-y-4 p-4 sm:px-6">
                 <Utilization s={s} />
                 {metricData.length > 1 ? (
@@ -157,7 +160,7 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
                         <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.25} />
                         <XAxis dataKey="t" tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" minTickGap={30} />
                         <YAxis domain={[0, 100]} unit="%" tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" />
-                        <Tooltip contentStyle={{ fontSize: 12, borderRadius: 6 }} />
+                        <Tooltip contentStyle={TOOLTIP} labelStyle={{ color: 'inherit' }} />
                         <Line type="monotone" dataKey="gpu" name="GPU %" stroke="#4f46e5" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
                         <Line type="monotone" dataKey="vram" name="VRAM %" stroke="#d97706" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
                         <Line type="monotone" dataKey="cpu" name="CPU %" stroke="#059669" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />

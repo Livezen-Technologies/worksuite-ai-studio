@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowPathIcon, KeyIcon, PencilSquareIcon, PlusIcon, TrashIcon, ClipboardDocumentIcon, CheckIcon, ExclamationTriangleIcon, NoSymbolIcon, TicketIcon, ChartBarIcon } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Alert, Badge, Button, Card, CardHeader, Checkbox, CodeBlock, ConfirmDialog, DataTable, EmptyState, FormModal,
-  FormSection, IconButton, Input, Meter, Modal, PageHeader, Select, StatusBadge, Textarea, Toggle, useToast, type Column,
+  FormSection, IconButton, Input, Meter, Modal, PageHeader, Select, StatusBadge, Tabs, Textarea, Toggle, useToast, type Column,
 } from '../components/ui';
 import { ApiError, del, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -78,16 +78,22 @@ const curlFor = (key = 'ohub_your_key', secret = 'sk_your_secret') =>
   -d '{"model":"llama3","messages":[{"role":"user","content":"Hello"}]}'`;
 
 function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
+  const toast = useToast();
   const [done, setDone] = useState(false);
-  return (
-    <IconButton
-      label={done ? 'Copied' : label}
-      icon={done ? CheckIcon : ClipboardDocumentIcon}
-      variant="ghost"
-      size="sm"
-      onClick={() => { void navigator.clipboard?.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500); }}
-    />
-  );
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const copy = async () => {
+    try {
+      if (!navigator.clipboard) throw new Error('no clipboard');   // plain-HTTP sites have no clipboard API
+      await navigator.clipboard.writeText(text);
+      setDone(true);
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => setDone(false), 1500);
+    } catch {
+      toast.error('Could not copy', 'Select the text and copy it with Ctrl+C (⌘C on a Mac).');
+    }
+  };
+  return <IconButton label={done ? 'Copied' : label} icon={done ? CheckIcon : ClipboardDocumentIcon} variant="ghost" size="sm" onClick={() => void copy()} />;
 }
 
 interface FormState {
@@ -111,10 +117,9 @@ function KeyForm({ open, onClose, editing, onCreated }: { open: boolean; onClose
   const keyAdmin = can('apikeys.admin');
   // A key an administrator has restricted: its owner may only rename or disable it.
   const locked = !keyAdmin && !!editing && Number(editing.admin_locked ?? 0) === 1;
-  const [f, setF] = useState<FormState>(blank);
+  // Mounted fresh for each open (see the caller's key), so the form always starts from the key being edited.
+  const [f, setF] = useState<FormState>(() => (editing ? toForm(editing) : blank));
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [lastOpen, setLastOpen] = useState(false);
-  if (open !== lastOpen) { setLastOpen(open); if (open) { setF(editing ? toForm(editing) : blank); setErrors({}); } }
 
   const models = useQuery({ queryKey: ['models'], queryFn: () => get<{ name: string }[]>('/models'), enabled: open, retry: false });
   const modelNames = useMemo(() => Array.from(new Set((models.data ?? []).map((m) => m.name))).sort(), [models.data]);
@@ -205,7 +210,7 @@ function SecretModal({ k, onClose }: { k: ApiKey | null; onClose: () => void }) 
   const [last, setLast] = useState<ApiKey | null>(null);
   if (k !== last) { setLast(k); setAck(false); }
   return (
-    <Modal open={!!k} onClose={() => ack && onClose()} size="lg" title="Copy your API secret"
+    <Modal open={!!k} onClose={onClose} dismissible={ack} size="lg" title="Copy your API secret"
       footer={<Button disabled={!ack} onClick={onClose}>Done</Button>}>
       {k && (
         <div className="space-y-4">
@@ -357,6 +362,7 @@ export default function ApiKeys() {
   const [revealed, setRevealed] = useState<ApiKey | null>(null);
   const [confirm, setConfirm] = useState<{ kind: 'rotate' | 'delete' | 'revoke'; key: ApiKey } | null>(null);
   const [tokenFor, setTokenFor] = useState<ApiKey | null>(null);
+  const [guide, setGuide] = useState<'openai' | 'native' | 'tokens' | 'downloads'>('openai');
   const [usageFor, setUsageFor] = useState<ApiKey | null>(null);
   const tokens = can('apikeys.tokens');
 
@@ -438,18 +444,9 @@ export default function ApiKeys() {
         <Card>
           <CardHeader title="Using the gateway" description="Send the key and secret as headers, a Bearer token of the form key:secret, or a short-lived JWT access token." />
           <div className="space-y-4 p-4 sm:p-6">
-            <div>
-              <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Base URL</div>
-              <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200 dark:bg-white/5 dark:ring-white/10">
-                <code className="min-w-0 flex-1 break-all font-mono text-sm text-slate-900 dark:text-slate-100">{gatewayBase()}</code>
-                <CopyButton text={gatewayBase()} />
-              </div>
-              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Endpoints: GET /models, POST /chat, /generate, /embeddings, /translate, /summarize. Downloads: GET /catalog, /packages/{'{id}'}/files?path=…, /datasets/{'{id}'}/download?split=train,dev.</p>
-            </div>
-            <div>
-              <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">Example request <CopyButton text={curlFor()} /></div>
-              <CodeBlock>{curlFor()}</CodeBlock>
-            </div>
+            <Tabs value={guide} onChange={(k) => setGuide(k as typeof guide)}
+              tabs={[{ key: 'openai', label: 'OpenAI-compatible' }, { key: 'native', label: 'Native API' }, { key: 'tokens', label: 'Access tokens' }, { key: 'downloads', label: 'Downloads' }]} />
+            {guide === 'openai' && <>
             <div>
               <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">OpenAI-compatible base URL</div>
               <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200 dark:bg-white/5 dark:ring-white/10">
@@ -462,21 +459,40 @@ export default function ApiKeys() {
               <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">OpenAI SDK (Python) <CopyButton text={openaiExample()} /></div>
               <CodeBlock>{openaiExample()}</CodeBlock>
             </div>
+            </>}
+            {guide === 'native' && <>
+            <div>
+              <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Base URL</div>
+              <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200 dark:bg-white/5 dark:ring-white/10">
+                <code className="min-w-0 flex-1 break-all font-mono text-sm text-slate-900 dark:text-slate-100">{gatewayBase()}</code>
+                <CopyButton text={gatewayBase()} />
+              </div>
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Endpoints: GET /models, POST /chat, /generate, /embeddings, /translate, /summarize. Downloads: GET /catalog, /packages/{'{id}'}/files?path=…, /datasets/{'{id}'}/download?split=train,dev.</p>
+            </div>
+            <div>
+              <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">Example request <CopyButton text={curlFor()} /></div>
+              <CodeBlock>{curlFor()}</CodeBlock>
+            </div>
+            </>}
+            {guide === 'tokens' && <>
             <div>
               <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">OAuth 2.0 access token (client credentials) <CopyButton text={oauthExample()} /></div>
               <CodeBlock>{oauthExample()}</CodeBlock>
-              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Returns a JWT valid for <code>expires_in</code> seconds (max 30 days). Use it as <code>Authorization: Bearer …</code>, or as the API key with the OpenAI-compatible base URL above.</p>
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Returns a JWT valid for <code>expires_in</code> seconds (max 30 days). Use it as <code>Authorization: Bearer …</code>, or as the API key with the OpenAI-compatible base URL.</p>
             </div>
+            </>}
+            {guide === 'downloads' && <>
             <div>
               <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">Download a model or dataset <CopyButton text={downloadExample()} /></div>
               <CodeBlock>{downloadExample()}</CodeBlock>
               <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Needs the Download models or Download datasets scope. Model files resume with <code>-C -</code>; check each file against the sha256 in the catalog. Datasets carry their permitted use — the Sinhala sets include non-commercial licences.</p>
             </div>
+            </>}
           </div>
         </Card>
       </div>
 
-      <KeyForm open={formOpen} onClose={() => setFormOpen(false)} editing={editing} onCreated={(k) => { toast.success('API key created', 'Copy the secret now.'); setRevealed(k); }} />
+      {formOpen && <KeyForm key={editing?.id ?? 'new'} open onClose={() => setFormOpen(false)} editing={editing} onCreated={(k) => { toast.success('API key created', 'Copy the secret now.'); setRevealed(k); }} />}
       <SecretModal k={revealed} onClose={() => setRevealed(null)} />
       <TokenModal k={tokenFor} onClose={() => setTokenFor(null)} />
       <UsageModal k={usageFor} onClose={() => setUsageFor(null)} />

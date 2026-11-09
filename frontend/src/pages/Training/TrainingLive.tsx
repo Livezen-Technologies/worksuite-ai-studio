@@ -201,7 +201,7 @@ function Chart({ data, lines, max }: { data: Record<string, unknown>[]; lines: [
           <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.25} />
           <XAxis dataKey="t" tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" minTickGap={30} />
           <YAxis domain={max ? [0, max] : ['auto', 'auto']} tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" />
-          <Tooltip contentStyle={{ fontSize: 12, borderRadius: 6 }} />
+          <Tooltip contentStyle={{ fontSize: 12, borderRadius: 6, background: 'var(--tooltip-bg)', color: 'var(--tooltip-fg)', border: '1px solid var(--tooltip-border)' }} labelStyle={{ color: 'inherit' }} />
           {lines.map(([k, name, color]) => <Line key={k} type="monotone" dataKey={k} name={name} stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />)}
         </LineChart>
       </ResponsiveContainer>

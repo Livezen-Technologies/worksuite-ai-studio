@@ -93,10 +93,10 @@ export default function Models() {
       key: 'actions', header: <span className="sr-only">Actions</span>, align: 'right', cell: (m) => (
         <ActionMenu actions={[
           { label: manage ? 'Configure' : 'View configuration', icon: AdjustmentsHorizontalIcon, onClick: () => setConfiguring(m) },
-          { label: 'Load into memory', icon: PlayIcon, onClick: () => act.mutate({ id: m.id, action: 'load' }), hidden: !manage, disabled: act.isPending || m.status === 'running' },
-          { label: 'Unload', icon: StopIcon, onClick: () => act.mutate({ id: m.id, action: 'unload' }), hidden: !manage, disabled: act.isPending },
-          { label: 'Set as default', icon: StarIcon, onClick: () => act.mutate({ id: m.id, action: 'default' }), hidden: !manage, disabled: act.isPending || Number(m.is_default) === 1 },
-          { label: 'Delete from node', icon: TrashIcon, onClick: () => setRemoving(m), hidden: !manage, danger: true },
+          { label: 'Load into memory', icon: PlayIcon, onClick: () => act.mutate({ id: m.id, action: 'load' }), hidden: !manage, disabled: (act.isPending && act.variables?.id === m.id) || m.status === 'running' },
+          { label: 'Unload', icon: StopIcon, onClick: () => act.mutate({ id: m.id, action: 'unload' }), hidden: !manage, disabled: act.isPending && act.variables?.id === m.id },
+          { label: 'Set as default', icon: StarIcon, onClick: () => act.mutate({ id: m.id, action: 'default' }), hidden: !manage, disabled: (act.isPending && act.variables?.id === m.id) || Number(m.is_default) === 1 },
+          { label: 'Remove from node', icon: TrashIcon, onClick: () => setRemoving(m), hidden: !manage, danger: true },
         ]} />
       ),
     },
@@ -106,8 +106,9 @@ export default function Models() {
     <>
       <PageHeader
         title="Models"
-        description="Models installed across your nodes and providers."
-        actions={<>
+        description={tab === 'installed' ? 'The copies of each model on each node and provider.' : tab === 'catalogue' ? 'Models you can add to the registry and deploy.' : 'Every model the studio manages: type, access, placement and defaults.'}
+        // these act on the node copies, so they belong to that tab (Registry and Catalogue have their own)
+        actions={tab === 'installed' && <>
           {manage && <Button icon={ArrowPathIcon} loading={sync.isPending} onClick={() => sync.mutate()}>{serverId ? 'Sync node' : 'Sync all'}</Button>}
           {manage && <Button variant="primary" icon={PlusIcon} disabled={!hasServers} onClick={() => setInstalling(true)}>Install model</Button>}
         </>}
@@ -162,9 +163,9 @@ export default function Models() {
         onClose={() => setRemoving(null)}
         onConfirm={() => removing && remove.mutate(removing.id)}
         busy={remove.isPending}
-        title="Delete this model from the node?"
+        title="Remove this model from the node?"
         message={<>“{removing?.name}” is deleted from {removing?.server_name}. You can install it again later.</>}
-        confirmLabel="Delete"
+        confirmLabel="Remove"
       />
     </>
   );

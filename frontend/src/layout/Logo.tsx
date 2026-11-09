@@ -12,7 +12,7 @@ export function Logo({ className, compact, onDark }: { className?: string; compa
     return (
       <div className={cx('flex min-w-0 items-center gap-2.5', className)}>
         <img src="/brand/worksuite-wordmark-dark.png" alt="WorkSuite" className="h-6 w-auto shrink-0" />
-        <span className="rounded-md bg-brand-600/20 px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap text-blue-300 ring-1 ring-blue-400/30 ring-inset">AI Studio</span>
+        <span className="hidden rounded-md bg-brand-600/20 px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap text-blue-300 sm:inline ring-1 ring-blue-400/30 ring-inset">AI Studio</span>
       </div>
     );
   }

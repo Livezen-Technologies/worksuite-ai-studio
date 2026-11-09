@@ -35,6 +35,10 @@ const DEP_TONE: Record<DepStatus, BadgeTone> = { pending: 'gray', deploying: 'bl
 const STATUS_TONE: Record<RegistryModel['status'], BadgeTone> = {
   registered: 'gray', pending: 'gray', deploying: 'blue', deployed: 'green', loaded: 'green', failed: 'red', disabled: 'gray',
 };
+const DEP_LABEL: Record<DepStatus, string> = { pending: 'Pending', deploying: 'Deploying', deployed: 'Deployed', loaded: 'Loaded', failed: 'Failed', removing: 'Removing' };
+const STATUS_LABEL: Record<RegistryModel['status'], string> = {
+  registered: 'Not deployed', pending: 'Pending', deploying: 'Deploying', deployed: 'Deployed', loaded: 'Loaded', failed: 'Failed', disabled: 'Disabled',
+};
 const QUANTS = ['', 'Q2_K', 'Q3_K_M', 'Q4_0', 'Q4_K_M', 'Q5_K_M', 'Q6_K', 'Q8_0', 'F16', 'BF16', 'AWQ', 'GPTQ', 'FP8'];
 const ENGINES = [
   { value: 'ollama', label: 'Ollama' }, { value: 'vllm', label: 'vLLM' }, { value: 'llamacpp', label: 'llama.cpp' },
@@ -177,16 +181,28 @@ function DeployModal({ model, servers, onClose }: { model: RegistryModel; server
 
 // ---- Defaults ----------------------------------------------------------------------------
 
-interface DefaultRow { task: string; application: string; model_name: string }
+interface DefaultRow { task: string; application: string; model_name: string; _key?: number }
+
+/** Unsaved default-model edits, kept while the user switches tabs (the tab unmounts this card). */
+let draftDefaults: DefaultRow[] | null = null;
+let rowSeq = 0;
 
 function Defaults({ models, meta, manage }: { models: RegistryModel[]; meta?: Meta; manage: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const q = useQuery({ queryKey: ['registry', 'defaults'], queryFn: () => get<DefaultRow[]>('/registry/defaults') });
-  const [rows, setRows] = useState<DefaultRow[] | null>(null);
-  const data = rows ?? q.data ?? [];
+  const [rows, setRowsState] = useState<DefaultRow[] | null>(draftDefaults);
+  const setRows = (v: DefaultRow[] | null) => { draftDefaults = v; setRowsState(v); };
+  const data = (rows ?? q.data ?? []).map((r) => (r._key === undefined ? { ...r, _key: ++rowSeq } : r));
+  // Every row needs a model; each task / application pair appears once.
+  const seen = new Set<string>();
+  const problems = data.map((r) => {
+    const k = `${r.task}|${r.application.trim().toLowerCase()}`;
+    const dup = seen.has(k); seen.add(k);
+    return !r.model_name ? 'Choose a model.' : dup ? 'This task already has a default for this application.' : null;
+  });
   const save = useMutation({
-    mutationFn: () => put<DefaultRow[]>('/registry/defaults', { defaults: data }),
+    mutationFn: () => put<DefaultRow[]>('/registry/defaults', { defaults: data.map(({ _key, ...r }) => r) }),
     onSuccess: (r) => { setRows(null); qc.setQueryData(['registry', 'defaults'], r); toast.success('Default models saved'); },
     onError: (e) => toast.error(e),
   });
@@ -197,17 +213,22 @@ function Defaults({ models, meta, manage }: { models: RegistryModel[]; meta?: Me
       <CardHeader title="Default models" description="Used when a chat or API request names no model. A row for an application (the API key's application name) wins over the row for every application."
         actions={manage && <div className="flex gap-2">
           <Button size="sm" icon={PlusIcon} onClick={() => setRows([...data, { task: 'chat', application: '', model_name: '' }])}>Add</Button>
-          {rows && <Button size="sm" variant="primary" loading={save.isPending} onClick={() => save.mutate()}>Save</Button>}
+          {rows && <>
+            <Button size="sm" variant="ghost" onClick={() => setRows(null)}>Discard</Button>
+            <Button size="sm" variant="primary" loading={save.isPending} disabled={problems.some(Boolean)} onClick={() => save.mutate()}>Save changes</Button>
+          </>}
         </div>} />
       <div className="space-y-2 p-4 sm:px-6">
+        {rows && <p className="text-xs font-medium text-amber-700 dark:text-amber-400">Unsaved changes</p>}
         {!data.length && <p className="text-sm text-slate-500 dark:text-slate-400">No defaults yet. Requests must name a model.</p>}
         {data.map((r, i) => (
-          <div key={i} className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[10rem_1fr_1fr_auto]">
+          <div key={r._key} className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[10rem_1fr_1fr_auto]">
             <Select aria-label="Task" disabled={!manage} value={r.task} onChange={(e) => upd(i, 'task', e.target.value)} options={(meta?.tasks ?? ['chat']).map((t) => ({ value: t, label: t }))} />
             <Input aria-label="Application" disabled={!manage} value={r.application} onChange={(e) => upd(i, 'application', e.target.value)} placeholder="Every application" />
             <Select aria-label="Model" disabled={!manage} value={r.model_name} onChange={(e) => upd(i, 'model_name', e.target.value)}
               options={options.some((o) => o.value === r.model_name) ? options : [...options, { value: r.model_name, label: r.model_name }]} />
             {manage && <Button size="sm" variant="ghost" icon={XMarkIcon} aria-label="Remove" onClick={() => setRows(data.filter((_, j) => j !== i))} />}
+            {rows && problems[i] && <p className="text-xs text-red-600 sm:col-span-4 dark:text-red-400">{problems[i]}</p>}
           </div>
         ))}
       </div>
@@ -260,11 +281,18 @@ export default function Registry() {
     { key: 'deployments', header: 'Nodes', cell: (m) => (
       <div className="flex max-w-xs flex-wrap gap-1">
         {m.deployments.length ? m.deployments.map((d) => (
-          <span key={d.server_id} title={d.error ?? `${d.server}: ${d.status}`} className="inline-flex items-center gap-0.5">
-            <Badge tone={DEP_TONE[d.status]}>{d.server} · {d.status}</Badge>
-            {manage && d.kind !== 'speech' && <button type="button" aria-label={`Remove from ${d.server}`} className="rounded p-0.5 text-slate-400 hover:text-red-500" onClick={() => setUndeploying({ m, d })}><XMarkIcon className="size-3" /></button>}
+          <span key={d.server_id} className="inline-flex items-center gap-0.5">
+            <Badge tone={DEP_TONE[d.status]}>{d.server} · {DEP_LABEL[d.status]}</Badge>
+            {manage && d.kind !== 'speech' && (
+              <button type="button" aria-label={`Remove ${m.name} from ${d.server}`} title={`Remove from ${d.server}`}
+                className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline-2 focus-visible:outline-brand-600 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+                onClick={() => setUndeploying({ m, d })}><XMarkIcon aria-hidden className="size-4" /></button>
+            )}
           </span>
         )) : <span className="text-xs text-slate-500 dark:text-slate-400">Not deployed</span>}
+        {m.deployments.filter((d) => d.status === 'failed' && d.error).map((d) => (
+          <p key={`e${d.server_id}`} className="w-full text-xs text-red-600 dark:text-red-400">{d.server}: {d.error}</p>
+        ))}
       </div>
     ) },
     { key: 'perf', header: '24 h performance', hideBelow: 'lg', cell: (m) => m.performance ? (
@@ -274,7 +302,7 @@ export default function Registry() {
           {m.performance.errors ? <span className="text-red-600 dark:text-red-400"> · {m.performance.error_rate}% errors</span> : null}</div>
       </div>
     ) : <span className="text-xs text-slate-400 dark:text-slate-500">No traffic</span> },
-    { key: 'status', header: 'Status', cell: (m) => <Badge tone={STATUS_TONE[m.status]}>{m.status}</Badge> },
+    { key: 'status', header: 'Status', cell: (m) => <Badge tone={STATUS_TONE[m.status]}>{STATUS_LABEL[m.status]}</Badge> },
     ...(manage ? [{ key: 'actions', header: '', align: 'right' as const, cell: (m: RegistryModel) => (
       <ActionMenu actions={[
         { label: 'Deploy to nodes', icon: CloudArrowDownIcon, onClick: () => setDeploying(m), disabled: !m.enabled, hidden: m.engine === 'speech' },

@@ -3,6 +3,45 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.35.0] — 2026-11-09 — Audit fixes: security, deploys, background jobs and UI
+- **API keys**: you can give your own keys everyday scopes (chat, embeddings, models, speech to text, classify) and up to 600 requests a minute. Download scopes, higher limits and unlocking need an API key administrator. When an administrator changes someone's key, that person can then only rename or disable it. Turning a key off ends its access tokens, so they don't return when it is turned back on.
+- **Safer outbound calls**: node and provider addresses are re-checked on every call, and every IPv6 spelling of an internal address is refused.
+- **Node agent 1.6.0**: connects to the Studio only over HTTPS, and only runs training code served by your Studio.
+- **Gateway**:
+  - Repeated wrong API secrets are throttled, and token exchange is limited per IP.
+  - Transcriptions count toward quotas.
+  - Calls whose provider reports no usage are counted by estimate.
+  - Model downloads through the gateway are written to the audit log.
+  - `/models` lists only models a working node can serve.
+  - finish_reason comes from the provider.
+  - Embeddings support `dimensions`.
+  - OpenAI's newer models work with max_tokens.
+- **Background jobs**:
+  - Idle models are now really unloaded, and pinned models stay loaded.
+  - A deployment can no longer stay "deploying" for ever.
+  - Scheduled jobs never run twice at once.
+  - Stale queue jobs are retried or failed.
+- **Deploys and servers**:
+  - Speech uploads up to 500 MB get through nginx and PHP.
+  - Streamed answers are never buffered.
+  - Per-IP rate limits apply to the whole API.
+  - Deploys stop the queue worker and swap files in at the end; migrations can be safely re-run.
+  - Backups can be encrypted and keep monthly copies.
+  - Prometheus alerts when the scheduler, the queue worker or the model load policy stop running.
+  - CI applies every migration to MySQL 8 and checks the node scripts.
+- **UI**:
+  - Confirmation boxes no longer show "undefined" as they close.
+  - Server edits replace the details window instead of opening on top of it.
+  - Only the row you act on shows as busy.
+  - Node commands refresh the status.
+  - Default-model edits survive a tab switch and are checked before saving.
+  - Deployment errors show inline, and statuses use readable labels.
+  - The gateway guide is split into tabs.
+  - Copy buttons say when copying failed.
+  - Chart tooltips follow dark mode.
+  - The top bar fits on phones.
+  - Wording for servers and nodes is consistent.
+
 ## [1.34.0] — 2026-11-09 — Model catalogue and speech models in the registry
 - **Model catalogue** (Models → Catalogue): 37 curated models to browse by type and search — general, Sinhala, reasoning and code LLMs, vision and multimodal models, embeddings and Whisper speech models — with size, GPU memory, context, capabilities, licence and source. **Add** registers one for Ollama (its tag) or vLLM / llama.cpp (its Hugging Face id) and can deploy it to nodes straight away; each card shows whether it is already in the registry or on a node.
 - **Speech models in the registry**: Discover now adds every speech-to-text model the speech service offers (the built-in Whisper sizes and models trained in the Studio) as `whisper:<name>`. They show where they run (this server's speech service and ready GPU nodes) and get the same access roles, default model (task *transcription*) and 24-hour performance as other models. The Speech page only lists models your role may use and starts on the default.

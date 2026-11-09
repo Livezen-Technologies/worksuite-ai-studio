@@ -29,6 +29,7 @@ export default function Servers() {
   const [removing, setRemoving] = useState<Server | null>(null);
   const [control, setControl] = useState<{ server: Server; action: ControlAction } | null>(null);
   const [enrolling, setEnrolling] = useState(false);
+  const [returnTo, setReturnTo] = useState<number | null>(null); // server whose details reopen after its edit form closes
 
   const list = useQuery({ queryKey: ['servers'], queryFn: () => get<Server[]>('/servers') });
   const summary = useQuery({ queryKey: ['servers', 'summary'], queryFn: () => get<FleetSummary>('/servers/summary'), refetchInterval: 60_000 });
@@ -60,7 +61,13 @@ export default function Servers() {
   });
   const ctl = useMutation({
     mutationFn: ({ id, action }: { id: number; action: ControlAction }) => post(`/servers/${id}/${action}`),
-    onSuccess: () => { toast.success('Command sent to the node'); setControl(null); },
+    // The node acts on it shortly; refresh so the list catches the new state as soon as it reports.
+    onSuccess: (_r, v) => {
+      toast.success(`${CONTROL_LABEL[v.action]} requested`, 'The node carries it out in a moment; its status updates on the next health check.');
+      setControl(null);
+      invalidate();
+      qc.invalidateQueries({ queryKey: ['server', v.id] });
+    },
     onError: (e) => { toast.error(e); setControl(null); },
   });
 
@@ -125,10 +132,10 @@ export default function Servers() {
           <div onClick={(e) => e.stopPropagation()}>
             <ActionMenu actions={[
               { label: 'View details', icon: EyeIcon, onClick: () => open(s.id) },
-              { label: 'Run health check', icon: HeartIcon, onClick: () => health.mutate(s.id), hidden: !manage, disabled: health.isPending },
+              { label: 'Run health check', icon: HeartIcon, onClick: () => health.mutate(s.id), hidden: !manage, disabled: health.isPending && health.variables === s.id },
               { label: 'Edit', icon: PencilSquareIcon, onClick: () => setEditing(s), hidden: !manage },
-              { label: 'Disable node', icon: NoSymbolIcon, onClick: () => toggle.mutate({ id: s.id, enable: false }), hidden: !manage || s.is_enabled === false, disabled: toggle.isPending },
-              { label: 'Enable node', icon: CheckCircleIcon, onClick: () => toggle.mutate({ id: s.id, enable: true }), hidden: !manage || s.is_enabled !== false, disabled: toggle.isPending },
+              { label: 'Disable node', icon: NoSymbolIcon, onClick: () => toggle.mutate({ id: s.id, enable: false }), hidden: !manage || s.is_enabled === false, disabled: toggle.isPending && toggle.variables?.id === s.id },
+              { label: 'Enable node', icon: CheckCircleIcon, onClick: () => toggle.mutate({ id: s.id, enable: true }), hidden: !manage || s.is_enabled !== false, disabled: toggle.isPending && toggle.variables?.id === s.id },
               { label: 'Restart Ollama', icon: ArrowPathRoundedSquareIcon, onClick: () => setControl({ server: s, action: 'restart' }), hidden: !manage || !ollama },
               { label: 'Update Ollama', icon: ArrowUpTrayIcon, onClick: () => setControl({ server: s, action: 'update' }), hidden: !manage || !ollama },
               { label: 'Shut down node', icon: PowerIcon, onClick: () => setControl({ server: s, action: 'shutdown' }), hidden: !manage || !ollama, danger: true },
@@ -144,7 +151,7 @@ export default function Servers() {
     <>
       <PageHeader
         title="Servers"
-        description="Ollama nodes and connected LLM providers."
+        description="Inference nodes (Ollama, vLLM, llama.cpp) and connected LLM providers."
         meta={list.data ? (
           <span className="text-sm text-slate-500 dark:text-slate-400">
             {list.data.length} total · {counts.online ?? 0} online
@@ -152,7 +159,7 @@ export default function Servers() {
           </span>
         ) : undefined}
         actions={<>
-          <Button icon={ArrowPathIcon} loading={list.isRefetching} onClick={() => list.refetch()}>Refresh</Button>
+          <Button icon={ArrowPathIcon} loading={list.isRefetching} onClick={() => { void list.refetch(); void summary.refetch(); }}>Refresh</Button>
           {manage && <Button icon={CommandLineIcon} onClick={() => setEnrolling(true)}>Connect a node</Button>}
           {manage && <Button variant="primary" icon={PlusIcon} onClick={() => setEditing(null)}>Add server</Button>}
         </>}
@@ -187,12 +194,12 @@ export default function Servers() {
       </Card>
 
       {enrolling && <EnrolNode onClose={() => setEnrolling(false)} />}
-      {editing !== undefined && <ServerForm server={editing} onClose={() => setEditing(undefined)} />}
+      {editing !== undefined && <ServerForm server={editing} onClose={() => { setEditing(undefined); if (returnTo) { open(returnTo); setReturnTo(null); } }} />}
       {openId && (
         <ServerDetail
           id={openId}
           onClose={() => open(null)}
-          onEdit={(s) => setEditing(s)}
+          onEdit={(s) => { open(null); setReturnTo(s.id); setEditing(s); }} // one window at a time; the details come back after editing
           onControl={(server, action) => setControl({ server, action })}
         />
       )}

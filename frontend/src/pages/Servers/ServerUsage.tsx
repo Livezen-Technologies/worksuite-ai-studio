@@ -48,7 +48,7 @@ export function ServerUsage({ id }: { id: number }) {
                     <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.25} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={(d: string) => d.slice(5)} tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" />
                     <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" />
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 6 }} />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 6, background: 'var(--tooltip-bg)', color: 'var(--tooltip-fg)', border: '1px solid var(--tooltip-border)' }} labelStyle={{ color: 'inherit' }} />
                     <Bar dataKey="requests" name="Requests" stackId="a" fill="#4f46e5" isAnimationActive={false} />
                     <Bar dataKey="errors" name="Errors" stackId="a" fill="#dc2626" isAnimationActive={false} />
                   </BarChart>

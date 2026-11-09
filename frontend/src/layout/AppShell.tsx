@@ -338,14 +338,16 @@ export function AppShell() {
           <Bars3Icon aria-hidden className="size-6" />
         </button>
         <Link to="/" aria-label="WorkSuite AI Studio home" className="shrink-0"><Logo onDark /></Link>
-        <div className="flex flex-1 justify-center px-2">
+        {/* On phones the search is an icon, so the bar fits beside the logo and the account menu. */}
+        <div className="flex min-w-0 flex-1 justify-end px-1 sm:justify-center sm:px-2">
           <button
             type="button"
             onClick={() => setPaletteOpen(true)}
-            className="flex w-full max-w-xl items-center gap-2 rounded-full bg-white/5 px-4 py-2 text-left text-sm text-slate-300 ring-1 ring-white/10 transition-colors hover:bg-white/10 hover:text-slate-200"
+            aria-label="Search pages"
+            className="flex items-center gap-2 rounded-full bg-white/5 p-2 text-left text-sm text-slate-300 ring-1 ring-white/10 transition-colors hover:bg-white/10 hover:text-slate-200 sm:w-full sm:max-w-xl sm:px-4"
           >
             <MagnifyingGlassIcon aria-hidden className="size-5 shrink-0" />
-            <span className="flex-1 truncate">Search pages…</span>
+            <span className="hidden flex-1 truncate sm:block">Search pages…</span>
             <kbd className="hidden rounded border border-white/15 px-1.5 font-sans text-xs text-slate-300 sm:inline">Ctrl K</kbd>
           </button>
         </div>
