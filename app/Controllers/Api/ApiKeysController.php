@@ -24,10 +24,10 @@ use App\Services\ApiTokenService;
 class ApiKeysController extends BaseApiController
 {
     /** Gateway scopes a key can carry. download_* open /api/v1/catalog and the file / dataset downloads. */
-    public const SCOPES = ['chat', 'generate', 'embeddings', 'models', 'transcribe', 'download_models', 'download_datasets', 'classify'];
+    public const SCOPES = ['chat', 'generate', 'embeddings', 'models', 'transcribe', 'tts', 'download_models', 'download_datasets', 'classify'];
 
     /** Scopes a user may give their own keys. Download scopes expose datasets and model files: admins only. */
-    public const SELF_SCOPES = ['chat', 'generate', 'embeddings', 'models', 'transcribe', 'classify'];
+    public const SELF_SCOPES = ['chat', 'generate', 'embeddings', 'models', 'transcribe', 'tts', 'classify'];
     /** Highest per-minute rate a non-admin may set on their own key. */
     public const SELF_MAX_RATE = 600;
     public const DEFAULT_RATE  = 60;

@@ -118,4 +118,70 @@ class SpeechController extends BaseApiController
         $j['ran_on'] = ['name' => $used['name'], 'device' => $used['device']];
         return $this->ok($j, $j['text'] === '' ? 'No speech was found in this audio.' : 'Transcribed.');
     }
+
+    // ---- Text to speech ---------------------------------------------------------------------
+
+    /** GET /api/speech/voices — voices this user may use, the default first, with licence and consent. */
+    public function voices()
+    {
+        if ($r = $this->requirePermission('chat.use')) return $r;
+        $tts = new \App\Services\TtsService();
+        $health = $tts->health(true);
+        $reg  = new \App\Services\ModelRegistryService();
+        $meta = $reg->index();
+        $role = $this->userRole();
+        $def  = \App\Services\TtsService::keyFrom((string) $reg->defaultFor('speech'));
+        $list = [];
+        foreach ($tts->usable() as $key => $v) {
+            if (! \App\Services\ModelRegistryService::rowAllows($meta[\App\Services\TtsService::registryName($key)] ?? null, $role)) continue;
+            $list[] = $v + ['default' => $key === $def];
+        }
+        usort($list, static fn ($a, $b) => (int) $b['default'] <=> (int) $a['default']);
+        return $this->ok(['available' => $health !== null, 'voices' => $list, 'formats' => ['mp3', 'wav', 'opus', 'flac'], 'max_chars' => 5000]);
+    }
+
+    /** POST /api/speech/tts/preview {text, voice} — the text as the voice will read it. */
+    public function ttsPreview()
+    {
+        if ($r = $this->requirePermission('chat.use')) return $r;
+        [$text, $voice, $err] = $this->ttsInput();
+        if ($err) return $err;
+        try {
+            return $this->ok((new \App\Services\TtsService())->normalize($text, $voice));
+        } catch (\RuntimeException $e) {
+            return $this->failure($e->getMessage(), 503);
+        }
+    }
+
+    /** POST /api/speech/tts {text, voice?, speed?, format?} — the audio file (X-Duration and X-Normalized-Text headers). */
+    public function tts()
+    {
+        if ($r = $this->requirePermission('chat.use')) return $r;
+        [$text, $voice, $err] = $this->ttsInput();
+        if ($err) return $err;
+        $in = $this->input();
+        $format = in_array($in['format'] ?? 'wav', ['mp3', 'wav', 'opus', 'flac'], true) ? $in['format'] : 'wav';
+        [$code, $audio, $meta, $error] = (new \App\Services\TtsService())->synthesize($text, $voice, (float) ($in['speed'] ?? 1.0), $format);
+        if ($audio === null) return $this->failure($error, $code >= 400 && $code < 500 ? $code : 503);
+        return $this->response->setStatusCode(200)->setContentType($meta['content_type'])->setBody($audio)
+            ->setHeader('X-Duration', (string) $meta['duration'])->setHeader('X-Speed', (string) $meta['speed'])
+            ->setHeader('X-Normalized-Text', rawurlencode((string) $meta['normalized']))
+            ->setHeader('Content-Disposition', 'inline; filename="speech.' . $format . '"');
+    }
+
+    /** text + a voice the user may use (the registry default when none is named). Returns [text, voiceKey, errorResponse]. */
+    private function ttsInput(): array
+    {
+        $in   = $this->input();
+        $text = trim((string) ($in['text'] ?? ''));
+        if ($text === '') return ['', '', $this->failure('Type some text to speak.', 422, ['text' => 'Required.'])];
+        if (mb_strlen($text) > 5000) return ['', '', $this->failure('Up to 5000 characters at a time.', 422, ['text' => 'Too long.'])];
+        $reg   = new \App\Services\ModelRegistryService();
+        $asked = (string) ($in['voice'] ?? '');
+        $voice = \App\Services\TtsService::keyFrom($asked !== '' ? $asked : (string) ($reg->defaultFor('speech') ?? 'espeak-si')) ?? 'espeak-si';
+        if (! $reg->roleAllowed(\App\Services\TtsService::registryName($voice), $this->userRole())) {
+            return ['', '', $this->failure("You do not have access to the voice '{$voice}'.", 403)];
+        }
+        return [$text, $voice, null];
+    }
 }

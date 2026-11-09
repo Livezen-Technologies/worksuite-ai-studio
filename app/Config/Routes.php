@@ -283,6 +283,9 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     // --- Speech to text (Whisper Sinhala via the local aistudio-asr service) ---
     $routes->get('speech/status', 'SpeechController::status');
     $routes->post('speech/transcribe', 'SpeechController::transcribe');
+    $routes->get('speech/voices', 'SpeechController::voices');
+    $routes->post('speech/tts', 'SpeechController::tts');
+    $routes->post('speech/tts/preview', 'SpeechController::ttsPreview');
 
     // --- WorkSuite Sinhala AI Engine: build & release zone (v1.5, docs/sinhala-ai-engine) ---
     $routes->get('engine/overview', 'EngineController::overview');

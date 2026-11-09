@@ -76,6 +76,24 @@ if ($path === '/v1/models') {
         ['id' => 'bartowski/Qwen2.5-7B-Instruct-GGUF', 'downloads' => 300000, 'likes' => 90, 'tags' => ['gguf', 'license:apache-2.0'], 'gated' => false],
         ['id' => '../../etc/passwd', 'downloads' => 1],
     ]);
+} elseif ($path === '/tts/health') { // the text-to-speech service
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => true, 'voices' => [
+        ['value' => 'espeak-si', 'label' => 'Sinhala (espeak-ng, synthetic)', 'language' => 'si', 'approved' => true, 'revoked' => false, 'installed' => true, 'speed' => [0.5, 2.0], 'license' => 'GPL-3.0 engine', 'consent_ref' => 'synthetic'],
+        ['value' => 'studio-voice', 'label' => 'Studio voice', 'language' => 'si', 'approved' => true, 'revoked' => false, 'installed' => true, 'speed' => [0.8, 1.2]],
+        ['value' => 'mms-sin', 'label' => 'MMS (research)', 'language' => 'si', 'approved' => false, 'revoked' => false, 'installed' => true, 'speed' => [1, 1]],
+    ]]);
+} elseif ($path === '/tts/synthesize') {
+    if ($log) file_put_contents($log, json_encode(['path' => $path, 'body' => $in]));
+    if (($in['voice'] ?? '') === 'mms-sin') { http_response_code(403); echo json_encode(['error' => 'not approved']); return; }
+    header('Content-Type: ' . (($in['format'] ?? 'wav') === 'mp3' ? 'audio/mpeg' : 'audio/wav'));
+    header('X-Duration: 1.50');
+    header('X-Speed: ' . min(2.0, max(0.5, (float) ($in['speed'] ?? 1))));
+    header('X-Normalized-Text: ' . json_encode('normalized ' . ($in['text'] ?? '')));
+    echo 'RIFF-fake-audio';
+} elseif ($path === '/tts/normalize') {
+    header('Content-Type: application/json');
+    echo json_encode(['text' => $in['text'] ?? '', 'normalized' => 'n:' . ($in['text'] ?? ''), 'notes' => [], 'normalizer' => 'norm-1']);
 } elseif ($path === '/health') { // the speech service (deploy/asr/asr_service.py)
     header('Content-Type: application/json');
     echo json_encode(['ok' => true, 'model' => 'Whisper Small · Sinhala', 'models' => [

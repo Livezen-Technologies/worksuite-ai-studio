@@ -72,6 +72,15 @@ class OpenAIController extends BaseApiController
                 'context_length' => isset($r['context_length']) ? (int) $r['context_length'] : null,
             ];
         }
+        // Voices (the text-to-speech service), for keys with the tts scope.
+        if (in_array('tts', explode(',', (string) ($key['scopes'] ?? '')), true)) {
+            foreach ((new \App\Services\TtsService())->usable() as $k => $v) {
+                $id = \App\Services\TtsService::registryName($k);
+                if ((is_array($allowed) && $allowed && ! in_array($id, $allowed, true)) || ! ModelRegistryService::rowAllows($meta[$id] ?? null, $role)) continue;
+                $out[$id] = ['id' => $id, 'object' => 'model', 'created' => 0, 'owned_by' => 'worksuite-ai', 'type' => 'tts', 'capabilities' => ['audio_out'],
+                    'context_length' => null, 'language' => $v['language'] ?? null];
+            }
+        }
         // Speech models (the speech service), for keys with the transcribe scope.
         if (in_array('transcribe', explode(',', (string) ($key['scopes'] ?? '')), true)) {
             foreach ((new \App\Services\SpeechService())->models() as $k => $m) {
@@ -182,10 +191,57 @@ class OpenAIController extends BaseApiController
         }
     }
 
-    /** OpenAI `POST /audio/speech`: not served (voices run on devices as Sinhala Engine packages). */
+    /** OpenAI's voice names: any of them means "the default voice" (this server has its own voices). */
+    private const OPENAI_VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'];
+
+    /**
+     * OpenAI `POST /audio/speech` {model, input, voice, response_format?, speed?} → audio.
+     * voice: one of this server's voices (`espeak-si`, `tts:my-voice`), or an OpenAI voice name for the default
+     * voice; model: tts-1 / tts-1-hd / gpt-4o-mini-tts / default, or `tts:<voice>`. Only approved voices
+     * speak; speed is kept within what the voice was validated for (X-Speed says what was used).
+     */
     public function speech()
     {
-        return $this->error('Text to speech is not available on this server yet: voices run on devices as Sinhala Engine packages.', 501, 'not_implemented');
+        $this->begin();
+        if ($e = $this->scopeError('tts')) return $e;
+        $in = $this->body();
+        if ($in === null) return $this->error('The request body must be JSON.', 400);
+        $input = trim((string) ($in['input'] ?? ''));
+        if ($input === '') return $this->error('input is required.', 400, 'missing_required_parameter', 'input');
+        if (mb_strlen($input) > 4096) return $this->error('input is limited to 4096 characters.', 400, 'string_above_max_length', 'input');
+        $format = (string) ($in['response_format'] ?? 'mp3');
+        if (! in_array($format, \App\Services\TtsService::FORMATS, true)) {
+            return $this->error('response_format must be one of: ' . implode(', ', \App\Services\TtsService::FORMATS) . '.', 400, 'invalid_value', 'response_format');
+        }
+        $speed = (float) ($in['speed'] ?? 1.0);
+        if ($speed < 0.25 || $speed > 4.0) return $this->error('speed must be from 0.25 to 4.0.', 400, 'invalid_value', 'speed');
+
+        $key = $this->key();
+        $reg = new ModelRegistryService();
+        // The voice: `voice` when it names one of ours, else `model` when it does, else the default voice.
+        $pick = static function ($v) { $v = strtolower(trim((string) $v)); return $v === '' || in_array($v, self::OPENAI_VOICES, true) || in_array($v, ['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts', 'default'], true) ? null : \App\Services\TtsService::keyFrom($v); };
+        $voice = $pick($in['voice'] ?? '') ?? $pick($in['model'] ?? '')
+            ?? \App\Services\TtsService::keyFrom((string) ($reg->defaultFor('speech', $key['application'] ?? null) ?? ''))
+            ?? (array_key_first((new \App\Services\TtsService())->usable()) ?: 'espeak-si');
+        $model = \App\Services\TtsService::registryName($voice);
+        $allowed = ! empty($key['allowed_models']) ? json_decode($key['allowed_models'], true) : null;
+        if (is_array($allowed) && $allowed && ! in_array($model, $allowed, true)) {
+            return $this->failLogged('audio.speech', $model, null, 403, "This API key may not use the voice '{$voice}'.", 'model_not_allowed');
+        }
+        if (! $reg->roleAllowed($model, $reg->roleOf(isset($key['user_id']) ? (int) $key['user_id'] : null))) {
+            return $this->failLogged('audio.speech', $model, null, 403, "The voice '{$voice}' is not available to this key's owner.", 'model_not_allowed');
+        }
+        if ($q = (new ApiGatewayService())->quotaError($key)) return $this->failLogged('audio.speech', $model, null, 429, $q, 'insufficient_quota');
+
+        [$code, $audio, $meta, $err] = (new \App\Services\TtsService())->synthesize($input, $voice, $speed, $format);
+        if ($audio === null) {
+            return $this->failLogged('audio.speech', $model, null, $code === 403 ? 403 : ($code >= 400 && $code < 500 ? 400 : 503), $err, $code === 403 ? 'voice_not_approved' : 'upstream_error');
+        }
+        // Characters read count toward the key's quota, by the usual estimate.
+        $this->logCall('audio.speech', $model, null, 200, ApiGatewayService::estimateTokens($input), 0);
+        return $this->response->setStatusCode(200)->setContentType($meta['content_type'])->setBody($audio)
+            ->setHeader('x-request-id', $this->requestId)->setHeader('X-Voice', $voice)
+            ->setHeader('X-Duration', (string) $meta['duration'])->setHeader('X-Speed', (string) $meta['speed']);
     }
 
     private function plain(string $body, string $type)

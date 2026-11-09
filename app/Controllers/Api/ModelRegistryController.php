@@ -98,6 +98,7 @@ class ModelRegistryController extends BaseApiController
         $svc = $this->svc();
         if (! ($m = $svc->find((int) $id))) return $this->failure('Model not found.', 404);
         if ($m['engine'] === 'speech') return $this->failure('Speech models run on the speech service and reach GPU nodes with their speech sync; there is nothing to deploy.', 422);
+        if ($m['engine'] === 'tts') return $this->failure('Voices run on the text-to-speech service on this server; add them to its voice catalog.', 422);
         $in  = $this->input();
         $ids = is_array($in['server_ids'] ?? null) ? $in['server_ids'] : [];
         if (! $ids) return $this->failure('Choose at least one node.', 422);

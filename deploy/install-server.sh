@@ -90,7 +90,7 @@ echo "==> Prometheus: node_exporter (+ systemd units), blackbox probe of https:/
 sed "s/__DOMAIN__/${DOMAIN}/" "${APP_DIR}/deploy/prometheus-ollamahub.yml" | sudo tee /etc/prometheus/prometheus.yml >/dev/null
 sudo cp "${APP_DIR}/deploy/prometheus-alerts.yml" /etc/prometheus/aistudio-alerts.yml
 # ServiceDown alert: export the state of the app's systemd units.
-echo 'ARGS="--collector.systemd --collector.systemd.unit-include=(ollamahub-queue|aistudio-asr|aistudio-ml|php8.3-fpm|nginx|mysql)\.service"' \
+echo 'ARGS="--collector.systemd --collector.systemd.unit-include=(ollamahub-queue|aistudio-asr|aistudio-ml|aistudio-tts|php8.3-fpm|nginx|mysql)\.service"' \
   | sudo tee /etc/default/prometheus-node-exporter >/dev/null
 # The app (www-data: queue worker, schedule cron) writes freshness metrics into the textfile folder.
 sudo install -d /var/lib/prometheus/node-exporter
@@ -99,6 +99,12 @@ sudo setfacl -m u:www-data:rwx /var/lib/prometheus/node-exporter 2>/dev/null \
 sudo systemctl enable --now prometheus-blackbox-exporter
 sudo systemctl restart prometheus prometheus-node-exporter prometheus-blackbox-exporter
 echo "    Alerts show on Prometheus' /alerts page. Add Alertmanager for email/Slack (docs/runbook.md)."
+
+echo "==> Text to speech (espeak-ng voices for Sinhala and English; approved VITS voices can be added later)"
+sudo apt-get install -y -q espeak-ng ffmpeg
+sudo install -d -o www-data -g www-data /srv/aistudio-models/tts
+sudo cp "${APP_DIR}/deploy/tts/aistudio-tts.service" /etc/systemd/system/aistudio-tts.service
+sudo systemctl daemon-reload && sudo systemctl enable --now aistudio-tts
 
 echo "==> systemd queue worker + schedule cron"
 sudo cp "${APP_DIR}/deploy/ollamahub-queue.service" /etc/systemd/system/ollamahub-queue.service

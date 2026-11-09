@@ -92,8 +92,12 @@ jobs:
       # The scripts GPU nodes download and run: warnings and errors fail the build.
       - name: shellcheck node scripts
         run: shellcheck -S warning public/node/*.sh
-      - name: Python syntax (node and speech scripts)
-        run: python3 -m py_compile public/node/*.py deploy/asr/*.py
+      - name: Python syntax (node, speech and text-to-speech scripts)
+        run: python3 -m py_compile public/node/*.py deploy/asr/*.py deploy/tts/*.py
+      - name: Text-to-speech service tests (with espeak-ng and ffmpeg)
+        run: |
+          sudo apt-get install -y -q espeak-ng ffmpeg >/dev/null
+          python3 -B deploy/tts/test_tts_service.py
 
   # Production runs MySQL; the unit tests run on SQLite. Apply every migration to a real MySQL 8
   # (default sql_mode, incl. ONLY_FULL_GROUP_BY), then again to prove a re-run is a no-op.

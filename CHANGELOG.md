@@ -3,6 +3,23 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.37.0] — 2026-11-09 — Text to speech
+- **Text to speech** on the Speech page and in the gateway (`POST /api/openai/v1/audio/speech`, OpenAI-compatible). Pick a voice, preview how the text will be read, play, stop, and download WAV or MP3.
+- **Approved voices only**, as the Sinhala engine spec requires:
+  - Every voice declares its language, licence, speaker consent, sample rate and the speed range it was validated for.
+  - Withdrawn voices are refused for new audio, and unapproved voices (for example Meta MMS, CC BY-NC) never speak.
+  - There is no voice cloning.
+- **Voices**:
+  - Sinhala and English espeak-ng voices work out of the box (synthetic, no recorded speaker).
+  - Approved VITS voices trained on licensed recordings, or Piper voices, are added through a voice catalog.
+  - Voices appear in the model registry as `tts:<voice>`, with access by role and a default voice (task "speech").
+- **Reading Sinhala text**:
+  - Numbers in words using Sri Lankan grouping (ලක්ෂ, කෝටි), rupee amounts, dates and times.
+  - A local pronunciation lexicon.
+  - A warning when English words appear in Sinhala text.
+- **API keys**: a new "Text to speech" scope. Characters read count toward quotas.
+- **Server**: install-server sets up the new aistudio-tts service (espeak-ng, ffmpeg). Prometheus probes it, and CI runs its tests with real synthesis.
+
 ## [1.36.0] — 2026-11-09 — Node controls, key rotation, quotas, hub search and queue health
 - **Node controls**: Restart, Update Ollama and Shut down now work. The node agent (1.7.0) carries them out through a small root-owned helper that does only those three things (the installer prints the one-time setup commands). The server shows the result.
 - **Key rotation**:

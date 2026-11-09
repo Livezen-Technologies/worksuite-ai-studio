@@ -45,6 +45,7 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         cache()->clean();
         unset($_SERVER['ohub_api_key']);
         putenv('ASR_SERVICE_URL=http://127.0.0.1:' . self::$port); $_ENV['ASR_SERVICE_URL'] = $_SERVER['ASR_SERVICE_URL'] = 'http://127.0.0.1:' . self::$port;
+        putenv('TTS_SERVICE_URL=http://127.0.0.1:' . self::$port . '/tts'); $_ENV['TTS_SERVICE_URL'] = $_SERVER['TTS_SERVICE_URL'] = 'http://127.0.0.1:' . self::$port . '/tts';
         $f = \Config\Database::forge($this->DBGroup);
         foreach (['users', 'roles', 'api_keys', 'api_logs', 'servers', 'models', 'model_registry', 'model_assignments', 'model_defaults', 'settings', 'queues', 'notifications'] as $t) $f->dropTable($t, true);
         $id = ['id' => ['type' => 'INTEGER', 'auto_increment' => true]];
@@ -81,7 +82,7 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $this->db->table('roles')->insertBatch([['name' => 'customer'], ['name' => 'developer']]);
         $this->db->table('users')->insert(['name' => 'Ann', 'status' => 'active', 'role_id' => 1]);
         $this->db->table('api_keys')->insert(['name' => 'k', 'user_id' => 1, 'api_key' => 'ohub_k1', 'secret_hash' => password_hash('sk_s', PASSWORD_DEFAULT),
-            'scopes' => 'chat,generate,embeddings,models,transcribe', 'status' => 'active', 'application' => 'HR portal']);
+            'scopes' => 'chat,generate,embeddings,models,transcribe', 'status' => 'active', 'application' => 'HR portal', 'rate_limit_per_min' => 10000]);
         $this->db->table('servers')->insertBatch([
             ['name' => 'dead', 'kind' => 'vllm', 'api_url' => 'http://127.0.0.1:1', 'status' => 'online', 'health_score' => 100],
             ['name' => 'fake', 'kind' => 'vllm', 'api_url' => 'http://127.0.0.1:' . self::$port, 'status' => 'online', 'health_score' => 90],
@@ -430,7 +431,7 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $r = $res->response();
         $this->assertSame('100', $r->getHeaderLine('x-ratelimit-limit-tokens'));
         $this->assertSame('3', $r->getHeaderLine('x-ratelimit-remaining-tokens'), 'what is left after this call (85 + 12 of 100)');
-        $this->assertSame('60', $r->getHeaderLine('x-ratelimit-limit-requests'));
+        $this->assertSame('10000', $r->getHeaderLine('x-ratelimit-limit-requests'));
         $this->assertStringEndsWith('s', $r->getHeaderLine('x-ratelimit-reset-tokens'));
 
         $n = $this->db->table('notifications')->get()->getResultArray();
@@ -450,7 +451,7 @@ final class OpenAIGatewayTest extends CIUnitTestCase
 
         $this->assertSame('n', $this->body($this->api('post', 'chat/completions', ['model' => 'fake-chat', 'n' => 2, 'stream' => true, 'messages' => [['role' => 'user', 'content' => 'x']]]))['error']['param']);
         $this->assertSame('logprobs', $this->body($this->api('post', 'chat/completions', ['model' => 'fake-chat', 'logprobs' => true, 'messages' => [['role' => 'user', 'content' => 'x']]]))['error']['param']);
-        $this->api('post', 'audio/speech', ['model' => 'tts-1', 'input' => 'hi', 'voice' => 'alloy'])->assertStatus(501);
+        $this->api('post', 'audio/speech', ['model' => 'tts-1', 'input' => 'hi', 'voice' => 'alloy'])->assertStatus(403); // no tts scope on this key
 
         $res = $this->transcribe(['model' => 'whisper-1', 'language' => 'si']);
         $res->assertStatus(200);
@@ -481,5 +482,54 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $this->assertTrue($svc->searchHub('qwen 7b', 'llm')[1]['registered']);
         putenv('HF_API_BASE');
         unset($_ENV['HF_API_BASE'], $_SERVER['HF_API_BASE']);
+    }
+
+    // ---- Text to speech ---------------------------------------------------------------------------
+
+    public function testSpeechWithApprovedVoicesOnly(): void
+    {
+        $this->db->table('api_keys')->update(['scopes' => 'chat,models,tts']);
+        $res = $this->api('post', 'audio/speech', ['model' => 'tts-1', 'input' => 'ආයුබෝවන් 250', 'voice' => 'alloy', 'speed' => 3]);
+        $res->assertStatus(200);
+        $r = $res->response();
+        $this->assertSame('RIFF-fake-audio', (string) $r->getBody());
+        $this->assertSame('audio/mpeg', explode(';', $r->getHeaderLine('Content-Type'))[0], 'mp3 by default, as OpenAI');
+        $this->assertSame(['espeak-si', '2'], [$r->getHeaderLine('X-Voice'), $r->getHeaderLine('X-Speed')], 'an OpenAI voice name means the default voice; speed kept in its range');
+        $this->assertSame('mp3', $this->sent()['body']['format']);
+        $log = $this->db->table('api_logs')->orderBy('id', 'DESC')->get()->getRow();
+        $this->assertSame(['openai/audio.speech', 'tts:espeak-si'], [$log->endpoint, $log->model]);
+        $this->assertGreaterThan(0, (int) $log->total_tokens, 'characters read count toward the quota');
+
+        $this->api('post', 'audio/speech', ['model' => 'tts-1', 'input' => 'x', 'voice' => 'studio-voice', 'response_format' => 'wav'])->assertStatus(200);
+        $this->assertSame('studio-voice', $this->sent()['body']['voice']);
+        $this->db->table('model_defaults')->insert(['task' => 'speech', 'application' => '', 'model_name' => 'tts:studio-voice']);
+        $this->api('post', 'audio/speech', ['model' => 'tts-1', 'input' => 'x', 'voice' => 'nova']);
+        $this->assertSame('studio-voice', $this->sent()['body']['voice'], 'the registry default voice');
+
+        $err = fn (array $b) => $this->body($this->api('post', 'audio/speech', $b + ['model' => 'tts-1', 'voice' => 'alloy']))['error'] ?? [];
+        $this->assertSame('voice_not_approved', $err(['input' => 'x', 'voice' => 'mms-sin'])['code']);
+        $this->assertSame('response_format', $err(['input' => 'x', 'response_format' => 'ogg'])['param']);
+        $this->assertSame('speed', $err(['input' => 'x', 'speed' => 9])['param']);
+        $this->assertSame('input', $err(['input' => ''])['param']);
+
+        $this->db->table('model_registry')->insert(['name' => 'tts:studio-voice', 'type' => 'tts', 'access_roles' => json_encode(['developer']), 'enabled' => 1]);
+        $this->api('post', 'audio/speech', ['model' => 'tts-1', 'input' => 'x', 'voice' => 'studio-voice'])->assertStatus(403);
+
+        $ids = array_column($this->body($this->api('get', 'models'))['data'], 'id');
+        $this->assertContains('tts:espeak-si', $ids);
+        $this->assertNotContains('tts:mms-sin', $ids, 'unapproved voices are not offered');
+        $this->assertNotContains('tts:studio-voice', $ids, 'restricted to another role');
+    }
+
+    public function testRegistryDiscoversVoices(): void
+    {
+        $svc = new \App\Services\ModelRegistryService();
+        $this->assertGreaterThanOrEqual(3, $svc->syncVoices());
+        $all = array_column($svc->all(), null, 'name');
+        $this->assertSame(['tts', 'tts', true], [$all['tts:espeak-si']['type'], $all['tts:espeak-si']['engine'], $all['tts:espeak-si']['enabled']]);
+        $this->assertFalse($all['tts:mms-sin']['enabled'], 'an unapproved voice is registered disabled');
+        $this->assertSame('deployed', $all['tts:espeak-si']['deployments'][0]['status']);
+        $this->assertSame('pending', $all['tts:mms-sin']['deployments'][0]['status']);
+        $this->assertStringContainsString('Not approved', $all['tts:mms-sin']['deployments'][0]['error'], 'the reason is shown');
     }
 }

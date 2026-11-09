@@ -65,7 +65,7 @@ class ModelRegistryService
      */
     public function discover(?int $userId = null): int
     {
-        $speech = $this->syncSpeech($userId);
+        $speech = $this->syncSpeech($userId) + $this->syncVoices($userId);
         $known = array_flip(array_column($this->db->table('model_registry')->select('name')->get()->getResultArray(), 'name'));
         $rows  = $this->db->table('models m')
             ->select('m.name, MAX(m.family) AS family, MAX(m.parameter_size) AS parameter_size, MAX(m.quantization) AS quantization, MAX(m.context_length) AS context_length, MAX(m.size_bytes) AS size_bytes, MAX(s.kind) AS kind')
@@ -117,6 +117,50 @@ class ModelRegistryService
             $added++;
         }
         return $added;
+    }
+
+    /**
+     * Register every text-to-speech voice the TTS service offers as `tts:<key>` (engine "tts"). A voice the
+     * service lists as not approved or withdrawn is registered disabled. Returns how many were added.
+     */
+    public function syncVoices(?int $userId = null): int
+    {
+        $now = date('Y-m-d H:i:s');
+        $added = 0;
+        foreach ((new TtsService())->voices() as $key => $v) {
+            $name = TtsService::registryName($key);
+            $usable = ! empty($v['approved']) && empty($v['revoked']);
+            if ($row = $this->findByName($name)) {
+                if (! $usable && (int) $row['enabled'] === 1) $this->db->table('model_registry')->where('id', $row['id'])->update(['enabled' => 0, 'updated_at' => $now]); // withdrawn: blocked
+                continue;
+            }
+            $this->db->table('model_registry')->insert([
+                'name' => $name, 'display_name' => $v['label'] ?? $key, 'type' => 'tts', 'engine' => 'tts', 'family' => (string) ($v['runtime'] ?? ''),
+                'capabilities' => json_encode(['audio_out']), 'enabled' => $usable ? 1 : 0,
+                'description' => mb_substr(trim(($v['quality'] ?? '') . ' Licence: ' . ($v['license'] ?? 'unknown') . '. Consent: ' . ($v['consent_ref'] ?? 'unknown') . '.'), 0, 255),
+                'version' => $v['language'] ?? null, 'created_by' => $userId, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+            $added++;
+        }
+        return $added;
+    }
+
+    /** Where voices run: the text-to-speech service on this server. */
+    private function voiceDeployments(): array
+    {
+        $tts = new TtsService();
+        $up  = $tts->health() !== null;
+        $out = [];
+        foreach ($tts->voices() as $key => $v) {
+            $status = ! $up || ! empty($v['revoked']) ? 'failed' : (empty($v['installed']) || empty($v['approved']) ? 'pending' : 'deployed');
+            $error  = ! $up ? 'The text-to-speech service is not answering.' : (! empty($v['revoked']) ? 'Withdrawn: blocked for new audio.'
+                : (empty($v['approved']) ? 'Not approved (licence or consent not verified).' : (empty($v['installed']) ? 'Voice files are not on this server.' : null)));
+            $out[TtsService::registryName($key)] = [[
+                'server_id' => 0, 'server' => 'AI Studio server', 'kind' => 'tts', 'server_status' => $up ? 'online' : 'offline',
+                'status' => $status, 'error' => $error, 'updated_at' => null, 'size_bytes' => null,
+            ]];
+        }
+        return $out;
     }
 
     /** Where speech models run: this server's speech service, and every node whose speech service is up. */
@@ -282,9 +326,10 @@ class ModelRegistryService
         $deps   = $this->deployments(array_column($rows, 'id'));
         $perf   = $this->performance(array_column($rows, 'name'));
         $speech = in_array('speech', array_column($rows, 'engine'), true) ? $this->speechDeployments() : [];
+        if (in_array('tts', array_column($rows, 'engine'), true)) $speech += $this->voiceDeployments();
         return array_map(function ($r) use ($deps, $perf, $speech) {
             $r = $this->publicRow($r);
-            $r['deployments'] = $r['engine'] === 'speech' ? ($speech[$r['name']] ?? []) : ($deps[$r['id']] ?? []);
+            $r['deployments'] = in_array($r['engine'], ['speech', 'tts'], true) ? ($speech[$r['name']] ?? []) : ($deps[$r['id']] ?? []);
             $r['performance'] = $perf[$r['name']] ?? null;
             $states = array_column($r['deployments'], 'status');
             $r['status'] = match (true) {

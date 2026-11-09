@@ -42,7 +42,7 @@ export const NAV: NavSection[] = [
   ] },
   { heading: 'AI Workspace', short: 'AI', icon: ChatBubbleLeftRightIcon, description: 'Chat, speech, prompts and agents.', items: [
     { label: 'Chat Playground', to: '/chat', icon: ChatBubbleLeftRightIcon, perm: 'chat.use', description: 'Talk to any model' },
-    { label: 'Speech to Text', to: '/speech', icon: MicrophoneIcon, perm: 'chat.use', description: 'Record or upload Sinhala speech and get the text' },
+    { label: 'Speech', to: '/speech', icon: MicrophoneIcon, perm: 'chat.use', description: 'Speech to text and text to speech, in Sinhala and English' },
     { label: 'Prompt Library', to: '/prompts', icon: DocumentTextIcon, perm: 'prompts.view', description: 'Reusable prompts and templates' },
     { label: 'Knowledge Base', to: '/knowledge', icon: BookOpenIcon, perm: 'knowledge.view', description: 'Documents for retrieval' },
     { label: 'AI Agents', to: '/agents', icon: BeakerIcon, perm: 'agents.view', description: 'Configured assistants' },
