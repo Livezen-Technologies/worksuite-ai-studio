@@ -16,7 +16,7 @@ class SchedulerService
         'health_check'   => ['Health check', 'Probe every Ollama node', 'health_check', 'every_5m'],
         'sync_models'    => ['Sync models', 'Reconcile installed models per node', 'sync_models', 'hourly'],
         'cleanup_logs'   => ['Cleanup logs', 'Prune API + audit logs older than 30 days', 'cleanup_logs', 'daily'],
-        'cleanup_cache'  => ['Clear cache', 'Flush the framework cache', 'cleanup_cache', 'daily'],
+        'cleanup_cache'  => ['Prune cache', 'Remove expired cache entries (rate-limit counters and routing state are kept)', 'cleanup_cache', 'daily'],
         'generate_report'=> ['Daily report', 'Roll up usage statistics', 'generate_report', 'daily'],
         'backup'         => ['Backup', 'Snapshot the database', 'backup', 'daily'],
         'training_pipelines' => ['Training pipelines', 'Start runs when data changes; retry or fail stalled jobs', 'training_pipelines', 'every_minute'],
@@ -101,7 +101,7 @@ class SchedulerService
             'sync_models'     => ['queued' => $queue->enqueue('sync_models')],
             'cleanup_logs'    => ['queued' => $queue->enqueue('cleanup_logs', ['days' => 30])],
             'generate_report' => (new AnalyticsService())->report(),
-            'cleanup_cache'   => ['flushed' => \Config\Services::cache()->clean()],
+            'cleanup_cache'   => $this->pruneCache(),
             'backup'          => $this->backup(),
             'training_pipelines' => (new TrainingPipelineService())->tick(),
             'storage_health' => (new StorageService())->checkAll(),
@@ -110,6 +110,21 @@ class SchedulerService
             'model_autoload' => (new ModelRegistryService())->autoload(),
             default           => throw new \RuntimeException("Unknown handler: {$handler}"),
         };
+    }
+
+    /**
+     * Remove only expired cache entries. A full flush would also reset the live rate-limit counters,
+     * failed-login throttles and gateway round-robin state, which are short-lived by design.
+     */
+    public function pruneCache(?\CodeIgniter\Cache\CacheInterface $cache = null): array
+    {
+        $cache ??= \Config\Services::cache();
+        $info  = $cache->getCacheInfo();
+        if (! is_array($info)) return ['pruned' => 0];
+        $before = count($info);
+        foreach (array_keys($info) as $key) $cache->get((string) $key); // reading an expired entry deletes it
+        $after = $cache->getCacheInfo();
+        return ['pruned' => $before - (is_array($after) ? count($after) : 0), 'kept' => is_array($after) ? count($after) : 0];
     }
 
     private function backup(): array

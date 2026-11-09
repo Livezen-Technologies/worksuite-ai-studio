@@ -64,6 +64,14 @@ groups:
         annotations:
           summary: "No successful backup restore test for over 8 days"
 
+      - alert: AiServiceDown
+        # blackbox probe of the speech (8096) and ML (8097) services' /health.
+        expr: probe_success{job="blackbox-services"} == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "The {{ $labels.service }} service is not answering /health"
+
       - alert: SiteDown
         expr: probe_success{job="blackbox-site"} == 0
         for: 3m
