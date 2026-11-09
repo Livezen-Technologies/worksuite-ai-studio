@@ -463,4 +463,23 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $q = $this->sent()['query'];
         $this->assertSame(['translate', 'small', 'auto'], [$q['task'], $q['model'], $q['language']], 'translation: multilingual model, any language in, English out');
     }
+
+    /** Live catalogue: Hugging Face hub search; GGUF repos run on Ollama as hf.co/<repo>. */
+    public function testHubSearchAndAdd(): void
+    {
+        putenv('HF_API_BASE=http://127.0.0.1:' . self::$port); $_ENV['HF_API_BASE'] = $_SERVER['HF_API_BASE'] = 'http://127.0.0.1:' . self::$port;
+        $svc = new \App\Services\ModelRegistryService();
+        $res = $svc->searchHub('qwen 7b', 'llm');
+        $this->assertSame(['search' => 'qwen 7b', 'filter' => 'text-generation'], array_intersect_key($this->sent()['query'], ['search' => 1, 'filter' => 1]));
+        $this->assertCount(2, $res, 'a malformed repo id is dropped');
+        $this->assertSame([['vllm'], 'Qwen/Qwen2.5-7B-Instruct', 'apache-2.0'], [$res[0]['engines'], $res[0]['hf'], $res[0]['license']]);
+        $this->assertSame([['ollama'], 'hf.co/bartowski/Qwen2.5-7B-Instruct-GGUF'], [$res[1]['engines'], $res[1]['ollama']]);
+
+        $row = $svc->addFromHub('bartowski/Qwen2.5-7B-Instruct-GGUF', 'llm', 'ollama');
+        $this->assertSame(['hf.co/bartowski/Qwen2.5-7B-Instruct-GGUF', 'ollama'], [$row['name'], $row['engine']]);
+        cache()->clean();
+        $this->assertTrue($svc->searchHub('qwen 7b', 'llm')[1]['registered']);
+        putenv('HF_API_BASE');
+        unset($_ENV['HF_API_BASE'], $_SERVER['HF_API_BASE']);
+    }
 }

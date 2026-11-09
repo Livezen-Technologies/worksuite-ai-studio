@@ -18,6 +18,8 @@ use App\Services\ModelRegistryService;
  *   POST   /api/registry/{id}/update             re-pull on every assigned node              (models.manage)
  *   GET    /api/registry/catalogue               curated models (LLM, embedding, vision, speech…) + registered/installed (models.view)
  *   POST   /api/registry/catalogue               {id, engine, server_ids?} register a catalogue model, deploy optionally (models.manage)
+ *   GET    /api/registry/hub?q=&type=                live search of the Hugging Face hub                (models.view)
+ *   POST   /api/registry/hub                     {repo, type, engine, server_ids?} register a hub model (models.manage)
  *   GET    /api/registry/defaults                default model per task / application        (models.view)
  *   PUT    /api/registry/defaults                {defaults:[{task, application?, model_name}]} (models.manage)
  */
@@ -149,6 +151,31 @@ class ModelRegistryController extends BaseApiController
             $res = $svc->deploy($row, $in['server_ids']);
             $msg .= $this->deployMessage($res);
         }
+        return $this->ok($this->row((int) $row['id']), $msg, 201);
+    }
+
+    public function hub()
+    {
+        if ($r = $this->requirePermission('models.view')) return $r;
+        try {
+            return $this->ok($this->svc()->searchHub((string) $this->request->getGet('q'), (string) ($this->request->getGet('type') ?: 'llm')));
+        } catch (\RuntimeException $e) {
+            return $this->failure($e->getMessage() . ' Check that this server can reach huggingface.co.', 502);
+        }
+    }
+
+    public function addFromHub()
+    {
+        if ($r = $this->requirePermission('models.manage')) return $r;
+        $in  = $this->input();
+        $svc = $this->svc();
+        try {
+            $row = $svc->addFromHub((string) ($in['repo'] ?? ''), (string) ($in['type'] ?? 'llm'), (string) ($in['engine'] ?? 'vllm'), $this->userId());
+        } catch (\InvalidArgumentException $e) {
+            return $this->failure($e->getMessage(), 422);
+        }
+        $msg = 'Added to the registry.';
+        if (! empty($in['server_ids']) && is_array($in['server_ids'])) $msg .= $this->deployMessage($svc->deploy($row, $in['server_ids']));
         return $this->ok($this->row((int) $row['id']), $msg, 201);
     }
 

@@ -165,6 +165,74 @@ class ModelRegistryService
         }, \App\Libraries\ModelCatalogue::all());
     }
 
+    /** Hugging Face pipeline tag per registry type, for hub searches. */
+    private const HUB_PIPELINES = [
+        'llm' => 'text-generation', 'embedding' => 'sentence-similarity', 'stt' => 'automatic-speech-recognition',
+        'tts' => 'text-to-speech', 'vision' => 'image-text-to-text', 'multimodal' => 'any-to-any',
+    ];
+
+    /**
+     * Live search of the Hugging Face model hub (cached 10 minutes). Each result says how each engine
+     * can run it: vLLM by repo id; Ollama by `hf.co/<repo>` when the repo ships GGUF files.
+     *
+     * @throws \RuntimeException when the hub cannot be reached
+     */
+    public function searchHub(string $q, string $type = 'llm'): array
+    {
+        $q = trim(mb_substr($q, 0, 100));
+        if ($q === '') return [];
+        $type = isset(self::HUB_PIPELINES[$type]) ? $type : 'llm';
+        $ck = 'hub_' . md5($type . '|' . mb_strtolower($q));
+        if (is_array($hit = cache($ck))) return $hit;
+        $base = rtrim((string) (env('HF_API_BASE') ?: 'https://huggingface.co'), '/');
+        $url  = $base . '/api/models?' . http_build_query(['search' => $q, 'filter' => self::HUB_PIPELINES[$type], 'sort' => 'downloads', 'direction' => -1, 'limit' => 24]);
+        $ch = curl_init($url);
+        curl_setopt_array($ch, UrlGuard::curlOpts($url) + [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 15, CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_HTTPHEADER => ['Accept: application/json', 'User-Agent: WorkSuite-AI-Studio']]);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        $rows = $code === 200 ? json_decode((string) $body, true) : null;
+        if (! is_array($rows)) throw new \RuntimeException('The Hugging Face hub could not be reached' . ($code ? " (HTTP {$code})" : '') . '.');
+        $registered = array_flip(array_column($this->db->table('model_registry')->select('name')->get()->getResultArray(), 'name'));
+        $out = [];
+        foreach ($rows as $m) {
+            $id = (string) ($m['id'] ?? $m['modelId'] ?? '');
+            if ($id === '' || ! preg_match('#^[\w.-]+/[\w.-]+$#', $id)) continue;
+            $tags = array_map('strval', (array) ($m['tags'] ?? []));
+            $gguf = in_array('gguf', $tags, true);
+            $license = null;
+            foreach ($tags as $t) if (str_starts_with($t, 'license:')) { $license = substr($t, 8); break; }
+            $engines = $type === 'stt' || $type === 'tts' ? [] : array_values(array_filter([$gguf ? 'ollama' : null, ! $gguf ? 'vllm' : null]));
+            $out[] = [
+                'id' => $id, 'name' => $id, 'type' => $type, 'downloads' => (int) ($m['downloads'] ?? 0), 'likes' => (int) ($m['likes'] ?? 0),
+                'license' => $license, 'gated' => ! empty($m['gated']), 'gguf' => $gguf, 'engines' => $engines,
+                'ollama' => $gguf ? 'hf.co/' . $id : null, 'hf' => $gguf ? null : $id,
+                'source' => 'https://huggingface.co/' . $id, 'updated_at' => $m['lastModified'] ?? null,
+                'registered' => isset($registered[$id]) || isset($registered['hf.co/' . $id]),
+            ];
+        }
+        cache()->save($ck, $out, 600);
+        return $out;
+    }
+
+    /** Register a hub search result for an engine (vllm → repo id; ollama → hf.co/<repo>, GGUF repos only). */
+    public function addFromHub(string $repo, string $type, string $engine, ?int $userId = null): array
+    {
+        if (! preg_match('#^[\w.-]+/[\w.-]+$#', $repo)) throw new \InvalidArgumentException('That is not a Hugging Face repository id.');
+        $name = $engine === 'ollama' ? 'hf.co/' . $repo : $repo;
+        if ($row = $this->findByName($name)) return $row;
+        $guess = self::infer($repo);
+        $now = date('Y-m-d H:i:s');
+        $this->db->table('model_registry')->insert([
+            'name' => $name, 'display_name' => $repo, 'type' => in_array($type, self::TYPES, true) ? $type : $guess['type'],
+            'capabilities' => json_encode($guess['capabilities']), 'engine' => $engine === 'ollama' ? 'ollama' : 'vllm',
+            'source' => 'https://huggingface.co/' . $repo, 'version' => 'latest', 'description' => 'From the Hugging Face hub.',
+            'created_by' => $userId, 'created_at' => $now, 'updated_at' => $now,
+        ]);
+        return $this->findByName($name);
+    }
+
     /**
      * Register a catalogue model for an engine (ollama → its Ollama tag; vllm / llamacpp → its Hugging
      * Face id; speech → whisper:<key>) and return the registry row. Existing entries are returned as-is.

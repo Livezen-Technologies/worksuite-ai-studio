@@ -3,6 +3,22 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.36.0] — 2026-11-09 — Node controls, key rotation, quotas, hub search and queue health
+- **Node controls**: Restart, Update Ollama and Shut down now work. The node agent (1.7.0) carries them out through a small root-owned helper that does only those three things (the installer prints the one-time setup commands). The server shows the result.
+- **Key rotation**:
+  - Rotating keeps the old secret working for the grace period you choose (up to 7 days), so apps switch without downtime.
+  - Owners are reminded daily when a key is due.
+  - Keys can be set to turn off a week after rotation is due.
+- **Quotas you can see**: every gateway answer reports requests and tokens left. Keys can cap reply length, and owners hear at 80 % of a quota.
+- **Routing**: requests go first to nodes that already have the model in memory, and busy nodes are tried last. Node status stays current even when the queue worker is down, and a status that is out of date shows as unknown.
+- **Gateway**: up to 8 answers per request (n), speech translation to English (`/audio/translations`), and the caller's `user` field is recorded. logprobs and text to speech say plainly that they are not available.
+- **Hugging Face search** on the Catalogue tab. GGUF models run on Ollama nodes as `hf.co/<repo>`, others on vLLM.
+- **Queue page**: shows when the worker is not running, lists stuck and recently failed jobs, and resets stuck jobs. Cancelling a deployment stops its download.
+- **Ops and tests**:
+  - The daily cache job keeps rate-limit counters.
+  - The speech and ML services are monitored.
+  - The whole test suite also runs on MySQL 8 in CI.
+
 ## [1.35.0] — 2026-11-09 — Audit fixes: security, deploys, background jobs and UI
 - **API keys**: you can give your own keys everyday scopes (chat, embeddings, models, speech to text, classify) and up to 600 requests a minute. Download scopes, higher limits and unlocking need an API key administrator. When an administrator changes someone's key, that person can then only rename or disable it. Turning a key off ends its access tokens, so they don't return when it is turned back on.
 - **Safer outbound calls**: node and provider addresses are re-checked on every call, and every IPv6 spelling of an internal address is refused.

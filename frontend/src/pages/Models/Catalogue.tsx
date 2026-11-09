@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BookOpenIcon, CheckCircleIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { BookOpenIcon, CheckCircleIcon, MagnifyingGlassIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { Badge, Button, Card, Checkbox, EmptyState, FormModal, SearchInput, Select, SkeletonRows, Toolbar, useToast, type BadgeTone } from '../../components/ui';
 import { get, post } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
@@ -69,6 +69,50 @@ function AddModal({ entry, servers, onClose }: { entry: Entry; servers: Server[]
   );
 }
 
+interface HubModel { id: string; type: ModelType; downloads: number; likes: number; license: string | null; gated: boolean; gguf: boolean; engines: Engine[]; source: string; registered: boolean }
+
+/** Live search of the Hugging Face hub: anything not in the curated list. */
+function HubSearch({ q, type, manage }: { q: string; type: string; manage: boolean }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [term, setTerm] = useState<string | null>(null);
+  const hub = useQuery({ queryKey: ['registry', 'hub', term, type], queryFn: () => get<HubModel[]>('/registry/hub', { q: term ?? '', type: type || 'llm' }), enabled: !!term, retry: false });
+  const add = useMutation({
+    mutationFn: (m: HubModel) => post('/registry/hub', { repo: m.id, type: m.type, engine: m.engines[0] ?? 'vllm' }),
+    onSuccess: (_r, m) => { toast.success('Added to the registry', m.gguf ? `Ollama nodes pull it as hf.co/${m.id}.` : 'Start a vLLM node with this model, then deploy it from the Registry tab.'); qc.invalidateQueries({ queryKey: ['registry'] }); },
+    onError: (e) => toast.error(e),
+  });
+  return (
+    <div className="border-t border-slate-200 p-4 sm:p-6 dark:border-white/10">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-medium text-slate-900 dark:text-white">Not in the list?</div>
+          <div className="text-xs text-slate-500 dark:text-slate-400">Search the Hugging Face hub. GGUF repositories run on Ollama nodes; others on vLLM.</div>
+        </div>
+        <Button size="sm" icon={MagnifyingGlassIcon} disabled={!q.trim()} loading={hub.isFetching} onClick={() => setTerm(q.trim())}>
+          {q.trim() ? `Search Hugging Face for “${q.trim()}”` : 'Type a search above'}
+        </Button>
+      </div>
+      {hub.error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{(hub.error as Error).message}</p>}
+      {hub.data && (hub.data.length ? (
+        <ul className="mt-3 divide-y divide-slate-100 dark:divide-white/5">
+          {hub.data.map((m) => (
+            <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
+              <div className="min-w-0">
+                <a href={m.source} target="_blank" rel="noreferrer noopener" className="font-mono text-sm font-medium break-all text-slate-900 hover:text-brand-600 dark:text-white dark:hover:text-blue-400">{m.id}</a>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  {m.downloads.toLocaleString()} downloads · {m.likes.toLocaleString()} likes{m.license ? ` · ${m.license}` : ''}{m.gated ? ' · gated (needs a token)' : ''} · {m.gguf ? 'Ollama (GGUF)' : 'vLLM'}
+                </div>
+              </div>
+              {m.registered ? <Badge tone="green">In registry</Badge> : manage && m.engines.length > 0 && <Button size="sm" icon={PlusIcon} loading={add.isPending && add.variables?.id === m.id} onClick={() => add.mutate(m)}>Add</Button>}
+            </li>
+          ))}
+        </ul>
+      ) : <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Nothing on the hub matches that search.</p>)}
+    </div>
+  );
+}
+
 export default function Catalogue() {
   const manage = useAuth().can('models.manage');
   const [q, setQ] = useState('');
@@ -124,6 +168,7 @@ export default function Catalogue() {
           ))}
         </ul>
       )}
+      <HubSearch q={q} type={type} manage={manage} />
       {adding && <AddModal entry={adding} servers={servers.data ?? []} onClose={() => setAdding(null)} />}
     </Card>
   );

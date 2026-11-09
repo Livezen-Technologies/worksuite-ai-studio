@@ -91,6 +91,8 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->get('registry/defaults', 'ModelRegistryController::defaults');
     $routes->get('registry/catalogue', 'ModelRegistryController::catalogue');
     $routes->post('registry/catalogue', 'ModelRegistryController::addFromCatalogue');
+    $routes->get('registry/hub', 'ModelRegistryController::hub');
+    $routes->post('registry/hub', 'ModelRegistryController::addFromHub');
     $routes->put('registry/defaults', 'ModelRegistryController::saveDefaults');
     $routes->post('registry', 'ModelRegistryController::create');
     $routes->post('registry/discover', 'ModelRegistryController::discover');

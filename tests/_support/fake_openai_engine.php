@@ -68,6 +68,14 @@ if ($path === '/v1/models') {
 } elseif (str_starts_with($path, '/v1beta/models/')) { // Gemini
     $parts = ! empty($in['tools']) ? [['functionCall' => ['name' => 'get_weather', 'args' => ['city' => 'Jaffna']]]] : [['text' => 'Noted.']];
     $sse([['candidates' => [['content' => ['parts' => $parts]]], 'usageMetadata' => ['promptTokenCount' => 9, 'candidatesTokenCount' => 3]]]);
+} elseif ($path === '/api/models') { // Hugging Face hub search
+    if ($log) file_put_contents($log, json_encode(['path' => $path, 'query' => $_GET]));
+    header('Content-Type: application/json');
+    echo json_encode([
+        ['id' => 'Qwen/Qwen2.5-7B-Instruct', 'downloads' => 900000, 'likes' => 800, 'tags' => ['transformers', 'license:apache-2.0'], 'pipeline_tag' => 'text-generation'],
+        ['id' => 'bartowski/Qwen2.5-7B-Instruct-GGUF', 'downloads' => 300000, 'likes' => 90, 'tags' => ['gguf', 'license:apache-2.0'], 'gated' => false],
+        ['id' => '../../etc/passwd', 'downloads' => 1],
+    ]);
 } elseif ($path === '/health') { // the speech service (deploy/asr/asr_service.py)
     header('Content-Type: application/json');
     echo json_encode(['ok' => true, 'model' => 'Whisper Small · Sinhala', 'models' => [
