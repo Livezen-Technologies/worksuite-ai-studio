@@ -14,7 +14,7 @@ interface ApiKey {
   allowed_models: string[] | null; allowed_ips: string[] | null; daily_token_limit: number | null; monthly_token_limit: number | null;
   rate_limit_per_min: number | null; status: 'active' | 'disabled' | 'revoked'; state?: 'active' | 'disabled' | 'revoked' | 'expired';
   key_type?: KeyType; application?: string | null; organization?: string | null; description?: string | null;
-  rotation_days?: number | null; rotated_at?: string | null; revoked_at?: string | null; rotation_due?: boolean; requests_30d?: number; expires_at?: string | null; last_used_at?: string | null;
+  rotation_days?: number | null; rotated_at?: string | null; revoked_at?: string | null; rotation_due?: boolean; requests_30d?: number; admin_locked?: number | boolean; expires_at?: string | null; last_used_at?: string | null;
   created_at?: string | null; tokens_30d?: number; secret?: string;
 }
 
@@ -26,6 +26,9 @@ const KEY_TYPES: { value: KeyType; label: string; admin?: boolean }[] = [
   { value: 'service_account', label: 'Service account', admin: true },
 ];
 const typeLabel = (t?: KeyType) => KEY_TYPES.find((x) => x.value === t)?.label ?? 'Personal';
+
+/** Scopes only an API key administrator may grant (they expose datasets and model files). */
+const ADMIN_SCOPES = ['download_models', 'download_datasets'];
 
 const SCOPES = [
   { value: 'chat', label: 'Chat', hint: 'Also covers translate and summarize' },
@@ -106,6 +109,8 @@ function KeyForm({ open, onClose, editing, onCreated }: { open: boolean; onClose
   const toast = useToast();
   const { can } = useAuth();
   const keyAdmin = can('apikeys.admin');
+  // A key an administrator has restricted: its owner may only rename or disable it.
+  const locked = !keyAdmin && !!editing && Number(editing.admin_locked ?? 0) === 1;
   const [f, setF] = useState<FormState>(blank);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [lastOpen, setLastOpen] = useState(false);
@@ -152,17 +157,18 @@ function KeyForm({ open, onClose, editing, onCreated }: { open: boolean; onClose
           {f.key_type === 'organization' && <Input label="Organization" placeholder="e.g. Finance department" value={f.organization} onChange={(e) => set('organization', e.target.value)} />}
         </div>
         <Input label="Description" placeholder="Optional" value={f.description} onChange={(e) => set('description', e.target.value)} />
+        {locked && <Alert tone="info" title="Managed by an administrator">An administrator has set this key’s access and limits. You can rename it or turn it off; ask an administrator for other changes.</Alert>}
         <FormSection title="Scopes" description="Which gateway endpoints this key may call.">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {SCOPES.map((s) => (
-              <Checkbox key={s.value} checked={f.scopes.includes(s.value)} onChange={() => set('scopes', toggleIn(f.scopes, s.value))}
+            {SCOPES.filter((s) => keyAdmin || !ADMIN_SCOPES.includes(s.value) || f.scopes.includes(s.value)).map((s) => (
+              <Checkbox key={s.value} disabled={!keyAdmin && (locked || ADMIN_SCOPES.includes(s.value))} checked={f.scopes.includes(s.value)} onChange={() => set('scopes', toggleIn(f.scopes, s.value))}
                 label={<span>{s.label}{s.hint && <span className="block text-xs text-slate-500 dark:text-slate-400">{s.hint}</span>}</span>} />
             ))}
           </div>
         </FormSection>
         <FormSection title="Limits" description="Leave a quota empty for no limit.">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Input label="Requests / min" type="number" min={0} value={f.rate_limit_per_min} onChange={(e) => set('rate_limit_per_min', e.target.value)} error={errors.rate_limit_per_min} />
+            <Input label="Requests / min" type="number" min={1} max={keyAdmin ? 100000 : 600} disabled={locked} hint={keyAdmin ? undefined : 'Up to 600.'} value={f.rate_limit_per_min} onChange={(e) => set('rate_limit_per_min', e.target.value)} error={errors.rate_limit_per_min} />
             <Input label="Daily tokens" type="number" min={0} placeholder="Unlimited" value={f.daily_token_limit} onChange={(e) => set('daily_token_limit', e.target.value)} error={errors.daily_token_limit} />
             <Input label="Monthly tokens" type="number" min={0} placeholder="Unlimited" value={f.monthly_token_limit} onChange={(e) => set('monthly_token_limit', e.target.value)} error={errors.monthly_token_limit} />
           </div>

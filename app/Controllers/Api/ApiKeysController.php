@@ -26,6 +26,12 @@ class ApiKeysController extends BaseApiController
     /** Gateway scopes a key can carry. download_* open /api/v1/catalog and the file / dataset downloads. */
     public const SCOPES = ['chat', 'generate', 'embeddings', 'models', 'transcribe', 'download_models', 'download_datasets', 'classify'];
 
+    /** Scopes a user may give their own keys. Download scopes expose datasets and model files: admins only. */
+    public const SELF_SCOPES = ['chat', 'generate', 'embeddings', 'models', 'transcribe', 'classify'];
+    /** Highest per-minute rate a non-admin may set on their own key. */
+    public const SELF_MAX_RATE = 600;
+    public const DEFAULT_RATE  = 60;
+
     public const TYPES       = ['personal', 'application', 'organization', 'service_account'];
     public const ADMIN_TYPES = ['organization', 'service_account'];
 
@@ -79,6 +85,7 @@ class ApiKeysController extends BaseApiController
             return $this->failure('An application name is required for application keys.', 422);
         }
 
+        if ($err = $this->policyError($in, null)) return $err;
         $m    = $this->keys();
         $cred = $m->mint();
         $id   = $m->insert($this->fields($in, [
@@ -105,8 +112,19 @@ class ApiKeysController extends BaseApiController
         if (isset($in['status']) && ! in_array($in['status'], ['active', 'disabled'], true)) {
             return $this->failure('Status must be active or disabled; use revoke to revoke a key.', 422);
         }
-        $m = $this->keys();
-        $m->update((int) $id, $this->fields($in));
+        if ($err = $this->policyError($in, $row)) return $err;
+        $m   = $this->keys();
+        $upd = $this->fields($in);
+        if ($this->isKeyAdmin()) {
+            // An admin's change to someone else's key locks it, so the owner cannot undo the restriction.
+            if (array_key_exists('admin_locked', $in)) $upd['admin_locked'] = ! empty($in['admin_locked']) ? 1 : 0;
+            elseif ((int) ($row['user_id'] ?? 0) !== $this->userId()) $upd['admin_locked'] = 1;
+        }
+        // Disabling ends every access token issued so far; re-enabling must not bring them back.
+        if (($upd['status'] ?? null) === 'disabled' && ($row['status'] ?? '') !== 'disabled') {
+            $upd['token_version'] = (int) ($row['token_version'] ?? 0) + 1;
+        }
+        $m->update((int) $id, $upd);
         return $this->ok($m->publicRow($m->find((int) $id)), 'API key updated.');
     }
 
@@ -189,6 +207,39 @@ class ApiKeysController extends BaseApiController
         return $this->ok(null, 'API key deleted.');
     }
 
+    /**
+     * What a non-admin may change. Returns a 403/422 response, or null when allowed.
+     * - scopes: only SELF_SCOPES (on a locked key: unchanged);
+     * - rate limit: at most SELF_MAX_RATE;
+     * - a key an admin has locked: only name, description and application, or disabling it.
+     */
+    private function policyError(array $in, ?array $row)
+    {
+        if (array_key_exists('scopes', $in) && ! is_array($in['scopes'])) return $this->failure('scopes must be a list.', 422, ['scopes' => 'Must be a list.']);
+        if (array_key_exists('rate_limit_per_min', $in) && $in['rate_limit_per_min'] !== '' && $in['rate_limit_per_min'] !== null
+            && (! is_numeric($in['rate_limit_per_min']) || (int) $in['rate_limit_per_min'] < 1 || (int) $in['rate_limit_per_min'] > 100000)) {
+            return $this->failure('Requests per minute must be a number from 1 to 100000.', 422, ['rate_limit_per_min' => 'From 1 to 100000.']);
+        }
+        if ($this->isKeyAdmin()) return null;
+        if (array_key_exists('admin_locked', $in)) return $this->failure('Only API key administrators can lock or unlock keys.', 403);
+        if ($row && (int) ($row['admin_locked'] ?? 0) === 1) {
+            $allowed = ['name', 'description', 'application'];
+            foreach (array_keys($in) as $f) {
+                if (in_array($f, $allowed, true) || ($f === 'status' && $in[$f] === 'disabled') || ($f === 'status' && $in[$f] === ($row['status'] ?? null))) continue;
+                if ($f === 'key_type') continue;
+                return $this->failure('An administrator manages this key’s limits and access. You can rename or disable it; ask an administrator for other changes.', 403);
+            }
+            return null;
+        }
+        if (is_array($in['scopes'] ?? null) && ($extra = array_diff(array_intersect($in['scopes'], self::SCOPES), self::SELF_SCOPES))) {
+            return $this->failure('Only an API key administrator can grant: ' . implode(', ', $extra) . '.', 403, ['scopes' => 'Needs an administrator.']);
+        }
+        if (isset($in['rate_limit_per_min']) && is_numeric($in['rate_limit_per_min']) && (int) $in['rate_limit_per_min'] > self::SELF_MAX_RATE) {
+            return $this->failure('You can set up to ' . self::SELF_MAX_RATE . ' requests per minute; ask an administrator for more.', 403, ['rate_limit_per_min' => 'At most ' . self::SELF_MAX_RATE . '.']);
+        }
+        return null;
+    }
+
     /** Whitelist editable fields; JSON-encode array fields. */
     private function fields(array $in, array $base = []): array
     {
@@ -199,6 +250,10 @@ class ApiKeysController extends BaseApiController
                 $out[$f] = $in[$f] === '' ? null : $in[$f];
             }
         }
+        if (array_key_exists('rate_limit_per_min', $out)) { // empty → the default; never 0 (that would mean 1 request a minute)
+            $out['rate_limit_per_min'] = $out['rate_limit_per_min'] === null ? self::DEFAULT_RATE : max(1, min(100000, (int) $out['rate_limit_per_min']));
+        }
+        if (array_key_exists('scopes', $out) && ! is_array($out['scopes'])) unset($out['scopes']);
         if (is_array($out['scopes'] ?? null)) { // only known scopes are stored
             $out['scopes'] = implode(',', array_values(array_intersect($out['scopes'], self::SCOPES)));
         }

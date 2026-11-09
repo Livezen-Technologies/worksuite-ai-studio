@@ -115,6 +115,9 @@ class OpenAIController extends BaseApiController
             return $this->failLogged('audio.transcriptions', $model, null, 403, "The model '{$model}' is not available to this key's owner.", 'model_not_allowed');
         }
 
+        if ($q = (new ApiGatewayService())->quotaError($key)) {
+            return $this->failLogged('audio.transcriptions', $model, null, 429, $q, 'insufficient_quota');
+        }
         $lang = strtolower(trim((string) ($this->request->getPost('language') ?? '')));
         $lang = match (true) {
             $lang === '' => 'auto', in_array($lang, ['si', 'en', 'mix'], true) => $lang, str_starts_with($lang, 'si') => 'si', str_starts_with($lang, 'en') => 'en', default => 'auto',

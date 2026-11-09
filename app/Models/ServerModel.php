@@ -35,7 +35,7 @@ class ServerModel extends Model
         $row['metrics_fresh'] = ! empty($row['metrics_at']) && strtotime($row['metrics_at']) >= time() - \App\Services\NodeTelemetryService::STALE_SECONDS;
         $row['self_hosted']   = ! (new \App\Services\ProviderService())->isExternal((string) ($row['kind'] ?? 'ollama'));
         $row['is_enabled'] = (int) ($row['is_enabled'] ?? 1) === 1;
-        unset($row['auth_token'], $row['deleted_at'], $row['ssh_public_key']);
+        unset($row['auth_token'], $row['deleted_at'], $row['ssh_public_key'], $row['agent_token_hash']);
         return $row;
     }
 }

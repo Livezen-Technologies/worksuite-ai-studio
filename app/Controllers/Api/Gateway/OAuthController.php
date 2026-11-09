@@ -28,7 +28,9 @@ class OAuthController extends BaseApiController
         if (! $id || ! $secret) {
             return $this->oauthError('invalid_client', 'client_id and client_secret are required.', 401);
         }
-        if (service('throttler')->check('oauth_' . md5($id . '|' . $this->request->getIPAddress()), 20, MINUTE) === false) {
+        $ip = $this->request->getIPAddress(); // per IP as well as per key and IP: rotating key ids gains nothing
+        if (service('throttler')->check('oauth_ip_' . md5($ip), 60, MINUTE) === false
+            || service('throttler')->check('oauth_' . md5($id . '|' . $ip), 20, MINUTE) === false) {
             return $this->oauthError('slow_down', 'Too many token requests. Try again shortly.', 429);
         }
         $row = (new ApiKeyModel())->findByKey($id);

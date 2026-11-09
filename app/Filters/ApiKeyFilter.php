@@ -43,8 +43,15 @@ class ApiKeyFilter implements FilterInterface
                     ? 'Invalid API key. Use "key:secret" (ohub_…:sk_…) or an access token as the Bearer value.'
                     : 'Missing API key or secret.', 401);
             }
+            // Failed checks are throttled per IP before bcrypt runs: key ids are not secret, and each
+            // wrong secret costs a password_verify (audit S6).
+            $bucket = 'gwfail_' . md5($request->getIPAddress());
+            if ((int) cache($bucket) >= 30) {
+                return $this->deny($response, 'Too many failed attempts. Try again in a minute.', 429);
+            }
             $row = $model->findByKey($key);
             if (! $row || ! password_verify($secret, $row['secret_hash'])) {
+                cache()->save($bucket, (int) cache($bucket) + 1, 60);
                 return $this->deny($response, 'Invalid API credentials.', 401);
             }
         }

@@ -646,6 +646,7 @@ class ProviderService
     private function sse(string $url, array $headers, array $body, callable $onJson): void
     {
         $ch     = curl_init($url);
+        curl_setopt_array($ch, UrlGuard::curlOpts($url));
         $buffer = '';
         $rawHead = '';
         curl_setopt_array($ch, [
@@ -710,6 +711,7 @@ class ProviderService
     private function httpJson(string $method, string $url, array $headers, ?array $body): array
     {
         $ch = curl_init($url);
+        curl_setopt_array($ch, UrlGuard::curlOpts($url));
         $headers[] = 'Accept: application/json';
         $opts = [
             CURLOPT_CUSTOMREQUEST   => $method,

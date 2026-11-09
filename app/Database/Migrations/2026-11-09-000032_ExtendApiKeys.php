@@ -21,7 +21,7 @@ class ExtendApiKeys extends Migration
 
     public function up(): void
     {
-        $this->forge->addColumn('api_keys', [
+        $cols = [
             'key_type'       => ['type' => 'VARCHAR', 'constraint' => 24, 'default' => 'personal', 'null' => false],
             'application'    => ['type' => 'VARCHAR', 'constraint' => 120, 'null' => true],
             'organization'   => ['type' => 'VARCHAR', 'constraint' => 120, 'null' => true],
@@ -30,7 +30,12 @@ class ExtendApiKeys extends Migration
             'rotated_at'     => ['type' => 'DATETIME', 'null' => true],
             'revoked_at'     => ['type' => 'DATETIME', 'null' => true],
             'token_version'  => ['type' => 'INT', 'unsigned' => true, 'default' => 0, 'null' => false],
-        ]);
+            // set when an admin edits someone else's key: the owner may then only rename or disable it
+            'admin_locked'   => ['type' => 'TINYINT', 'constraint' => 1, 'default' => 0, 'null' => false],
+        ];
+        // Only missing columns: a run that died partway can be repeated (MySQL DDL is not transactional).
+        $cols = array_filter($cols, fn ($c, $name) => ! $this->db->fieldExists($name, 'api_keys'), ARRAY_FILTER_USE_BOTH);
+        if ($cols) $this->forge->addColumn('api_keys', $cols);
         if ($this->db->DBDriver === 'MySQLi') { // allow revoked / expired
             $this->forge->modifyColumn('api_keys', ['status' => ['name' => 'status', 'type' => 'VARCHAR', 'constraint' => 16, 'default' => 'active']]);
         }
@@ -59,6 +64,6 @@ class ExtendApiKeys extends Migration
             $this->db->table('role_permissions')->whereIn('permission_id', $ids)->delete();
             $this->db->table('permissions')->whereIn('id', $ids)->delete();
         }
-        $this->forge->dropColumn('api_keys', ['key_type', 'application', 'organization', 'description', 'rotation_days', 'rotated_at', 'revoked_at', 'token_version']);
+        $this->forge->dropColumn('api_keys', ['key_type', 'application', 'organization', 'description', 'rotation_days', 'rotated_at', 'revoked_at', 'token_version', 'admin_locked']);
     }
 }

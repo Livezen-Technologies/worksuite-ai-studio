@@ -84,15 +84,43 @@ class UrlGuard
             return false;
         }
         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-            $ip = strtolower($ip);
-            if ($ip === '::' || str_starts_with($ip, 'fe8') || str_starts_with($ip, 'fe9') || str_starts_with($ip, 'fea') || str_starts_with($ip, 'feb') || str_starts_with($ip, 'ff') || $ip === 'fd00:ec2::254') {
-                return true;
-            }
-            if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/', $ip, $m)) {
-                return self::blockedIp($m[1]);
+            // Compare raw bytes, so every spelling of an address (hex or dotted mapped form, zero
+            // compression, leading zeros) is judged the same.
+            $b = inet_pton($ip);
+            if ($b === false || strlen($b) !== 16) return true;
+            if ($b === str_repeat("\0", 16)) return true;                                     // ::
+            if ($b === str_repeat("\0", 15) . "\x01") return false;                           // ::1 loopback: local nodes
+            $first = ord($b[0]); $second = ord($b[1]);
+            if ($first === 0xfe && ($second & 0xc0) === 0x80) return true;                      // fe80::/10 link-local
+            if ($first === 0xfe && ($second & 0xc0) === 0xc0) return true;                      // fec0::/10 site-local (deprecated)
+            if ($first === 0xff) return true;                                                   // multicast
+            if ($b === inet_pton('fd00:ec2::254')) return true;                                 // AWS metadata over IPv6
+            // IPv4 carried inside IPv6: mapped ::ffff:0:0/96, compatible ::/96, NAT64 64:ff9b::/96.
+            // The embedded IPv4 gets the IPv4 rules (so a mapped 169.254.169.254 is refused).
+            $prefix = substr($b, 0, 12);
+            if ($prefix === str_repeat("\0", 10) . "\xff\xff" || $prefix === str_repeat("\0", 12) || $prefix === "\x00\x64\xff\x9b" . str_repeat("\0", 8)) {
+                return self::blockedIp(inet_ntop(substr($b, 12)));
             }
         }
         return false;
+    }
+
+    /**
+     * curl options that re-vet $url now and pin the connection to the checked address. Used on
+     * every call to a node or provider, so a hostname re-pointed at an internal address after it
+     * was saved (DNS rebinding) is refused. A host that does not resolve is left for curl to fail.
+     *
+     * @throws \InvalidArgumentException when the address is refused
+     */
+    public static function curlOpts(string $url): array
+    {
+        try {
+            $resolve = self::pin($url);
+        } catch (\InvalidArgumentException $e) {
+            if ($e->getMessage() === 'That host does not resolve.') return [];
+            throw $e;
+        }
+        return [CURLOPT_RESOLVE => $resolve, CURLOPT_FOLLOWLOCATION => false];
     }
 
     /** @return string[]|null */

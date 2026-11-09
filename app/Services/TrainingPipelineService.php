@@ -264,7 +264,8 @@ class TrainingPipelineService
         if (! empty($in['probe'])) return ['action' => 'idle', 'why' => 'probe'];   // the installer's token check never takes work
         $speech = $this->speech($server, $in) + $this->storage($server, $in);   // GPU speech service + storage helper on the node
         if ($busy) {
-            $job = $this->db->table('training_jobs')->where('id', $busy)->get()->getRowArray();
+            // only this node's own job: another node's token must not keep a job "alive" (audit S3)
+            $job = $this->db->table('training_jobs')->where(['id' => $busy, 'server_id' => $server['id']])->get()->getRowArray();
             if (! $job || (int) $job['cancel_requested'] === 1 || in_array($job['status'], ['cancelled', 'failed'], true)) return ['action' => 'stop', 'job_id' => $busy] + $speech;
             // the process is alive on the node: that counts as a sign of life (first-run setup can be long and quiet)
             if ($job['status'] === 'running') $this->db->table('training_jobs')->where('id', $busy)->update(['last_report_at' => $now]);
