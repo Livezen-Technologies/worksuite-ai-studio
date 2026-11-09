@@ -15,7 +15,9 @@ use App\Services\ProviderService;
  *
  *   GET  /models                 models this key may use (OpenAI list format, with type and capabilities)
  *   GET  /models/{id}            one model
- *   POST /chat/completions       chat; `stream: true` for server-sent events; text + image (data: URL) content
+ *   POST /chat/completions       chat; `stream: true` for server-sent events; text + image (data: URL) content;
+ *                                tools / tool_choice (function calling) on every engine: OpenAI-compatible, Ollama,
+ *                                Anthropic and Gemini — tool calls come back in the OpenAI format
  *   POST /completions            legacy text completion (also streams)
  *   POST /embeddings             embeddings; float or base64 encoding
  *
@@ -78,8 +80,14 @@ class OpenAIController extends BaseApiController
     {
         $in = $this->body();
         if ($in === null) return $this->error('The request body must be JSON.', 400);
-        if (! empty($in['tools']) || ! empty($in['functions'])) {
-            return $this->error('Tool and function calling are not supported by this gateway yet.', 400, 'unsupported_parameter', 'tools');
+        if (! empty($in['functions']) || isset($in['function_call'])) {
+            return $this->error('The legacy functions / function_call parameters are not supported; use tools and tool_choice.', 400, 'unsupported_parameter', 'functions');
+        }
+        try {
+            $tools = ProviderService::normalizeTools(is_array($in['tools'] ?? null) ? $in['tools'] : []);
+            ProviderService::normalizeToolChoice($in['tool_choice'] ?? null, $tools);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 400, 'invalid_value', isset($in['tool_choice']) && ! str_starts_with($e->getMessage(), 'tools') ? 'tool_choice' : 'tools');
         }
         if ((int) ($in['n'] ?? 1) > 1) return $this->error('Only n=1 is supported.', 400, 'unsupported_parameter', 'n');
         try {
@@ -87,7 +95,8 @@ class OpenAIController extends BaseApiController
         } catch (\InvalidArgumentException $e) {
             return $this->error($e->getMessage(), 400, 'invalid_value', 'messages');
         }
-        return $this->run('chat', 'chat.completions', $in, $messages, (bool) ($in['stream'] ?? false), 'chat.completion');
+        return $this->run('chat', 'chat.completions', $in, $messages, (bool) ($in['stream'] ?? false), 'chat.completion',
+            $in['tools'] ?? [], $in['tool_choice'] ?? null);
     }
 
     public function completions()
@@ -106,7 +115,7 @@ class OpenAIController extends BaseApiController
     /**
      * Shared chat / completion pipeline. $object is "chat.completion" or "text_completion".
      */
-    private function run(string $scope, string $endpoint, array $in, array $messages, bool $stream, string $object)
+    private function run(string $scope, string $endpoint, array $in, array $messages, bool $stream, string $object, array $tools = [], $toolChoice = null)
     {
         $this->begin();
         [$model, $err] = $this->resolveModel($scope, $endpoint, $in);
@@ -150,7 +159,7 @@ class OpenAIController extends BaseApiController
         $lastErr = 'Every node serving this model failed.';
         foreach ($candidates as $server) {
             try {
-                $final = (new ProviderService())->chat($server, $model, $messages, ['params' => $params], $onDelta);
+                $final = (new ProviderService())->chat($server, $model, $messages, ['params' => $params, 'tools' => $tools, 'tool_choice' => $toolChoice], $onDelta);
             } catch (\Throwable $e) {
                 $lastErr = $this->publicError($e, 'The model node failed.');
                 if ($started) { // mid-stream: cannot switch nodes any more; end the stream with an error event
@@ -165,11 +174,14 @@ class OpenAIController extends BaseApiController
             $pt = $final['prompt_tokens'] ?? null;
             $ct = $final['completion_tokens'] ?? null;
             $usage  = ['prompt_tokens' => (int) $pt, 'completion_tokens' => (int) $ct, 'total_tokens' => (int) $pt + (int) $ct];
-            $finish = (isset($params['max_tokens']) && $ct !== null && $ct >= $params['max_tokens']) ? 'length' : 'stop';
+            $calls  = array_map(static fn ($tc, $i) => ['index' => $i, 'id' => $tc['id'], 'type' => 'function', 'function' => ['name' => $tc['name'], 'arguments' => $tc['arguments']]],
+                $final['tool_calls'] ?? [], array_keys($final['tool_calls'] ?? []));
+            $finish = $calls ? 'tool_calls' : ((isset($params['max_tokens']) && $ct !== null && $ct >= $params['max_tokens']) ? 'length' : 'stop');
             $this->logCall($endpoint, $model, (int) $server['id'], 200, $pt, $ct);
 
             if ($stream) {
-                if (! $started) { $this->openStream(); if ($object === 'chat.completion') $chunk(['index' => 0, 'delta' => ['role' => 'assistant', 'content' => ''], 'finish_reason' => null]); }
+                if (! $started) { $this->openStream(); if ($object === 'chat.completion') $chunk(['index' => 0, 'delta' => ['role' => 'assistant', 'content' => $calls ? null : ''], 'finish_reason' => null]); }
+                foreach ($calls as $c) $chunk(['index' => 0, 'delta' => ['tool_calls' => [$c]], 'finish_reason' => null]); // each call whole, in one delta
                 $chunk($object === 'chat.completion' ? ['index' => 0, 'delta' => (object) [], 'finish_reason' => $finish] : ['index' => 0, 'text' => '', 'finish_reason' => $finish]);
                 if ($includeUsage) $chunk([], $usage);
                 echo "data: [DONE]\n\n";
@@ -177,7 +189,8 @@ class OpenAIController extends BaseApiController
                 exit;
             }
             $choice = $object === 'chat.completion'
-                ? ['index' => 0, 'message' => ['role' => 'assistant', 'content' => $text], 'logprobs' => null, 'finish_reason' => $finish]
+                ? ['index' => 0, 'message' => ['role' => 'assistant', 'content' => ($calls && $text === '') ? null : $text]
+                    + ($calls ? ['tool_calls' => array_map(static function ($c) { unset($c['index']); return $c; }, $calls)] : []), 'logprobs' => null, 'finish_reason' => $finish]
                 : ['index' => 0, 'text' => $text, 'logprobs' => null, 'finish_reason' => $finish];
             return $this->json(['id' => $id, 'object' => $object, 'created' => $created, 'model' => $model,
                 'system_fingerprint' => 'worksuite-' . substr(md5((string) $server['id']), 0, 8), 'choices' => [$choice], 'usage' => $usage]);
@@ -270,12 +283,29 @@ class OpenAIController extends BaseApiController
     {
         if (! is_array($raw) || ! $raw) throw new \InvalidArgumentException('messages must be a non-empty array.');
         $out = [];
+        $callNames = []; // tool_call_id => tool name, from earlier assistant turns
         foreach ($raw as $i => $m) {
             $role = (string) ($m['role'] ?? '');
             if ($role === 'developer') $role = 'system';
-            if (! in_array($role, ['system', 'user', 'assistant'], true)) throw new \InvalidArgumentException("messages[{$i}].role '{$role}' is not supported.");
+            if (! in_array($role, ['system', 'user', 'assistant', 'tool'], true)) throw new \InvalidArgumentException("messages[{$i}].role '{$role}' is not supported.");
             $content = $m['content'] ?? '';
             $msg = ['role' => $role, 'content' => ''];
+            if ($role === 'assistant' && ! empty($m['tool_calls'])) {
+                if (! is_array($m['tool_calls'])) throw new \InvalidArgumentException("messages[{$i}].tool_calls must be an array.");
+                foreach ($m['tool_calls'] as $j => $tc) {
+                    $id = (string) ($tc['id'] ?? ''); $name = (string) ($tc['function']['name'] ?? '');
+                    if ($id === '' || $name === '') throw new \InvalidArgumentException("messages[{$i}].tool_calls[{$j}] needs an id and function.name.");
+                    $args = $tc['function']['arguments'] ?? '{}';
+                    $msg['tool_calls'][] = ['id' => $id, 'name' => $name, 'arguments' => is_string($args) ? $args : json_encode($args)];
+                    $callNames[$id] = $name;
+                }
+            }
+            if ($role === 'tool') {
+                $cid = (string) ($m['tool_call_id'] ?? '');
+                if ($cid === '') throw new \InvalidArgumentException("messages[{$i}] (role tool) needs a tool_call_id.");
+                $msg['tool_call_id'] = $cid;
+                $msg['name'] = $callNames[$cid] ?? (string) ($m['name'] ?? ''); // Gemini and Ollama match results by tool name
+            }
             if (is_string($content)) {
                 $msg['content'] = $content;
             } elseif (is_array($content)) {

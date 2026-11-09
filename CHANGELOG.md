@@ -3,6 +3,11 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.33.0] — 2026-11-09 — Tool calling in the AI API gateway
+- **Function / tool calling** on `/api/openai/v1/chat/completions`: send `tools` and `tool_choice` (`auto`, `none`, `required` or one named tool) and get `tool_calls` back in the OpenAI format, with `finish_reason: "tool_calls"`, streamed or not. Send the results back as `tool` messages for the next turn; parallel tool calls work.
+- **Works on every engine**: OpenAI-compatible nodes (vLLM, llama.cpp, others) and OpenAI, Ollama, Anthropic Claude and Google Gemini. The gateway translates tool definitions, calls and results to each one's own format: Anthropic tool_use / tool_result blocks, Gemini function declarations and responses, and Ollama tool messages. On Ollama, `required` or a named tool is asked for in a system message, because Ollama has no tool_choice.
+- The model must support tools on its engine (for example Llama 3.1+, Qwen 2.5, Mistral on Ollama, or vLLM started with tool parsing enabled). The legacy `functions` parameter is refused with a pointer to `tools`.
+
 ## [1.32.0] — 2026-11-09 — Unified OpenAI-compatible AI API gateway
 - **One OpenAI-compatible endpoint for every model**: point any OpenAI SDK or tool at `/api/openai/v1` and use `key:secret` or an access token as the API key. Models on Ollama, vLLM, llama.cpp and OpenAI-compatible nodes, and on connected cloud providers, are all reachable through it.
 - **Endpoints**: `GET /models` (with type and capabilities, only what the key may use), `GET /models/{id}`, `POST /chat/completions` with **streaming**, `POST /completions`, `POST /embeddings` (float or base64).

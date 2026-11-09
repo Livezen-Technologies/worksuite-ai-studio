@@ -20,19 +20,22 @@ final class OpenAIGatewayTest extends CIUnitTestCase
 
     private static $proc;
     private static int $port = 0;
+    private static string $log = '';
 
     public static function setUpBeforeClass(): void
     {
         parent::setUpBeforeClass();
         self::$port = random_int(20000, 40000);
+        self::$log  = tempnam(sys_get_temp_dir(), 'fake-engine-');
         self::$proc = proc_open([PHP_BINARY, '-S', '127.0.0.1:' . self::$port, __DIR__ . '/../_support/fake_openai_engine.php'],
-            [1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
+            [1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes, null, ['FAKE_ENGINE_LOG' => self::$log] + getenv());
         for ($i = 0; $i < 50 && ! @fsockopen('127.0.0.1', self::$port); $i++) usleep(100000);
     }
 
     public static function tearDownAfterClass(): void
     {
         if (self::$proc) { proc_terminate(self::$proc); proc_close(self::$proc); }
+        @unlink(self::$log);
         parent::tearDownAfterClass();
     }
 
@@ -76,7 +79,11 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $this->db->table('servers')->insertBatch([
             ['name' => 'dead', 'kind' => 'vllm', 'api_url' => 'http://127.0.0.1:1', 'status' => 'online', 'health_score' => 100],
             ['name' => 'fake', 'kind' => 'vllm', 'api_url' => 'http://127.0.0.1:' . self::$port, 'status' => 'online', 'health_score' => 90],
+            ['name' => 'ollama', 'kind' => 'ollama', 'api_url' => 'http://127.0.0.1:' . self::$port, 'status' => 'online', 'health_score' => 90],
+            ['name' => 'claude', 'kind' => 'anthropic', 'api_url' => 'http://127.0.0.1:' . self::$port . '/v1', 'status' => 'online', 'health_score' => 90],
+            ['name' => 'gemini', 'kind' => 'gemini', 'api_url' => 'http://127.0.0.1:' . self::$port . '/v1beta', 'status' => 'online', 'health_score' => 90],
         ]);
+        foreach ([3 => 'tool-ollama', 4 => 'tool-claude', 5 => 'tool-gemini'] as $sid => $m) $this->db->table('models')->insert(['server_id' => $sid, 'name' => $m, 'status' => 'available']);
         foreach (['fake-chat', 'fake-embed', 'secret', 'broken'] as $m) {
             $this->db->table('models')->insert(['server_id' => 2, 'name' => $m, 'status' => 'available']);
             $this->db->table('models')->insert(['server_id' => 1, 'name' => $m, 'status' => 'available']); // the dead node is tried first: failover
@@ -182,5 +189,119 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $this->assertSame('api_error', $e($res)['type']);
         $this->db->table('api_keys')->update(['scopes' => 'chat']);
         $this->api('post', 'embeddings', ['model' => 'fake-embed', 'input' => 'a'])->assertStatus(403);
+    }
+
+    // ---- Tool calling --------------------------------------------------------------------------
+
+    private const TOOLS = [['type' => 'function', 'function' => ['name' => 'get_weather', 'description' => 'Weather for a city',
+        'parameters' => ['type' => 'object', 'properties' => ['city' => ['type' => 'string']], 'required' => ['city'], 'additionalProperties' => false]]]];
+
+    private function sent(): array
+    {
+        return json_decode((string) file_get_contents(self::$log), true);
+    }
+
+    /** First turn: the model asks for a tool; the reply is an OpenAI tool call whatever the engine. */
+    public function testToolCallsComeBackInOpenAiFormatFromEveryEngine(): void
+    {
+        $cases = ['fake-chat' => ['Colombo', null], 'tool-ollama' => ['Kandy', null], 'tool-claude' => ['Galle', 'Checking.'], 'tool-gemini' => ['Jaffna', null]];
+        foreach ($cases as $model => [$city, $text]) {
+            $b = $this->body($this->api('post', 'chat/completions', ['model' => $model, 'tools' => self::TOOLS, 'tool_choice' => 'auto',
+                'messages' => [['role' => 'user', 'content' => 'Weather?']]]));
+            $choice = $b['choices'][0] ?? null;
+            $this->assertSame('tool_calls', $choice['finish_reason'] ?? null, $model . ': ' . json_encode($b));
+            $call = $choice['message']['tool_calls'][0];
+            $this->assertSame('function', $call['type']);
+            $this->assertSame('get_weather', $call['function']['name']);
+            $this->assertSame(['city' => $city], json_decode($call['function']['arguments'], true), $model);
+            $this->assertNotEmpty($call['id']);
+            $this->assertSame($text, $choice['message']['content'], $model);
+        }
+        $this->assertSame('call_abc', $this->body($this->api('post', 'chat/completions', ['model' => 'fake-chat', 'tools' => self::TOOLS,
+            'messages' => [['role' => 'user', 'content' => 'x']]]))['choices'][0]['message']['tool_calls'][0]['id'], 'the engine\'s own call id is kept');
+    }
+
+    /** Tool definitions and tool_choice reach each engine in its own format. */
+    public function testToolsAreTranslatedPerEngine(): void
+    {
+        $ask = fn (string $model, $choice = 'auto') => $this->api('post', 'chat/completions', ['model' => $model, 'tools' => self::TOOLS, 'tool_choice' => $choice,
+            'messages' => [['role' => 'user', 'content' => 'Weather?']]]);
+
+        $ask('fake-chat', ['type' => 'function', 'function' => ['name' => 'get_weather']]);
+        $body = $this->sent()['body'];
+        $this->assertSame('get_weather', $body['tools'][0]['function']['name']);
+        $this->assertSame(['type' => 'function', 'function' => ['name' => 'get_weather']], $body['tool_choice']);
+
+        $ask('tool-ollama', 'required');
+        $body = $this->sent()['body'];
+        $this->assertSame('get_weather', $body['tools'][0]['function']['name']);
+        $this->assertSame('system', $body['messages'][0]['role'], 'Ollama has no tool_choice; it is asked in a system message');
+
+        $ask('tool-claude', 'required');
+        $body = $this->sent()['body'];
+        $this->assertSame(['name', 'description', 'input_schema'], array_keys($body['tools'][0]));
+        $this->assertSame(['type' => 'any'], $body['tool_choice']);
+
+        $ask('tool-gemini', ['type' => 'function', 'function' => ['name' => 'get_weather']]);
+        $body = $this->sent()['body'];
+        $decl = $body['tools'][0]['functionDeclarations'][0];
+        $this->assertSame('get_weather', $decl['name']);
+        $this->assertArrayNotHasKey('additionalProperties', $decl['parameters'], 'keywords Gemini rejects are dropped');
+        $this->assertSame(['mode' => 'ANY', 'allowedFunctionNames' => ['get_weather']], $body['toolConfig']['functionCallingConfig']);
+
+        $ask('fake-chat', 'none');
+        $this->assertArrayNotHasKey('tools', $this->sent()['body'], 'tool_choice none sends no tools');
+    }
+
+    /** Second turn: the assistant's tool call and the tool result are sent back in each engine's format. */
+    public function testToolResultsAreTranslatedPerEngine(): void
+    {
+        $history = [
+            ['role' => 'user', 'content' => 'Weather in Colombo and Kandy?'],
+            ['role' => 'assistant', 'content' => null, 'tool_calls' => [
+                ['id' => 'call_1', 'type' => 'function', 'function' => ['name' => 'get_weather', 'arguments' => '{"city":"Colombo"}']],
+                ['id' => 'call_2', 'type' => 'function', 'function' => ['name' => 'get_weather', 'arguments' => '{"city":"Kandy"}']],
+            ]],
+            ['role' => 'tool', 'tool_call_id' => 'call_1', 'content' => '{"temp":31}'],
+            ['role' => 'tool', 'tool_call_id' => 'call_2', 'content' => '{"temp":24}'],
+        ];
+        $send = fn (string $model) => $this->body($this->api('post', 'chat/completions', ['model' => $model, 'tools' => self::TOOLS, 'messages' => $history]));
+
+        $send('tool-ollama');
+        $m = $this->sent()['body']['messages'];
+        $this->assertSame(['city' => 'Colombo'], $m[1]['tool_calls'][0]['function']['arguments'], 'Ollama gets arguments as an object');
+        $this->assertSame(['role' => 'tool', 'content' => '{"temp":24}', 'tool_name' => 'get_weather'], $m[3]);
+
+        $send('tool-claude');
+        $m = $this->sent()['body']['messages'];
+        $this->assertCount(3, $m, 'both tool results merge into one user turn');
+        $this->assertSame('tool_use', $m[1]['content'][0]['type']);
+        $this->assertSame(['city' => 'Kandy'], $m[1]['content'][1]['input']);
+        $this->assertSame('user', $m[2]['role']);
+        $this->assertSame(['tool_result', 'tool_result'], array_column($m[2]['content'], 'type'));
+        $this->assertSame('call_2', $m[2]['content'][1]['tool_use_id']);
+
+        $send('tool-gemini');
+        $c = $this->sent()['body']['contents'];
+        $this->assertSame('model', $c[1]['role']);
+        $this->assertSame('get_weather', $c[1]['parts'][0]['functionCall']['name']);
+        $this->assertSame(['name' => 'get_weather', 'response' => ['temp' => 24]], $c[2]['parts'][1]['functionResponse'], 'name looked up from the call id');
+
+        $this->db->table('models')->where('name', 'fake-chat')->where('server_id', 1)->delete();
+        $this->db->table('models')->insert(['server_id' => 2, 'name' => 'echo', 'status' => 'available']);
+        $this->api('post', 'chat/completions', ['model' => 'echo', 'messages' => $history]);
+        $m = $this->sent()['body']['messages'];
+        $this->assertSame('call_2', $m[1]['tool_calls'][1]['id']);
+        $this->assertNull($m[1]['content']);
+        $this->assertSame(['role' => 'tool', 'tool_call_id' => 'call_1', 'content' => '{"temp":31}'], $m[2]);
+    }
+
+    public function testToolValidation(): void
+    {
+        $err = fn (array $extra) => $this->body($this->api('post', 'chat/completions', $extra + ['model' => 'fake-chat', 'messages' => [['role' => 'user', 'content' => 'x']]]))['error'] ?? null;
+        $this->assertSame('tools', $err(['tools' => [['type' => 'function', 'function' => ['name' => 'bad name!']]]])['param']);
+        $this->assertSame('tool_choice', $err(['tools' => self::TOOLS, 'tool_choice' => ['type' => 'function', 'function' => ['name' => 'other']]])['param']);
+        $this->assertSame('functions', $err(['functions' => [['name' => 'f']]])['param']);
+        $this->assertSame('invalid_value', $err(['messages' => [['role' => 'tool', 'content' => 'x']]])['code'], 'a tool message needs tool_call_id');
     }
 }

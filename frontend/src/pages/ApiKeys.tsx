@@ -449,7 +449,7 @@ export default function ApiKeys() {
                 <code className="min-w-0 flex-1 break-all font-mono text-sm text-slate-900 dark:text-slate-100">{openaiBase()}</code>
                 <CopyButton text={openaiBase()} />
               </div>
-              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Any OpenAI SDK or tool works here: GET /models, POST /chat/completions (streaming, images as data: URLs, temperature, max_tokens, stop, seed, JSON mode), /completions and /embeddings. Use <code>key:secret</code> or an access token as the API key. Every model on every node, local or cloud, is reachable through it, within the key's scopes, model list, quotas and the registry's access rules.</p>
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Any OpenAI SDK or tool works here: GET /models, POST /chat/completions (streaming, tool calling, images as data: URLs, temperature, max_tokens, stop, seed, JSON mode), /completions and /embeddings. Use <code>key:secret</code> or an access token as the API key. Every model on every node, local or cloud, is reachable through it, within the key's scopes, model list, quotas and the registry's access rules.</p>
             </div>
             <div>
               <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">OpenAI SDK (Python) <CopyButton text={openaiExample()} /></div>

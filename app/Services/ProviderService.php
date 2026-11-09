@@ -91,7 +91,12 @@ class ProviderService
         // Provider-neutral generation parameters (OpenAI names): temperature, top_p, max_tokens, stop, seed,
         // presence_penalty, frequency_penalty, json (bool). Each adapter maps them to its own wire format.
         $this->params = self::cleanParams((array) ($extra['params'] ?? []));
-        unset($extra['params']);
+        // Tool calling (OpenAI format in, OpenAI format out): $extra['tools'], $extra['tool_choice'].
+        $this->tools      = self::normalizeTools((array) ($extra['tools'] ?? []));
+        $this->toolChoice = self::normalizeToolChoice($extra['tool_choice'] ?? null, $this->tools);
+        if ($this->toolChoice === 'none') $this->tools = [];
+        $this->toolCalls  = [];
+        unset($extra['params'], $extra['tools'], $extra['tool_choice']);
         if ($this->params && $this->isOllama($kind)) {
             $map = ['temperature' => 'temperature', 'top_p' => 'top_p', 'max_tokens' => 'num_predict', 'stop' => 'stop', 'seed' => 'seed',
                     'presence_penalty' => 'presence_penalty', 'frequency_penalty' => 'frequency_penalty'];
@@ -99,18 +104,91 @@ class ProviderService
             if (! empty($this->params['json'])) $extra['format'] = 'json';
         }
 
-        return match ($kind) {
+        $out = match ($kind) {
             'openai', 'vllm', 'llamacpp', 'openai_compatible' => $this->openaiChat($server, $model, $messages, $onDelta, $start),
             'anthropic' => $this->anthropicChat($server, $model, $messages, $onDelta, $start),
             'gemini'    => $this->geminiChat($server, $model, $messages, $onDelta, $start),
             default     => $this->ollamaChat($server, $model, $messages, $extra, $onDelta, $start),
         };
+        $out['tool_calls'] = array_values($this->toolCalls);
+        return $out;
     }
 
     /** Generation parameters for the current chat() call (see chat()). */
     private array $params = [];
+    /** Tools for the current call: [{name, description, parameters}]. */
+    private array $tools = [];
+    /** 'auto' | 'required' | 'none' | ['name' => string] */
+    private $toolChoice = 'auto';
+    /** Tool calls the model made in the current call: index => {id, name, arguments (JSON string)}. */
+    private array $toolCalls = [];
 
-    /** Keep only known parameters, with sane types and ranges. */
+    /**
+     * OpenAI tools ([{type: "function", function: {name, description, parameters}}]) → [{name, description, parameters}].
+     *
+     * @throws \InvalidArgumentException on a malformed tool
+     */
+    public static function normalizeTools(array $tools): array
+    {
+        $out = [];
+        foreach (array_values($tools) as $i => $t) {
+            $f = $t['function'] ?? null;
+            if (($t['type'] ?? 'function') !== 'function' || ! is_array($f)) throw new \InvalidArgumentException("tools[{$i}] must be {type: \"function\", function: {...}}.");
+            $name = (string) ($f['name'] ?? '');
+            if (! preg_match('/^[A-Za-z0-9_-]{1,64}$/', $name)) throw new \InvalidArgumentException("tools[{$i}].function.name must be 1-64 letters, digits, _ or -.");
+            $params = $f['parameters'] ?? ['type' => 'object', 'properties' => new \stdClass()];
+            if (! is_array($params) && ! is_object($params)) throw new \InvalidArgumentException("tools[{$i}].function.parameters must be a JSON schema object.");
+            $out[] = ['name' => $name, 'description' => (string) ($f['description'] ?? ''), 'parameters' => $params];
+        }
+        if (count($out) > 128) throw new \InvalidArgumentException('At most 128 tools per request.');
+        return $out;
+    }
+
+    /** 'auto' | 'none' | 'required' | {type: "function", function: {name}} → 'auto'|'none'|'required'|['name'=>…]. */
+    public static function normalizeToolChoice($choice, array $tools)
+    {
+        if ($choice === null || $choice === 'auto') return 'auto';
+        if ($choice === 'none' || $choice === 'required') return $choice;
+        $name = is_array($choice) ? (string) ($choice['function']['name'] ?? '') : '';
+        if ($name === '' || ! in_array($name, array_column($tools, 'name'), true)) {
+            throw new \InvalidArgumentException('tool_choice must be "auto", "none", "required" or name one of the tools.');
+        }
+        return ['name' => $name];
+    }
+
+    private static function callId(): string
+    {
+        return 'call_' . bin2hex(random_bytes(12));
+    }
+
+    /** Arguments as a JSON object string, whatever shape the provider used. */
+    private static function argsJson($args): string
+    {
+        if (is_string($args)) return $args === '' ? '{}' : $args;
+        return json_encode($args === null || $args === [] ? new \stdClass() : $args, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    /** Arguments as an array/object for providers that want structured input. */
+    private static function argsObject(string $json)
+    {
+        $v = json_decode($json === '' ? '{}' : $json, false);
+        return is_object($v) ? $v : new \stdClass();
+    }
+
+    /** Gemini accepts only a subset of JSON Schema; drop the keywords it rejects. */
+    private static function geminiSchema($schema)
+    {
+        if (is_object($schema)) $schema = (array) $schema;
+        if (! is_array($schema)) return $schema;
+        $out = [];
+        foreach ($schema as $k => $v) {
+            if (in_array($k, ['$schema', 'additionalProperties', '$id', '$defs', 'definitions', 'default', 'examples', 'title', 'strict'], true)) continue;
+            $out[$k] = is_array($v) || is_object($v) ? self::geminiSchema($v) : $v;
+        }
+        if (($out['type'] ?? null) === 'object' && empty($out['properties'])) unset($out['properties']);
+        return $out;
+    }
+
     public static function cleanParams(array $p): array
     {
         $out = [];
@@ -126,7 +204,6 @@ class ProviderService
         if (! empty($p['json'])) $out['json'] = true;
         return $out;
     }
-
     private function elapsed(float $start): int
     {
         return (int) round((microtime(true) - $start) * 1000);
@@ -134,11 +211,22 @@ class ProviderService
 
     private function ollamaChat(array $server, string $model, array $messages, array $extra, callable $onDelta, float $start): array
     {
+        if ($this->tools) {
+            $tools = $this->tools;
+            if (is_array($this->toolChoice)) $tools = array_values(array_filter($tools, fn ($t) => $t['name'] === $this->toolChoice['name']));
+            $extra['tools'] = array_map(static fn ($t) => ['type' => 'function', 'function' => $t], $tools);
+            if ($this->toolChoice !== 'auto') { // Ollama has no tool_choice: say it in a system message
+                array_unshift($messages, ['role' => 'system', 'content' => 'You must answer by calling ' . (is_array($this->toolChoice) ? "the tool {$this->toolChoice['name']}" : 'one of the tools') . '.']);
+            }
+        }
         $client = new OllamaService($server['api_url'], $server['auth_token'] ?? null);
-        $final  = $client->chat($model, $messages, $extra, static function (array $line) use ($onDelta) {
+        $final  = $client->chat($model, array_map([$this, 'ollamaMessage'], $messages), $extra, function (array $line) use ($onDelta) {
             $d = $line['message']['content'] ?? '';
             if ($d !== '') {
                 $onDelta($d);
+            }
+            foreach ($line['message']['tool_calls'] ?? [] as $tc) {
+                $this->toolCalls[] = ['id' => self::callId(), 'name' => (string) ($tc['function']['name'] ?? ''), 'arguments' => self::argsJson($tc['function']['arguments'] ?? null)];
             }
         });
         return [
@@ -162,20 +250,37 @@ class ProviderService
             if (array_key_exists($k, $this->params)) $body[$k] = $this->params[$k];
         }
         if (! empty($this->params['json'])) $body['response_format'] = ['type' => 'json_object'];
+        if ($this->tools) {
+            $body['tools'] = array_map(static fn ($t) => ['type' => 'function', 'function' => $t], $this->tools);
+            $body['tool_choice'] = is_array($this->toolChoice) ? ['type' => 'function', 'function' => ['name' => $this->toolChoice['name']]] : $this->toolChoice;
+        }
         $usage = ['p' => null, 'c' => null];
-        $this->sse($this->base($server) . '/chat/completions', [
-            'Content-Type: application/json',
-            'Authorization: Bearer ' . ($server['auth_token'] ?? ''),
-        ], $body, static function (array $j) use ($onDelta, &$usage) {
-            $d = $j['choices'][0]['delta']['content'] ?? '';
-            if ($d !== '') {
+        $headers = ['Content-Type: application/json'];
+        if (! empty($server['auth_token']) || ($server['kind'] ?? '') === 'openai') $headers[] = 'Authorization: Bearer ' . ($server['auth_token'] ?? '');
+        $this->sse($this->base($server) . '/chat/completions', $headers, $body, function (array $j) use ($onDelta, &$usage) {
+            $delta = $j['choices'][0]['delta'] ?? [];
+            $d = $delta['content'] ?? '';
+            if ($d !== '' && $d !== null) {
                 $onDelta($d);
+            }
+            foreach ($delta['tool_calls'] ?? [] as $tc) { // streamed in pieces, keyed by index
+                $i = (int) ($tc['index'] ?? 0);
+                $this->toolCalls[$i] ??= ['id' => '', 'name' => '', 'arguments' => ''];
+                if (! empty($tc['id'])) $this->toolCalls[$i]['id'] = $tc['id'];
+                if (! empty($tc['function']['name'])) $this->toolCalls[$i]['name'] .= $tc['function']['name'];
+                if (isset($tc['function']['arguments'])) $this->toolCalls[$i]['arguments'] .= $tc['function']['arguments'];
             }
             if (isset($j['usage'])) {
                 $usage['p'] = $j['usage']['prompt_tokens'] ?? $usage['p'];
                 $usage['c'] = $j['usage']['completion_tokens'] ?? $usage['c'];
             }
         });
+        ksort($this->toolCalls);
+        foreach ($this->toolCalls as &$tc) {
+            $tc['id'] = $tc['id'] ?: self::callId();
+            $tc['arguments'] = $tc['arguments'] === '' ? '{}' : $tc['arguments'];
+        }
+        unset($tc);
         return ['prompt_tokens' => $usage['p'], 'completion_tokens' => $usage['c'], 'total_ms' => $this->elapsed($start)];
     }
 
@@ -188,7 +293,15 @@ class ProviderService
                 $system .= ($system !== '' ? "\n\n" : '') . ($m['content'] ?? '');
                 continue;
             }
-            $msgs[] = $this->anthropicMessage($m);
+            $msg = $this->anthropicMessage($m);
+            // Anthropic wants strictly alternating roles: merge consecutive same-role turns (e.g. several tool results).
+            $last = count($msgs) - 1;
+            if ($last >= 0 && $msgs[$last]['role'] === $msg['role']) {
+                $toBlocks = static fn ($c) => is_array($c) ? $c : ($c === '' ? [] : [['type' => 'text', 'text' => $c]]);
+                $msgs[$last]['content'] = array_merge($toBlocks($msgs[$last]['content']), $toBlocks($msg['content']));
+            } else {
+                $msgs[] = $msg;
+            }
         }
         $body = ['model' => $model, 'max_tokens' => $this->params['max_tokens'] ?? 4096, 'messages' => $msgs, 'stream' => true];
         if (isset($this->params['temperature'])) $body['temperature'] = min(1.0, $this->params['temperature']);
@@ -197,21 +310,34 @@ class ProviderService
         if ($system !== '') {
             $body['system'] = $system;
         }
-        $usage = ['p' => null, 'c' => null];
+        if ($this->tools) {
+            $body['tools'] = array_map(static fn ($t) => ['name' => $t['name'], 'description' => $t['description'], 'input_schema' => $t['parameters']], $this->tools);
+            $body['tool_choice'] = is_array($this->toolChoice) ? ['type' => 'tool', 'name' => $this->toolChoice['name']]
+                : ['type' => $this->toolChoice === 'required' ? 'any' : 'auto'];
+        }
+        $usage  = ['p' => null, 'c' => null];
+        $blocks = []; // content block index → tool call index
         $this->sse($this->base($server) . '/messages', [
             'Content-Type: application/json',
             'x-api-key: ' . ($server['auth_token'] ?? ''),
             'anthropic-version: 2023-06-01',
-        ], $body, static function (array $j) use ($onDelta, &$usage) {
+        ], $body, function (array $j) use ($onDelta, &$usage, &$blocks) {
             $t = $j['type'] ?? '';
-            if ($t === 'content_block_delta' && (($j['delta']['type'] ?? '') === 'text_delta')) {
+            if ($t === 'content_block_start' && (($j['content_block']['type'] ?? '') === 'tool_use')) {
+                $blocks[(int) $j['index']] = count($this->toolCalls);
+                $this->toolCalls[] = ['id' => (string) ($j['content_block']['id'] ?? self::callId()), 'name' => (string) ($j['content_block']['name'] ?? ''), 'arguments' => ''];
+            } elseif ($t === 'content_block_delta' && (($j['delta']['type'] ?? '') === 'text_delta')) {
                 $onDelta($j['delta']['text'] ?? '');
+            } elseif ($t === 'content_block_delta' && (($j['delta']['type'] ?? '') === 'input_json_delta') && isset($blocks[(int) $j['index']])) {
+                $this->toolCalls[$blocks[(int) $j['index']]]['arguments'] .= (string) ($j['delta']['partial_json'] ?? '');
             } elseif ($t === 'message_start') {
                 $usage['p'] = $j['message']['usage']['input_tokens'] ?? $usage['p'];
             } elseif ($t === 'message_delta') {
                 $usage['c'] = $j['usage']['output_tokens'] ?? $usage['c'];
             }
         });
+        foreach ($this->toolCalls as &$tc) $tc['arguments'] = $tc['arguments'] === '' ? '{}' : $tc['arguments'];
+        unset($tc);
         return ['prompt_tokens' => $usage['p'], 'completion_tokens' => $usage['c'], 'total_ms' => $this->elapsed($start)];
     }
 
@@ -224,7 +350,13 @@ class ProviderService
                 $sys .= ($sys !== '' ? "\n\n" : '') . ($m['content'] ?? '');
                 continue;
             }
-            $contents[] = $this->geminiContent($m);
+            $c = $this->geminiContent($m);
+            $last = count($contents) - 1;
+            if ($last >= 0 && $contents[$last]['role'] === $c['role'] && ($m['role'] ?? '') === 'tool') {
+                $contents[$last]['parts'] = array_merge($contents[$last]['parts'], $c['parts']); // parallel tool results in one turn
+            } else {
+                $contents[] = $c;
+            }
         }
         $body = ['contents' => $contents];
         $gc = array_filter([
@@ -236,13 +368,24 @@ class ProviderService
         if ($sys !== '') {
             $body['systemInstruction'] = ['parts' => [['text' => $sys]]];
         }
+        if ($this->tools) {
+            $body['tools'] = [['functionDeclarations' => array_map(static fn ($t) => array_filter([
+                'name' => $t['name'], 'description' => $t['description'] ?: null, 'parameters' => self::geminiSchema($t['parameters']) ?: null,
+            ]), $this->tools)]];
+            $fc = ['mode' => $this->toolChoice === 'auto' ? 'AUTO' : 'ANY'];
+            if (is_array($this->toolChoice)) $fc['allowedFunctionNames'] = [$this->toolChoice['name']];
+            $body['toolConfig'] = ['functionCallingConfig' => $fc];
+        }
         $url = $this->base($server) . '/models/' . rawurlencode($model)
             . ':streamGenerateContent?alt=sse&key=' . urlencode((string) ($server['auth_token'] ?? ''));
         $usage = ['p' => null, 'c' => null];
-        $this->sse($url, ['Content-Type: application/json'], $body, static function (array $j) use ($onDelta, &$usage) {
+        $this->sse($url, ['Content-Type: application/json'], $body, function (array $j) use ($onDelta, &$usage) {
             foreach ($j['candidates'][0]['content']['parts'] ?? [] as $part) {
                 if (isset($part['text']) && $part['text'] !== '') {
                     $onDelta($part['text']);
+                }
+                if (isset($part['functionCall'])) {
+                    $this->toolCalls[] = ['id' => self::callId(), 'name' => (string) ($part['functionCall']['name'] ?? ''), 'arguments' => self::argsJson($part['functionCall']['args'] ?? null)];
                 }
             }
             if (isset($j['usageMetadata'])) {
@@ -253,11 +396,36 @@ class ProviderService
         return ['prompt_tokens' => $usage['p'], 'completion_tokens' => $usage['c'], 'total_ms' => $this->elapsed($start)];
     }
 
-    // ---- Message translation (Ollama shape → provider shape) ---------------
+    // ---- Message translation (gateway shape → provider shape) ---------------
+    //
+    // Gateway shape: {role: system|user|assistant|tool, content, images?: [b64],
+    //                 tool_calls?: [{id, name, arguments}] (assistant), tool_call_id?, name? (tool)}
+
+    private function ollamaMessage(array $m): array
+    {
+        $role = $m['role'] ?? 'user';
+        if ($role === 'tool') {
+            return ['role' => 'tool', 'content' => (string) ($m['content'] ?? ''), 'tool_name' => (string) ($m['name'] ?? '')];
+        }
+        $out = ['role' => $role, 'content' => (string) ($m['content'] ?? '')];
+        if (! empty($m['images'])) $out['images'] = $m['images'];
+        if (! empty($m['tool_calls'])) {
+            $out['tool_calls'] = array_map(static fn ($tc) => ['function' => ['name' => $tc['name'], 'arguments' => self::argsObject($tc['arguments'])]], $m['tool_calls']);
+        }
+        return $out;
+    }
 
     private function openaiMessage(array $m): array
     {
-        $role = ($m['role'] ?? 'user') === 'system' ? 'system' : (($m['role'] ?? '') === 'assistant' ? 'assistant' : 'user');
+        $r = $m['role'] ?? 'user';
+        if ($r === 'tool') {
+            return ['role' => 'tool', 'tool_call_id' => (string) ($m['tool_call_id'] ?? ''), 'content' => (string) ($m['content'] ?? '')];
+        }
+        $role = $r === 'system' ? 'system' : ($r === 'assistant' ? 'assistant' : 'user');
+        if ($role === 'assistant' && ! empty($m['tool_calls'])) {
+            return ['role' => 'assistant', 'content' => ($m['content'] ?? '') === '' ? null : (string) $m['content'],
+                'tool_calls' => array_map(static fn ($tc) => ['id' => $tc['id'], 'type' => 'function', 'function' => ['name' => $tc['name'], 'arguments' => $tc['arguments']]], $m['tool_calls'])];
+        }
         $imgs = $m['images'] ?? [];
         if (! $imgs) {
             return ['role' => $role, 'content' => (string) ($m['content'] ?? '')];
@@ -271,7 +439,16 @@ class ProviderService
 
     private function anthropicMessage(array $m): array
     {
-        $role = ($m['role'] ?? '') === 'assistant' ? 'assistant' : 'user';
+        $r = $m['role'] ?? 'user';
+        if ($r === 'tool') {
+            return ['role' => 'user', 'content' => [['type' => 'tool_result', 'tool_use_id' => (string) ($m['tool_call_id'] ?? ''), 'content' => (string) ($m['content'] ?? '')]]];
+        }
+        $role = $r === 'assistant' ? 'assistant' : 'user';
+        if ($role === 'assistant' && ! empty($m['tool_calls'])) {
+            $content = ($m['content'] ?? '') !== '' ? [['type' => 'text', 'text' => (string) $m['content']]] : [];
+            foreach ($m['tool_calls'] as $tc) $content[] = ['type' => 'tool_use', 'id' => $tc['id'], 'name' => $tc['name'], 'input' => self::argsObject($tc['arguments'])];
+            return ['role' => 'assistant', 'content' => $content];
+        }
         $imgs = $m['images'] ?? [];
         if (! $imgs) {
             return ['role' => $role, 'content' => (string) ($m['content'] ?? '')];
@@ -286,10 +463,20 @@ class ProviderService
 
     private function geminiContent(array $m): array
     {
-        $role  = ($m['role'] ?? '') === 'assistant' ? 'model' : 'user';
-        $parts = [['text' => (string) ($m['content'] ?? '')]];
+        $r = $m['role'] ?? 'user';
+        if ($r === 'tool') {
+            $res = json_decode((string) ($m['content'] ?? ''), true);
+            return ['role' => 'user', 'parts' => [['functionResponse' => [
+                'name' => (string) ($m['name'] ?? ''), 'response' => is_array($res) && ! array_is_list($res) ? $res : ['content' => $m['content'] ?? ''],
+            ]]]];
+        }
+        $role  = $r === 'assistant' ? 'model' : 'user';
+        $parts = ($m['content'] ?? '') !== '' || empty($m['tool_calls']) ? [['text' => (string) ($m['content'] ?? '')]] : [];
         foreach ($m['images'] ?? [] as $b64) {
             $parts[] = ['inlineData' => ['mimeType' => $this->mime($b64), 'data' => $b64]];
+        }
+        foreach ($m['tool_calls'] ?? [] as $tc) {
+            $parts[] = ['functionCall' => ['name' => $tc['name'], 'args' => self::argsObject($tc['arguments'])]];
         }
         return ['role' => $role, 'parts' => $parts];
     }

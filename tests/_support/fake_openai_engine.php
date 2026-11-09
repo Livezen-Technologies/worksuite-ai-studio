@@ -1,23 +1,65 @@
 <?php
-// A tiny OpenAI-compatible inference engine for gateway tests (run with `php -S`).
+// A tiny multi-protocol inference engine for gateway tests (run with `php -S`). Speaks the OpenAI
+// API (/v1/*), Ollama (/api/chat), Anthropic (/v1/messages) and Gemini (/v1beta/models/*), and
+// writes each request body to $FAKE_ENGINE_LOG so tests can check what the gateway sent.
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$in   = json_decode((string) file_get_contents('php://input'), true) ?: [];
+$raw  = (string) file_get_contents('php://input');
+$in   = json_decode($raw, true) ?: [];
+if ($log = getenv('FAKE_ENGINE_LOG')) file_put_contents($log, json_encode(['path' => $path, 'body' => $in]));
+$sse = static function (array $events): void {
+    header('Content-Type: text/event-stream');
+    foreach ($events as $e) echo 'data: ' . json_encode($e) . "\n\n";
+};
+
 if ($path === '/v1/models') {
     header('Content-Type: application/json');
     echo json_encode(['object' => 'list', 'data' => [['id' => 'fake-chat'], ['id' => 'fake-embed']]]);
 } elseif ($path === '/v1/chat/completions') {
     if (($in['model'] ?? '') === 'broken') { http_response_code(500); echo json_encode(['error' => ['message' => 'engine exploded']]); return; }
-    header('Content-Type: text/event-stream');
-    // Echo what the gateway passed so tests can check parameter mapping.
+    if (! empty($in['tools'])) { // a streamed tool call, split across deltas the way OpenAI does
+        $sse([
+            ['choices' => [['delta' => ['tool_calls' => [['index' => 0, 'id' => 'call_abc', 'type' => 'function', 'function' => ['name' => 'get_weather', 'arguments' => '']]]]]]],
+            ['choices' => [['delta' => ['tool_calls' => [['index' => 0, 'function' => ['arguments' => '{"city":']]]]]]],
+            ['choices' => [['delta' => ['tool_calls' => [['index' => 0, 'function' => ['arguments' => '"Colombo"}']]]]]]],
+            ['choices' => [], 'usage' => ['prompt_tokens' => 20, 'completion_tokens' => 9]],
+        ]);
+        echo "data: [DONE]\n\n";
+        return;
+    }
     $echo = 'Hello ' . json_encode(['t' => $in['temperature'] ?? null, 'max' => $in['max_tokens'] ?? null, 'json' => $in['response_format']['type'] ?? null,
         'last' => end($in['messages'])['content'] ?? null]);
-    foreach (str_split($echo, 8) as $piece) echo 'data: ' . json_encode(['choices' => [['delta' => ['content' => $piece]]]]) . "\n\n";
-    echo 'data: ' . json_encode(['choices' => [], 'usage' => ['prompt_tokens' => 7, 'completion_tokens' => 5]]) . "\n\n";
+    $events = array_map(static fn ($p) => ['choices' => [['delta' => ['content' => $p]]]], str_split($echo, 8));
+    $events[] = ['choices' => [], 'usage' => ['prompt_tokens' => 7, 'completion_tokens' => 5]];
+    $sse($events);
     echo "data: [DONE]\n\n";
 } elseif ($path === '/v1/embeddings') {
     header('Content-Type: application/json');
     $inputs = (array) ($in['input'] ?? []);
     echo json_encode(['data' => array_map(static fn ($i) => ['embedding' => [0.5, -1.0, (float) $i]], array_keys($inputs))]);
+} elseif ($path === '/api/chat') { // Ollama, NDJSON
+    header('Content-Type: application/x-ndjson');
+    if (! empty($in['tools'])) {
+        echo json_encode(['message' => ['role' => 'assistant', 'content' => '', 'tool_calls' => [['function' => ['name' => 'get_weather', 'arguments' => ['city' => 'Kandy']]]]], 'done' => false]) . "\n";
+    } else {
+        echo json_encode(['message' => ['role' => 'assistant', 'content' => 'It is sunny.'], 'done' => false]) . "\n";
+    }
+    echo json_encode(['message' => ['role' => 'assistant', 'content' => ''], 'done' => true, 'prompt_eval_count' => 11, 'eval_count' => 4]) . "\n";
+} elseif ($path === '/v1/messages') { // Anthropic
+    $events = [['type' => 'message_start', 'message' => ['usage' => ['input_tokens' => 30]]]];
+    if (! empty($in['tools'])) {
+        $events[] = ['type' => 'content_block_start', 'index' => 0, 'content_block' => ['type' => 'text', 'text' => '']];
+        $events[] = ['type' => 'content_block_delta', 'index' => 0, 'delta' => ['type' => 'text_delta', 'text' => 'Checking.']];
+        $events[] = ['type' => 'content_block_start', 'index' => 1, 'content_block' => ['type' => 'tool_use', 'id' => 'toolu_1', 'name' => 'get_weather', 'input' => new stdClass()]];
+        $events[] = ['type' => 'content_block_delta', 'index' => 1, 'delta' => ['type' => 'input_json_delta', 'partial_json' => '{"city": "Ga']];
+        $events[] = ['type' => 'content_block_delta', 'index' => 1, 'delta' => ['type' => 'input_json_delta', 'partial_json' => 'lle"}']];
+    } else {
+        $events[] = ['type' => 'content_block_delta', 'index' => 0, 'delta' => ['type' => 'text_delta', 'text' => 'Done.']];
+    }
+    $events[] = ['type' => 'message_delta', 'usage' => ['output_tokens' => 12]];
+    $sse($events);
+} elseif (str_starts_with($path, '/v1beta/models/')) { // Gemini
+    $parts = ! empty($in['tools']) ? [['functionCall' => ['name' => 'get_weather', 'args' => ['city' => 'Jaffna']]]] : [['text' => 'Noted.']];
+    $sse([['candidates' => [['content' => ['parts' => $parts]]], 'usageMetadata' => ['promptTokenCount' => 9, 'candidatesTokenCount' => 3]]]);
 } else {
     http_response_code(404);
 }
