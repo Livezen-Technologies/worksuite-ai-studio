@@ -22,6 +22,7 @@ class SchedulerService
         'training_pipelines' => ['Training pipelines', 'Start runs when data changes; retry or fail stalled jobs', 'training_pipelines', 'every_minute'],
         'storage_health' => ['Storage health', 'Check every storage node and evaluate alert rules', 'storage_health', 'every_5m'],
         'storage_backups' => ['Storage backups', 'Start due database backups and mark dead runs as failed', 'storage_backups', 'every_5m'],
+        'apikey_rotation' => ['API key rotation', 'Remind owners of keys due for rotation; turn off overdue keys whose policy says so', 'apikey_rotation', 'daily'],
         'model_autoload' => ['Model load policy', 'Keep pinned models loaded and unload idle ones', 'model_autoload', 'every_5m'],
         'storage_sync'   => ['Storage sync', 'Replicate, move and delete file copies across storage nodes', 'storage_sync', 'every_minute'],
     ];
@@ -97,7 +98,8 @@ class SchedulerService
     {
         $queue = new QueueService();
         return match ($handler) {
-            'health_check'    => ['queued' => $queue->enqueue('health_check')],
+            // Inline, not queued: node status must stay current even when the queue worker is down.
+            'health_check'    => (new QueueService())->handle('health_check', []),
             'sync_models'     => ['queued' => $queue->enqueue('sync_models')],
             'cleanup_logs'    => ['queued' => $queue->enqueue('cleanup_logs', ['days' => 30])],
             'generate_report' => (new AnalyticsService())->report(),
@@ -108,6 +110,7 @@ class SchedulerService
             'storage_sync'   => (new ObjectStoreService())->sync(),
             'storage_backups' => (new StorageBackupService())->tick(),
             'model_autoload' => (new ModelRegistryService())->autoload(),
+            'apikey_rotation' => (new ApiKeyRotationService())->tick(),
             default           => throw new \RuntimeException("Unknown handler: {$handler}"),
         };
     }

@@ -86,4 +86,26 @@ final class NodeTelemetryTest extends CIUnitTestCase
         $this->assertSame('http://10.0.0.5:8080/v1', $base->invoke($p, ['kind' => 'llamacpp', 'api_url' => 'http://10.0.0.5:8080/v1']));
         $this->assertSame('http://10.0.0.5:11434', $base->invoke($p, ['kind' => 'ollama', 'api_url' => 'http://10.0.0.5:11434']));
     }
+
+    /** Gap 1: warm nodes first, saturated last, otherwise the strategy's order is kept. */
+    public function testPreferWarmNodes(): void
+    {
+        $now = date('Y-m-d H:i:s');
+        $rows = [
+            ['id' => 1, 'status' => 'online', 'model_status' => 'available'],
+            ['id' => 2, 'status' => 'online', 'model_status' => 'running', 'gpu_util_pct' => 99, 'metrics_at' => $now], // warm but saturated
+            ['id' => 3, 'status' => 'online', 'model_status' => 'running'],
+            ['id' => 4, 'status' => 'online', 'model_status' => 'available'],
+        ];
+        $this->assertSame([3, 1, 4, 2], array_column(\App\Services\ApiGatewayService::preferWarm($rows), 'id'));
+    }
+
+    /** Gap 4: a status nobody has checked for 15 minutes is shown as unknown, not online. */
+    public function testStaleHealthCheckIsUnknown(): void
+    {
+        $a = static fn (array $s) => NodeTelemetryService::availability($s);
+        $this->assertSame('available', $a(['status' => 'online', 'last_heartbeat_at' => date('Y-m-d H:i:s', time() - 60)]));
+        $this->assertSame('unknown', $a(['status' => 'online', 'last_heartbeat_at' => date('Y-m-d H:i:s', time() - 3600)]));
+        $this->assertSame('offline', $a(['status' => 'offline', 'last_heartbeat_at' => date('Y-m-d H:i:s', time() - 3600)]));
+    }
 }

@@ -32,7 +32,7 @@ class ApiGatewayService
         $statuses = ($cfg['include_degraded'] ?? '1') === '1' ? ['online', 'degraded'] : ['online'];
 
         $rows = $this->db->table('models m')
-            ->select('s.*')
+            ->select('s.*, m.status AS model_status')
             ->join('servers s', 's.id = m.server_id')
             ->where('m.name', $model)
             ->where('s.deleted_at', null)
@@ -51,6 +51,8 @@ class ApiGatewayService
             'least_busy' => $this->orderByLeastBusy($rows),
             default      => $this->rotate($rows, $model),
         };
+
+        $candidates = self::preferWarm($candidates);
 
         // When failover is off, the caller still receives the full list but the
         // gateway controller honours max_retries=1 effectively via the setting.
@@ -80,6 +82,24 @@ class ApiGatewayService
     }
 
     /** Least-busy: fewest gateway requests in the last 5 minutes first. */
+    /**
+     * Keep the strategy's order, but try nodes that already hold the model in memory and are not
+     * saturated first (no load delay), then idle ones, and saturated nodes last. In-memory state comes
+     * from each node's /api/ps (model load policy job); saturation from the node agent's report.
+     */
+    public static function preferWarm(array $rows): array
+    {
+        $rank = static function (array $s): int {
+            $busy = NodeTelemetryService::availability($s) === 'busy';
+            if ($busy) return 2;
+            return ($s['model_status'] ?? '') === 'running' ? 0 : 1;
+        };
+        $i = 0;
+        $keyed = array_map(static function ($s) use (&$i, $rank) { return [$rank($s), $i++, $s]; }, $rows);
+        usort($keyed, static fn ($a, $b) => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
+        return array_map(static fn ($k) => $k[2], $keyed);
+    }
+
     private function orderByLeastBusy(array $rows): array
     {
         $since = date('Y-m-d H:i:s', time() - 300);

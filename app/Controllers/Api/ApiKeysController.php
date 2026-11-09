@@ -133,15 +133,24 @@ class ApiKeysController extends BaseApiController
         if ($r = $this->requirePermission('apikeys.manage')) return $r;
         if (! ($row = $this->owned($id))) return $this->failure('API key not found.', 404);
         if (ApiKeyModel::state($row) === 'revoked') return $this->failure('A revoked key cannot be rotated.', 409);
+        // grace_hours (0-168, default 24): the old secret keeps working that long, so apps can switch over
+        // without downtime. 0 ends it at once (use that when the secret has leaked).
+        $grace = $this->input()['grace_hours'] ?? 24;
+        $grace = is_numeric($grace) ? max(0, min(168, (int) $grace)) : 24;
         $m    = $this->keys();
         $cred = $m->mint();
         $m->update((int) $id, [
             'secret_hash' => $cred['hash'], 'secret_prefix' => $cred['prefix'], 'rotated_at' => date('Y-m-d H:i:s'),
+            'previous_secret_hash' => $grace > 0 ? $row['secret_hash'] : null,
+            'previous_secret_expires_at' => $grace > 0 ? date('Y-m-d H:i:s', time() + $grace * 3600) : null,
+            'rotation_notified_at' => null,
             'token_version' => (int) ($row['token_version'] ?? 0) + 1, // old access tokens stop working
         ]);
         $out = $m->publicRow($m->find((int) $id));
         $out['secret'] = $cred['secret'];
-        return $this->ok($out, 'Secret rotated. Copy it now — it won’t be shown again.');
+        return $this->ok($out, $grace > 0
+            ? "Secret rotated. The old secret keeps working for {$grace} hour" . ($grace > 1 ? 's' : '') . '. Copy the new one now — it won’t be shown again.'
+            : 'Secret rotated; the old secret stopped working. Copy the new one now — it won’t be shown again.');
     }
 
     public function revoke($id = null)
@@ -224,6 +233,9 @@ class ApiKeysController extends BaseApiController
         if (array_key_exists('admin_locked', $in)) return $this->failure('Only API key administrators can lock or unlock keys.', 403);
         if ($row && (int) ($row['admin_locked'] ?? 0) === 1) {
             $allowed = ['name', 'description', 'application'];
+            if (array_key_exists('rotation_enforce', $in) || array_key_exists('rotation_days', $in)) {
+                return $this->failure('An administrator manages this key’s rotation policy.', 403);
+            }
             foreach (array_keys($in) as $f) {
                 if (in_array($f, $allowed, true) || ($f === 'status' && $in[$f] === 'disabled') || ($f === 'status' && $in[$f] === ($row['status'] ?? null))) continue;
                 if ($f === 'key_type') continue;
@@ -245,11 +257,12 @@ class ApiKeysController extends BaseApiController
     {
         $out = $base;
         foreach (['name', 'scopes', 'rate_limit_per_min', 'daily_token_limit', 'monthly_token_limit', 'status', 'expires_at',
-                  'application', 'organization', 'description', 'rotation_days'] as $f) {
+                  'application', 'organization', 'description', 'rotation_days', 'rotation_enforce'] as $f) {
             if (array_key_exists($f, $in) && ! array_key_exists($f, $base)) {
                 $out[$f] = $in[$f] === '' ? null : $in[$f];
             }
         }
+        if (array_key_exists('rotation_enforce', $out)) $out['rotation_enforce'] = ! empty($out['rotation_enforce']) && $out['rotation_enforce'] !== 'false' ? 1 : 0;
         if (array_key_exists('rate_limit_per_min', $out)) { // empty → the default; never 0 (that would mean 1 request a minute)
             $out['rate_limit_per_min'] = $out['rate_limit_per_min'] === null ? self::DEFAULT_RATE : max(1, min(100000, (int) $out['rate_limit_per_min']));
         }

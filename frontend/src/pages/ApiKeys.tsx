@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowPathIcon, KeyIcon, PencilSquareIcon, PlusIcon, TrashIcon, ClipboardDocumentIcon, CheckIcon, ExclamationTriangleIcon, NoSymbolIcon, TicketIcon, ChartBarIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, KeyIcon, PencilSquareIcon, PlusIcon, TrashIcon, ClipboardDocumentIcon, CheckIcon, NoSymbolIcon, TicketIcon, ChartBarIcon } from '@heroicons/react/24/outline';
 import {
   ActionMenu, Alert, Badge, Button, Card, CardHeader, Checkbox, CodeBlock, ConfirmDialog, DataTable, EmptyState, FormModal,
   FormSection, IconButton, Input, Meter, Modal, PageHeader, Select, StatusBadge, Tabs, Textarea, Toggle, useToast, type Column,
@@ -14,7 +14,7 @@ interface ApiKey {
   allowed_models: string[] | null; allowed_ips: string[] | null; daily_token_limit: number | null; monthly_token_limit: number | null;
   rate_limit_per_min: number | null; status: 'active' | 'disabled' | 'revoked'; state?: 'active' | 'disabled' | 'revoked' | 'expired';
   key_type?: KeyType; application?: string | null; organization?: string | null; description?: string | null;
-  rotation_days?: number | null; rotated_at?: string | null; revoked_at?: string | null; rotation_due?: boolean; requests_30d?: number; admin_locked?: number | boolean; expires_at?: string | null; last_used_at?: string | null;
+  rotation_days?: number | null; rotated_at?: string | null; revoked_at?: string | null; rotation_due?: boolean; requests_30d?: number; admin_locked?: number | boolean; rotation_enforce?: number | boolean; previous_secret_valid_until?: string | null; expires_at?: string | null; last_used_at?: string | null;
   created_at?: string | null; tokens_30d?: number; secret?: string;
 }
 
@@ -29,6 +29,7 @@ const typeLabel = (t?: KeyType) => KEY_TYPES.find((x) => x.value === t)?.label ?
 
 /** Scopes only an API key administrator may grant (they expose datasets and model files). */
 const ADMIN_SCOPES = ['download_models', 'download_datasets'];
+const GRACE_LABEL: Record<string, string> = { '0': 'No time (stop it now)', '1': '1 hour', '24': '24 hours', '72': '3 days', '168': '7 days' };
 
 const SCOPES = [
   { value: 'chat', label: 'Chat', hint: 'Also covers translate and summarize' },
@@ -99,15 +100,15 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
 interface FormState {
   name: string; scopes: string[]; rate_limit_per_min: string; daily_token_limit: string; monthly_token_limit: string;
   allowed_models: string[]; allowed_ips: string; status: 'active' | 'disabled'; expires_at: string;
-  key_type: KeyType; application: string; organization: string; description: string; rotation_days: string;
+  key_type: KeyType; application: string; organization: string; description: string; rotation_days: string; rotation_enforce: boolean;
 }
-const blank: FormState = { name: '', scopes: ['chat', 'generate', 'embeddings', 'models'], rate_limit_per_min: '60', daily_token_limit: '', monthly_token_limit: '', allowed_models: [], allowed_ips: '', status: 'active', expires_at: '', key_type: 'personal', application: '', organization: '', description: '', rotation_days: '' };
+const blank: FormState = { name: '', scopes: ['chat', 'generate', 'embeddings', 'models'], rate_limit_per_min: '60', daily_token_limit: '', monthly_token_limit: '', allowed_models: [], allowed_ips: '', status: 'active', expires_at: '', key_type: 'personal', application: '', organization: '', description: '', rotation_days: '', rotation_enforce: false };
 const toForm = (k: ApiKey): FormState => ({
   name: k.name, scopes: k.scopes ?? [], rate_limit_per_min: k.rate_limit_per_min?.toString() ?? '', daily_token_limit: k.daily_token_limit?.toString() ?? '',
   monthly_token_limit: k.monthly_token_limit?.toString() ?? '', allowed_models: k.allowed_models ?? [], allowed_ips: (k.allowed_ips ?? []).join('\n'),
   status: k.status === 'disabled' ? 'disabled' : 'active', expires_at: k.expires_at ? k.expires_at.slice(0, 10) : '',
   key_type: k.key_type ?? 'personal', application: k.application ?? '', organization: k.organization ?? '', description: k.description ?? '',
-  rotation_days: k.rotation_days?.toString() ?? '',
+  rotation_days: k.rotation_days?.toString() ?? '', rotation_enforce: Number(k.rotation_enforce ?? 0) === 1,
 });
 
 function KeyForm({ open, onClose, editing, onCreated }: { open: boolean; onClose: () => void; editing: ApiKey | null; onCreated: (k: ApiKey) => void }) {
@@ -132,7 +133,7 @@ function KeyForm({ open, onClose, editing, onCreated }: { open: boolean; onClose
         monthly_token_limit: f.monthly_token_limit, allowed_models: f.allowed_models,
         allowed_ips: f.allowed_ips.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
         expires_at: f.expires_at ? `${f.expires_at} 23:59:59` : '',
-        application: f.application.trim(), organization: f.organization.trim(), description: f.description.trim(), rotation_days: f.rotation_days,
+        application: f.application.trim(), organization: f.organization.trim(), description: f.description.trim(), rotation_days: f.rotation_days, ...(keyAdmin ? { rotation_enforce: f.rotation_enforce } : {}),
         ...(editing ? { status: f.status } : { key_type: f.key_type }),
       };
       return editing ? put<ApiKey>(`/apikeys/${editing.id}`, body) : post<ApiKey>('/apikeys', body);
@@ -195,8 +196,9 @@ function KeyForm({ open, onClose, editing, onCreated }: { open: boolean; onClose
             <Textarea label="Allowed IPs" rows={3} placeholder={'203.0.113.10\n198.51.100.0/24'} value={f.allowed_ips} onChange={(e) => set('allowed_ips', e.target.value)} hint="One per line or comma separated." error={errors.allowed_ips} />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Input label="Expires on" type="date" value={f.expires_at} onChange={(e) => set('expires_at', e.target.value)} hint="Optional." />
-              <Input label="Rotate every (days)" type="number" min={0} placeholder="No policy" value={f.rotation_days} onChange={(e) => set('rotation_days', e.target.value)} hint="The key is flagged when its secret is older." />
+              <Input label="Rotate every (days)" type="number" min={0} placeholder="No policy" disabled={locked} value={f.rotation_days} onChange={(e) => set('rotation_days', e.target.value)} hint="The owner is reminded daily once the secret is older." />
             </div>
+            {keyAdmin && f.rotation_days && <Toggle checked={f.rotation_enforce} onChange={(v) => set('rotation_enforce', v)} label="Enforce rotation" description="Turn the key off when its secret is more than 7 days past due." />}
             {editing && <Toggle checked={f.status === 'active'} onChange={(v) => set('status', v ? 'active' : 'disabled')} label="Active" description="A disabled key is refused by the gateway." />}
           </div>
         </FormSection>
@@ -367,9 +369,13 @@ export default function ApiKeys() {
   const tokens = can('apikeys.tokens');
 
   const q = useQuery({ queryKey: ['apikeys'], queryFn: () => get<ApiKey[]>('/apikeys') });
+  const [grace, setGrace] = useState('24');
   const rotate = useMutation({
-    mutationFn: (id: number) => post<ApiKey>(`/apikeys/${id}/rotate`),
-    onSuccess: (k) => { qc.invalidateQueries({ queryKey: ['apikeys'] }); setConfirm(null); setRevealed(k); toast.success('Secret rotated', 'The old secret stops working immediately.'); },
+    mutationFn: (id: number) => post<ApiKey>(`/apikeys/${id}/rotate`, { grace_hours: Number(grace) }),
+    onSuccess: (k) => {
+      qc.invalidateQueries({ queryKey: ['apikeys'] }); setConfirm(null); setRevealed(k);
+      toast.success('Secret rotated', grace === '0' ? 'The old secret stopped working.' : `The old secret keeps working for ${GRACE_LABEL[grace]}.`);
+    },
     onError: (e) => toast.error(e),
   });
   const revoke = useMutation({
@@ -411,7 +417,8 @@ export default function ApiKeys() {
     { key: 'status', header: 'Status', cell: (k) => (
       <div className="space-y-0.5">
         <StatusBadge status={k.state ?? k.status} />
-        {k.rotation_due && <div className="text-xs text-amber-600 dark:text-amber-400">Rotation due</div>}
+        {k.rotation_due && <div className="text-xs text-amber-600 dark:text-amber-400">Rotation due{Number(k.rotation_enforce ?? 0) === 1 ? ' — turned off 7 days after' : ''}</div>}
+        {k.previous_secret_valid_until && <div className="text-xs text-slate-500 dark:text-slate-400">Old secret works until {dateTime(k.previous_secret_valid_until)}</div>}
         <div className="text-xs text-slate-500 dark:text-slate-400">Created {dateTime(k.created_at)}</div>
         {k.expires_at && <div className="text-xs text-slate-500 dark:text-slate-400">Expires {dateTime(k.expires_at)}</div>}
       </div>
@@ -501,7 +508,12 @@ export default function ApiKeys() {
         message={`“${confirm?.key.name}” and every access token issued for it stop working at once. A revoked key cannot be re-enabled.`} />
       <ConfirmDialog open={confirm?.kind === 'rotate'} onClose={() => setConfirm(null)} tone="primary" confirmLabel="Rotate secret"
         busy={rotate.isPending} onConfirm={() => confirm && rotate.mutate(confirm.key.id)} title="Rotate this secret?"
-        message={<span className="flex gap-2"><ExclamationTriangleIcon className="h-5 w-5 shrink-0 text-amber-500 dark:text-amber-400" />Apps using “{confirm?.key.name}” will be refused until they switch to the new secret.</span>} />
+        message={<div className="space-y-3 text-left">
+          <p>Apps using “{confirm?.key.name}” need the new secret. Choose how long the old one keeps working so they can switch without downtime.</p>
+          <Select label="Old secret keeps working for" value={grace} onChange={(e) => setGrace(e.target.value)}
+            options={Object.entries(GRACE_LABEL).map(([value, label]) => ({ value, label }))}
+            hint={grace === '0' ? 'Use this when the secret has leaked: apps are refused until they switch.' : undefined} />
+        </div>} />
       <ConfirmDialog open={confirm?.kind === 'delete'} onClose={() => setConfirm(null)} busy={remove.isPending}
         onConfirm={() => confirm && remove.mutate(confirm.key.id)} title="Delete this API key?"
         message={`“${confirm?.key.name}” stops working at once. Its request logs are kept.`} />

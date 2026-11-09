@@ -17,6 +17,8 @@ class NodeTelemetryService
     public const DEPLOYMENTS  = ['local', 'remote', 'cloud', 'docker'];
     /** A node whose agent has not reported for this long counts as stale. */
     public const STALE_SECONDS = 180;
+    /** Health checks run every 5 minutes; a result older than this is out of date. */
+    public const CHECK_STALE_SECONDS = 900;
     public const KEEP_DAYS     = 7;
 
     protected $db;
@@ -96,6 +98,8 @@ class NodeTelemetryService
     {
         if ((int) ($s['is_enabled'] ?? 1) !== 1) return 'disabled';
         $status = (string) ($s['status'] ?? 'unknown');
+        // No health check result for 15 minutes: the status shown is out of date, so don't trust it.
+        if ($status !== 'offline' && ! empty($s['last_heartbeat_at']) && strtotime($s['last_heartbeat_at']) < time() - self::CHECK_STALE_SECONDS) return 'unknown';
         if ($status === 'offline') return 'offline';
         if ($status === 'unknown') return 'unknown';
         if ($status === 'degraded') return 'degraded';

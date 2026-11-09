@@ -50,7 +50,7 @@ class ApiKeyFilter implements FilterInterface
                 return $this->deny($response, 'Too many failed attempts. Try again in a minute.', 429);
             }
             $row = $model->findByKey($key);
-            if (! $row || ! password_verify($secret, $row['secret_hash'])) {
+            if (! $row || ! ApiKeyModel::secretMatches($row, $secret)) {
                 cache()->save($bucket, (int) cache($bucket) + 1, 60);
                 return $this->deny($response, 'Invalid API credentials.', 401);
             }

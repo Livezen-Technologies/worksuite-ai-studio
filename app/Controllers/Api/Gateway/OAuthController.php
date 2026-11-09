@@ -34,7 +34,7 @@ class OAuthController extends BaseApiController
             return $this->oauthError('slow_down', 'Too many token requests. Try again shortly.', 429);
         }
         $row = (new ApiKeyModel())->findByKey($id);
-        if (! $row || ! password_verify($secret, (string) $row['secret_hash'])) {
+        if (! $row || ! ApiKeyModel::secretMatches($row, $secret)) {
             return $this->oauthError('invalid_client', 'Invalid client credentials.', 401);
         }
         if (ApiKeyModel::state($row) !== 'active') {
