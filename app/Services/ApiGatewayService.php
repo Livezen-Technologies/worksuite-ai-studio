@@ -129,7 +129,8 @@ class ApiGatewayService
     public function availableModels(): array
     {
         return $this->db->table('models m')
-            ->select('m.name, m.parameter_size, m.quantization, s.name AS server, s.status')
+            // Every selected column is aggregated, so this runs under MySQL's ONLY_FULL_GROUP_BY.
+            ->select('m.name, MAX(m.parameter_size) AS parameter_size, MAX(m.quantization) AS quantization, MIN(s.name) AS server, MIN(s.status) AS status')
             ->join('servers s', 's.id = m.server_id')
             ->where('s.deleted_at', null)
             ->groupBy('m.name')

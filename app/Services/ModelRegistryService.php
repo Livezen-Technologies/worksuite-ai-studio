@@ -68,7 +68,7 @@ class ModelRegistryService
         $speech = $this->syncSpeech($userId);
         $known = array_flip(array_column($this->db->table('model_registry')->select('name')->get()->getResultArray(), 'name'));
         $rows  = $this->db->table('models m')
-            ->select('m.name, m.family, m.parameter_size, m.quantization, m.context_length, MAX(m.size_bytes) AS size_bytes, s.kind')
+            ->select('m.name, MAX(m.family) AS family, MAX(m.parameter_size) AS parameter_size, MAX(m.quantization) AS quantization, MAX(m.context_length) AS context_length, MAX(m.size_bytes) AS size_bytes, MAX(s.kind) AS kind')
             ->join('servers s', 's.id = m.server_id')->where('s.deleted_at', null)
             ->groupBy('m.name')->get()->getResultArray();
         $now = date('Y-m-d H:i:s');

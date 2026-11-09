@@ -1,6 +1,7 @@
 # Checks every pull request and every push to main: backend tests, frontend type-check, tests and
 # build (and that the committed public/app build matches the source), the MCP server build,
-# dependency audits (composer audit, npm audit for runtime deps) and shellcheck on deploy/ scripts.
+# dependency audits (composer audit, npm audit for runtime deps), shellcheck on deploy/ and node scripts,
+# and every migration applied to a real MySQL 8.
 name: CI
 
 on:
@@ -88,3 +89,47 @@ jobs:
       - uses: actions/checkout@v4
       - name: shellcheck deploy scripts
         run: find deploy -name '*.sh' -print0 | xargs -0 shellcheck
+      # The scripts GPU nodes download and run: warnings and errors fail the build.
+      - name: shellcheck node scripts
+        run: shellcheck -S warning public/node/*.sh
+      - name: Python syntax (node and speech scripts)
+        run: python3 -m py_compile public/node/*.py deploy/asr/*.py
+
+  # Production runs MySQL; the unit tests run on SQLite. Apply every migration to a real MySQL 8
+  # (default sql_mode, incl. ONLY_FULL_GROUP_BY), then again to prove a re-run is a no-op.
+  migrations-mysql:
+    runs-on: ubuntu-24.04
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: aistudio
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -proot" --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      CI_ENVIRONMENT: development
+      database.default.hostname: 127.0.0.1
+      database.default.database: aistudio
+      database.default.username: root
+      database.default.password: root
+      database.default.DBDriver: MySQLi
+      JWT_SECRET: ci-only-secret-0123456789abcdef0123456789
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: intl, mbstring, mysqli
+          coverage: none
+      - run: composer install --no-interaction --no-progress --prefer-dist
+      - run: mkdir -p writable/{cache,logs,session,uploads,debugbar}
+      - name: Migrate a fresh database
+        run: php spark migrate --all
+      - name: Seed roles and permissions
+        run: php spark db:seed AuthSeeder
+      - name: Re-running migrations is a no-op
+        run: php spark migrate --all
+      - name: Model listing queries run under ONLY_FULL_GROUP_BY
+        run: php spark gateway:selftest

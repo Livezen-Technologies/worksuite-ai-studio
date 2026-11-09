@@ -17,7 +17,7 @@ class ExtendNodeInfrastructure extends Migration
             $this->forge->modifyColumn('servers', ['kind' => ['name' => 'kind', 'type' => 'VARCHAR', 'constraint' => 24, 'default' => 'ollama', 'null' => false]]);
         }
         $dec = static fn (string $c = '6,1') => ['type' => 'DECIMAL', 'constraint' => $c, 'null' => true];
-        $this->forge->addColumn('servers', [
+        $cols = [
             'deployment'      => ['type' => 'VARCHAR', 'constraint' => 16, 'null' => true],   // local | remote | cloud | docker
             'accelerator'     => ['type' => 'VARCHAR', 'constraint' => 8, 'null' => true],    // cuda | rocm | cpu
             'rocm_version'    => ['type' => 'VARCHAR', 'constraint' => 40, 'null' => true],
@@ -32,7 +32,10 @@ class ExtendNodeInfrastructure extends Migration
             'disk_used_gb'    => $dec('8,1'),
             'gpu_temp_c'      => $dec('5,1'),
             'metrics_at'      => ['type' => 'DATETIME', 'null' => true],
-        ]);
+        ];
+        // Only missing columns: a run that died partway can be repeated (MySQL DDL is not transactional).
+        $cols = array_filter($cols, fn ($c, $name) => ! $this->db->fieldExists($name, 'servers'), ARRAY_FILTER_USE_BOTH);
+        if ($cols) $this->forge->addColumn('servers', $cols);
 
         $this->forge->addField([
             'id'           => ['type' => 'BIGINT', 'unsigned' => true, 'auto_increment' => true],

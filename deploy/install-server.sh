@@ -49,7 +49,12 @@ DOMAIN="${AISTUDIO_DOMAIN:?set AISTUDIO_DOMAIN (e.g. aistudio.example.com) befor
 CERT_EMAIL="${AISTUDIO_CERT_EMAIL:?set AISTUDIO_CERT_EMAIL for certificate expiry notices}"
 sudo cp "${APP_DIR}/deploy/nginx-security-headers.conf" /etc/nginx/snippets/aistudio-security.conf
 # shellcheck disable=SC2016  # $binary_remote_addr is an nginx variable, not shell
-echo 'limit_req_zone $binary_remote_addr zone=aistudio_auth:10m rate=30r/m;' | sudo tee /etc/nginx/conf.d/aistudio-ratelimit.conf >/dev/null
+printf '%s\n' 'limit_req_zone $binary_remote_addr zone=aistudio_auth:10m rate=30r/m;' \
+  'limit_req_zone $binary_remote_addr zone=aistudio_api:10m rate=20r/s;' | sudo tee /etc/nginx/conf.d/aistudio-ratelimit.conf >/dev/null
+# PHP accepts the 500 MB audio / video uploads speech to text advertises (nginx allows 512M on those routes).
+printf '%s\n' 'upload_max_filesize = 512M' 'post_max_size = 520M' 'max_input_time = 300' \
+  | sudo tee "/etc/php/${PHP#php}/fpm/conf.d/90-aistudio-uploads.ini" >/dev/null
+sudo systemctl restart "${PHP}-fpm"
 sed "s/__DOMAIN__/${DOMAIN}/" "${APP_DIR}/deploy/nginx-ollamahub.conf" | sudo tee /etc/nginx/sites-available/ollamahub >/dev/null
 sudo ln -sf /etc/nginx/sites-available/ollamahub /etc/nginx/sites-enabled/ollamahub
 sudo rm -f /etc/nginx/sites-enabled/default
@@ -87,6 +92,10 @@ sudo cp "${APP_DIR}/deploy/prometheus-alerts.yml" /etc/prometheus/aistudio-alert
 # ServiceDown alert: export the state of the app's systemd units.
 echo 'ARGS="--collector.systemd --collector.systemd.unit-include=(ollamahub-queue|aistudio-asr|aistudio-ml|php8.3-fpm|nginx|mysql)\.service"' \
   | sudo tee /etc/default/prometheus-node-exporter >/dev/null
+# The app (www-data: queue worker, schedule cron) writes freshness metrics into the textfile folder.
+sudo install -d /var/lib/prometheus/node-exporter
+sudo setfacl -m u:www-data:rwx /var/lib/prometheus/node-exporter 2>/dev/null \
+  || { sudo chgrp www-data /var/lib/prometheus/node-exporter && sudo chmod g+rwx /var/lib/prometheus/node-exporter; }
 sudo systemctl enable --now prometheus-blackbox-exporter
 sudo systemctl restart prometheus prometheus-node-exporter prometheus-blackbox-exporter
 echo "    Alerts show on Prometheus' /alerts page. Add Alertmanager for email/Slack (docs/runbook.md)."

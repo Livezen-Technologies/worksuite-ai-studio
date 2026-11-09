@@ -9,7 +9,7 @@
 # it is alive, stops the run if the job is cancelled, and reports how the process ended. Get the token on the Servers
 # page: ⋯ → Install training agent. Run as your normal user (not root); it asks for sudo once to keep running after logout.
 set -euo pipefail
-VERSION="1.5.0"
+VERSION="1.6.0"
 DIR="${HOME}/.aistudio-agent"
 SERVER="" TOKEN="" UNINSTALL=0 FORCE_VENV=0
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -33,6 +33,12 @@ if [ "$UNINSTALL" = 1 ]; then
   rm -rf "$DIR"; say "Training agent removed."; exit 0
 fi
 [ -n "$SERVER" ] && [ -n "$TOKEN" ] || die "usage: --server URL --token aisa_..."
+# The agent runs code the Studio hands it, so the Studio must be reached over HTTPS (plain HTTP only
+# for a Studio on this machine).
+case "$SERVER" in
+  https://*|http://localhost|http://localhost:*|http://127.0.0.1|http://127.0.0.1:*) ;;
+  *) die "--server must be an https:// address (the agent token and training code must not travel in clear)" ;;
+esac
 [ "$(id -u)" != 0 ] || die "run this as your normal user, not root (training runs as that user)"
 command -v curl >/dev/null || die "curl is required"
 # Python environments: python3-venv, or conda / mamba (Anaconda, Miniconda, Miniforge). The service does not load
@@ -60,7 +66,7 @@ printf 'SERVER=%s\nTOKEN=%s\nAISTUDIO_PYENV=%s\nAISTUDIO_CONDA=%s\n' "$SERVER" "
 cat > "$DIR/agent-loop.sh" <<'LOOP'
 #!/usr/bin/env bash
 # AI Studio training agent loop (installed by aistudio-agent.sh).
-VERSION="1.5.0"
+VERSION="1.6.0"
 DIR="${HOME}/.aistudio-agent"
 . "$DIR/agent.env"
 JOB="" PID="" EXITED="" CODE="" TAIL="" ASR_STATE="" STORE_STATE="" ASR_DEVICE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"; ASR_DEVICE="${ASR_DEVICE:-$(nproc) CPU cores}"
@@ -82,8 +88,7 @@ metrics() {
     nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: *\([0-9.]*\).*/cuda_version=\1/p' | head -1
   elif command -v rocm-smi >/dev/null 2>&1; then
     echo "accelerator=rocm"
-    rocm-smi --showuse --showmeminfo vram --showtemp --csv 2>/dev/null | awk -F, 'NR==1 {for (i=1;i<=NF;i++) c[$i]=i; next}
-      { u+=$c["GPU use (%)"]; m+=$c["VRAM Total Used Memory (B)"]; t+=$c["VRAM Total Memory (B)"]; x=$c["Temperature (Sensor edge) (C)"]; if (x>h) h=x; n++ }
+    rocm-smi --showuse --showmeminfo vram --showtemp --csv 2>/dev/null | awk -F, '!hd && /GPU use/ {for (i=1;i<=NF;i++) c[$i]=i; hd=1; next} hd && $1 ~ /^card/ { u+=$c["GPU use (%)"]; m+=$c["VRAM Total Used Memory (B)"]; t+=$c["VRAM Total Memory (B)"]; x=$c["Temperature (Sensor edge) (C)"]; if (x>h) h=x; n++ }
       END { if (n) printf "gpu_util=%.1f\nvram_used_mb=%d\nvram_total_mb=%d\ngpu_temp=%d\n", u/n, m/1048576, t/1048576, h }'
     rocm-smi --showproductname 2>/dev/null | sed -n 's/.*Card [Ss]eries: *\(.*\)$/gpu_name=\1/p' | head -1
     [ -r /opt/rocm/.info/version ] && sed 's/^/rocm_version=/' /opt/rocm/.info/version | head -1
@@ -92,7 +97,7 @@ metrics() {
   fi
   # CPU busy % since the previous heartbeat, from /proc/stat.
   if [ -r /proc/stat ]; then
-    CUR="$(awk '/^cpu /{print $2+$3+$4+$6+$7+$8, $5}' /proc/stat)"
+    CUR="$(awk '/^cpu /{print $2+$3+$4+$7+$8+$9, $5+$6}' /proc/stat)"
     if [ -n "$CPU_PREV" ]; then
       set -- $CPU_PREV $CUR
       [ $(( ($3-$1)+($4-$2) )) -gt 0 ] && awk -v b=$(( $3-$1 )) -v i=$(( $4-$2 )) 'BEGIN {printf "cpu_util=%.1f\n", b*100/(b+i)}'
@@ -115,7 +120,7 @@ while true; do
     JOB="" PID=""
   fi
   metric_args
-  R="$(curl -s -m 30 -X POST -H "Authorization: Bearer ${TOKEN}" \
+  R="$(curl -fs -m 30 -X POST -H "Authorization: Bearer ${TOKEN}" \
         --data-urlencode "version=${VERSION}" --data-urlencode "job_id=${JOB}" --data-urlencode "gpus=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU')" \
         --data-urlencode "exited_job_id=${EXITED}" --data-urlencode "exit_code=${CODE}" --data-urlencode "tail=${TAIL}" \
         --data-urlencode "asr_state=${ASR_STATE}" --data-urlencode "asr_device=${ASR_DEVICE}" --data-urlencode "store_state=${STORE_STATE}" "${MARGS[@]}" \
@@ -134,9 +139,13 @@ while true; do
   fi
   case "$(get ACTION)" in
     run)
-      JOB="$(get JOB_ID)"; JD="$DIR/jobs/$JOB"; mkdir -p "$JD"
+      JOB="$(get JOB_ID)"; RUNNER="$(get RUNNER_URL)"
+      # Only a numeric job id (it names a folder) and a runner served by this Studio are accepted.
+      case "$JOB" in ''|*[!0-9]*) log "refused job id '$JOB'"; JOB=""; sleep 15; continue ;; esac
+      case "$RUNNER" in "${SERVER}/"*) ;; *) log "job $JOB: refused runner URL outside ${SERVER}"; EXITED="$JOB"; CODE=96; TAIL="runner URL not on this Studio"; JOB=""; sleep 15; continue ;; esac
+      JD="$DIR/jobs/$JOB"; mkdir -p "$JD"
       log "job $JOB: starting"
-      if curl -fsS -m 60 -o "$JD/runner.sh" "$(get RUNNER_URL)"; then
+      if curl -fsS -m 60 -o "$JD/runner.sh" "$RUNNER"; then
         AISTUDIO_JOB_URL="$(get JOB_URL)" AISTUDIO_JOB_TOKEN="$(get TOKEN)" AISTUDIO_JOB_DIR="$JD" \
           AISTUDIO_PYENV="${AISTUDIO_PYENV:-venv}" AISTUDIO_CONDA="${AISTUDIO_CONDA:-}" \
           setsid bash "$JD/runner.sh" > "$JD/runner.log" 2>&1 < /dev/null &
@@ -152,8 +161,8 @@ while true; do
 done
 LOOP
 chmod 700 "$DIR/agent-loop.sh"
-curl -fsS -m 60 -o "$DIR/aistudio-store-node.sh" "${SERVER}/node/aistudio-store-node.sh" && chmod 700 "$DIR/aistudio-store-node.sh"
-curl -fsS -m 60 -o "$DIR/aistudio-asr-node.sh" "${SERVER}/node/aistudio-asr-node.sh" && chmod 700 "$DIR/aistudio-asr-node.sh" \
+curl -fsS -m 60 -o "$DIR/aistudio-store-node.sh.new" "${SERVER}/node/aistudio-store-node.sh" && mv "$DIR/aistudio-store-node.sh.new" "$DIR/aistudio-store-node.sh" && chmod 700 "$DIR/aistudio-store-node.sh"
+curl -fsS -m 60 -o "$DIR/aistudio-asr-node.sh.new" "${SERVER}/node/aistudio-asr-node.sh" && mv "$DIR/aistudio-asr-node.sh.new" "$DIR/aistudio-asr-node.sh" && chmod 700 "$DIR/aistudio-asr-node.sh" \
   || say "Could not fetch the GPU speech helper; training still works."
 
 say "Installing the agent service"

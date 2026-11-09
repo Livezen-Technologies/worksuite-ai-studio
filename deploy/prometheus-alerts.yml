@@ -32,6 +32,30 @@ groups:
         annotations:
           summary: "No successful database backup for over 30 hours"
 
+      - alert: SchedulerStale
+        # `spark schedule:run` (cron, every minute) writes aistudio_scheduler_last_success_seconds.
+        expr: time() - aistudio_scheduler_last_success_seconds > 15 * 60
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Scheduled jobs have not run for 15 minutes (cron stopped or schedule:run failing)"
+
+      - alert: QueueWorkerStale
+        # ollamahub-queue writes aistudio_queue_last_success_seconds after every pass.
+        expr: time() - aistudio_queue_last_success_seconds > 10 * 60
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "The queue worker has not finished a pass for 10 minutes"
+
+      - alert: ModelAutoloadStale
+        # The model load policy job (every 5 minutes) writes aistudio_model_autoload_last_success_seconds.
+        expr: time() - aistudio_model_autoload_last_success_seconds > 30 * 60
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Model load policy (keep loaded / unload when idle) has not run for 30 minutes"
+
       - alert: BackupRestoreStale
         # deploy/verify-backup.sh (weekly) writes aistudio_backup_restore_ok_seconds after a good test restore.
         expr: time() - aistudio_backup_restore_ok_seconds > 8 * 86400

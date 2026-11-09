@@ -5,9 +5,12 @@
 #   bash deploy/rsync-deploy.sh                 # uses the defaults below
 #   DEPLOY_HOST=ubuntu@aistudio.example.com bash deploy/rsync-deploy.sh
 #
-# Steps: build the frontend → back up the database on the server → sync code (never touching
-# server-only files) → migrate → restart workers. If the migration fails, the script stops and
-# prints the restore command for the backup it just took.
+# Steps: build the frontend → back up the database on the server → stop the queue worker → sync
+# code (never touching server-only files; files are swapped in at the end of the transfer) →
+# migrate → restart workers. Migrations only add tables and columns, so the old code keeps
+# working against the new schema; the window where new code meets the old schema is the few
+# seconds between the file swap and the migration. If the migration fails, the queue worker is
+# left stopped and the script prints the restore command for the backup it just took.
 #
 set -euo pipefail
 
@@ -40,10 +43,15 @@ ls -1t "${BACKUP_DIR}"/predeploy-*.sql.gz | tail -n +11 | xargs -r rm -f   # kee
 echo "    backup: ${BACKUP_DIR}/predeploy-${STAMP}.sql.gz"
 REMOTE
 
+echo "==> Stopping the queue worker (no jobs run on half-deployed code)"
+ssh "${HOST}" "sudo systemctl stop ollamahub-queue"
+
 echo "==> Syncing to ${HOST}:${DEST}"
+# --delay-updates stages every changed file and renames them all at the end, so the live tree
+# is never a mix of old and new files for the length of the transfer.
 # Never delete or overwrite what only exists on the server: config, user data, uploads,
 # node installers, logs. --delete only prunes code that was removed from the repo.
-rsync -az --delete \
+rsync -az --delete --delay-updates \
   --exclude '.git/' \
   --exclude '.github/' \
   --exclude '.env' \
@@ -65,7 +73,8 @@ if ! ssh "${HOST}" "set -e; cd '${DEST}' && composer install --no-dev --no-inter
       && php8.3 spark migrate --all \
       && php8.3 spark cache:clear \
       && sudo systemctl restart ollamahub-queue php8.3-fpm"; then
-  echo "!! Deploy step failed. The database backup from before this deploy is:" >&2
+  echo "!! Deploy step failed. The queue worker is stopped; start it with: sudo systemctl start ollamahub-queue" >&2
+  echo "   The database backup from before this deploy is:" >&2
   echo "   ${HOST}:${BACKUP_DIR}/predeploy-${STAMP}.sql.gz" >&2
   echo "   Restore: see docs/runbook.md (\"Restore the database\")." >&2
   exit 1

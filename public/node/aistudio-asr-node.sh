@@ -70,7 +70,7 @@ start_service() {
     ASR_MULTI_MODEL="$S/models/faster-whisper-small" ASR_LID_MODEL="$S/models/faster-whisper-base" ASR_CATALOG="$S/code/catalog.json" \
     setsid "$PY" asr_service.py >> "$S/service.log" 2>&1 < /dev/null &
   echo $! > "$S/service.pid"
-  cd - >/dev/null
+  cd - >/dev/null || true
 }
 
 start_tunnel() {   # reuse the node tunnel's key, host and user; listen on the Studio at <tunnel-port>

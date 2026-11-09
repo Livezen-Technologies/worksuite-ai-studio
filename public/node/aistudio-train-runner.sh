@@ -5,7 +5,7 @@
 # runs train.py, which reports its own progress and uploads its result. Setup errors are reported as a failed job.
 set -uo pipefail
 : "${AISTUDIO_JOB_URL:?}" "${AISTUDIO_JOB_TOKEN:?}"
-JD="${AISTUDIO_JOB_DIR:-$PWD}"; cd "$JD"
+JD="${AISTUDIO_JOB_DIR:-$PWD}"; cd "$JD" || exit 1
 FILES="${AISTUDIO_JOB_URL%/progress}/files"
 auth=(-H "Authorization: Bearer ${AISTUDIO_JOB_TOKEN}")
 post() { curl -s -m 20 "${auth[@]}" -H 'Content-Type: application/json' -d "$1" "$AISTUDIO_JOB_URL" >/dev/null || true; }
