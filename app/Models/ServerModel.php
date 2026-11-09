@@ -18,6 +18,7 @@ class ServerModel extends Model
         'tunnel_port', 'ssh_public_key', 'ssh_fingerprint', 'enrolled_at',
         'is_enabled', 'disabled_at', 'disabled_reason',
         'deployment', 'accelerator', 'rocm_version', 'cloud_provider', 'region', 'container_image', 'max_concurrency',
+        'pending_control', 'pending_control_at', 'control_result', 'control_result_at',
         'gpu_util_pct', 'vram_used_gb', 'cpu_util_pct', 'ram_used_gb', 'disk_used_gb', 'gpu_temp_c', 'metrics_at', 'gpu_vram_gb',
     ];
 

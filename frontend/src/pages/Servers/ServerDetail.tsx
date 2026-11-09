@@ -23,7 +23,8 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
   const toast = useToast();
   const manage = useAuth().can('servers.manage');
   const [tab, setTab] = useState<'overview' | 'usage' | 'logs'>('overview');
-  const q = useQuery({ queryKey: ['server', id], queryFn: () => get<Server & { health_history: HealthRow[] }>(`/servers/${id}`) });
+  const q = useQuery({ queryKey: ['server', id], queryFn: () => get<Server & { health_history: HealthRow[] }>(`/servers/${id}`),
+    refetchInterval: (query) => (query.state.data?.pending_control ? 5_000 : false) }); // watch a command until the agent reports
   const s = q.data;
   const models = useQuery({
     queryKey: ['server-models', id],
@@ -104,6 +105,9 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
                   { label: ollama ? 'Ollama version' : 'Engine', value: s.ollama_version ?? KINDS[kind].label },
                   { label: 'Deployment', value: [s.deployment ? DEPLOYMENTS[s.deployment] : '—', s.cloud_provider, s.region, s.container_image].filter(Boolean).join(' · ') },
                   { label: 'Accelerator', value: s.accelerator ? `${ACCELERATORS[s.accelerator]}${s.accelerator === 'rocm' && s.rocm_version ? ` ${s.rocm_version}` : ''}` : 'Not reported' },
+                  ...(s.pending_control || s.control_result ? [{ label: 'Last command', value: s.pending_control
+                    ? `${s.pending_control} — waiting for the node agent`
+                    : <span className={s.control_result?.startsWith('ok') ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>{s.control_result}{s.control_result_at ? ` (${ago(s.control_result_at)})` : ''}</span> }] : []),
                   { label: 'Agent report', value: s.metrics_at ? `${ago(s.metrics_at)}${s.metrics_fresh ? '' : ' (stale)'}` : 'No agent connected' },
                   ...(s.max_concurrency ? [{ label: 'Max concurrent requests', value: String(s.max_concurrency) }] : []),
                   { label: 'Host', value: [s.hostname, s.ip_address].filter(Boolean).join(' · ') || '—' },

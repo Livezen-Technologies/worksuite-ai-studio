@@ -9,7 +9,7 @@
 # it is alive, stops the run if the job is cancelled, and reports how the process ended. Get the token on the Servers
 # page: ⋯ → Install training agent. Run as your normal user (not root); it asks for sudo once to keep running after logout.
 set -euo pipefail
-VERSION="1.6.0"
+VERSION="1.7.0"
 DIR="${HOME}/.aistudio-agent"
 SERVER="" TOKEN="" UNINSTALL=0 FORCE_VENV=0
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -66,10 +66,10 @@ printf 'SERVER=%s\nTOKEN=%s\nAISTUDIO_PYENV=%s\nAISTUDIO_CONDA=%s\n' "$SERVER" "
 cat > "$DIR/agent-loop.sh" <<'LOOP'
 #!/usr/bin/env bash
 # AI Studio training agent loop (installed by aistudio-agent.sh).
-VERSION="1.6.0"
+VERSION="1.7.0"
 DIR="${HOME}/.aistudio-agent"
 . "$DIR/agent.env"
-JOB="" PID="" EXITED="" CODE="" TAIL="" ASR_STATE="" STORE_STATE="" ASR_DEVICE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"; ASR_DEVICE="${ASR_DEVICE:-$(nproc) CPU cores}"
+JOB="" PID="" EXITED="" CODE="" TAIL="" CONTROL_RESULT="" ASR_STATE="" STORE_STATE="" ASR_DEVICE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"; ASR_DEVICE="${ASR_DEVICE:-$(nproc) CPU cores}"
 log() { echo "$(date '+%F %T') $*" >> "$DIR/agent.log"; }
 log "agent ${VERSION} started"
 # Keep the speech helper current: fetched from the Studio each time the agent starts.
@@ -123,9 +123,9 @@ while true; do
   R="$(curl -fs -m 30 -X POST -H "Authorization: Bearer ${TOKEN}" \
         --data-urlencode "version=${VERSION}" --data-urlencode "job_id=${JOB}" --data-urlencode "gpus=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU')" \
         --data-urlencode "exited_job_id=${EXITED}" --data-urlencode "exit_code=${CODE}" --data-urlencode "tail=${TAIL}" \
-        --data-urlencode "asr_state=${ASR_STATE}" --data-urlencode "asr_device=${ASR_DEVICE}" --data-urlencode "store_state=${STORE_STATE}" "${MARGS[@]}" \
+        --data-urlencode "asr_state=${ASR_STATE}" --data-urlencode "asr_device=${ASR_DEVICE}" --data-urlencode "store_state=${STORE_STATE}" --data-urlencode "control_result=${CONTROL_RESULT}" "${MARGS[@]}" \
         "${SERVER}/api/agent/heartbeat?format=env" 2>>"$DIR/agent.log")" || { sleep 30; continue; }
-  EXITED="" CODE="" TAIL=""
+  EXITED="" CODE="" TAIL="" CONTROL_RESULT=""
   get() { printf '%s\n' "$R" | sed -n "s/^$1=//p" | head -1; }
   # GPU speech service (transcription for the Studio's Speech page) — set up once, then kept running.
   if [ -x "$DIR/aistudio-asr-node.sh" ]; then
@@ -137,6 +137,19 @@ while true; do
     if [ "$(get STORE_WANTED)" = 1 ]; then STORE_STATE="$(STORE_KEY="$(get STORE_KEY)" timeout 30 bash "$DIR/aistudio-store-node.sh" ensure "$(get STORE_PORT)" "$(get STORE_DIR)" 2>>"$DIR/agent.log")"
     elif [ -n "$STORE_STATE" ] && [ "$STORE_STATE" != off ]; then STORE_STATE="$(bash "$DIR/aistudio-store-node.sh" stop 2>>"$DIR/agent.log")"; fi
   fi
+  # Node controls from the Studio (Servers → Restart / Update Ollama / Shut down), through the root-owned helper.
+  CONTROL="$(get CONTROL)"
+  case "$CONTROL" in
+    restart|update|shutdown)
+      log "control: $CONTROL"
+      if [ ! -x /usr/local/sbin/aistudio-node-control ]; then
+        CONTROL_RESULT="Not set up on this node: install /usr/local/sbin/aistudio-node-control (see the agent installer's last lines)"
+      elif OUT="$(timeout 600 sudo -n /usr/local/sbin/aistudio-node-control "$CONTROL" 2>&1)"; then
+        CONTROL_RESULT="ok: $(printf '%s' "$OUT" | tail -1 | cut -c1-200)"
+      else
+        CONTROL_RESULT="failed: $(printf '%s' "$OUT" | tail -1 | cut -c1-200)"
+      fi ;;
+  esac
   case "$(get ACTION)" in
     run)
       JOB="$(get JOB_ID)"; RUNNER="$(get RUNNER_URL)"
@@ -195,6 +208,11 @@ sleep 3
 if systemctl --user is-active --quiet aistudio-agent.service; then
   say "Training agent running. It picks up queued jobs this node can run (log: ${DIR}/agent.log)."
   say "Training must also be allowed for this node on the Servers page."
+  if [ ! -x /usr/local/sbin/aistudio-node-control ]; then
+    say "Optional: to let the Studio restart, update or shut down Ollama on this node, run once (as an administrator):"
+    printf '    curl -fsSL %s/node/aistudio-node-control.sh | sudo install -m 755 /dev/stdin /usr/local/sbin/aistudio-node-control\n' "$SERVER"
+    printf '    echo "%s ALL=(root) NOPASSWD: /usr/local/sbin/aistudio-node-control" | sudo tee /etc/sudoers.d/aistudio-node-control\n' "$(id -un)"
+  fi
 else
   die "the agent service did not start: systemctl --user status aistudio-agent.service"
 fi

@@ -282,11 +282,17 @@ class ServersController extends BaseApiController
     public function control($id = null, $action = null)
     {
         if ($r = $this->requirePermission('servers.manage')) return $r;
-        if (! $this->servers()->find((int) $id)) return $this->failure('Server not found.', 404);
-        return $this->failure(
-            "Action '{$action}' requires the node control agent, configured during deployment (Phase 10).",
-            501
-        );
+        $s = $this->servers()->find((int) $id);
+        if (! $s) return $this->failure('Server not found.', 404);
+        if (! in_array($action, ['restart', 'update', 'shutdown'], true)) return $this->failure('Unknown action.', 422);
+        if (($s['kind'] ?? 'ollama') !== 'ollama') return $this->failure('Restart, update and shut down are for Ollama nodes.', 422);
+        // The node agent carries it out; without a recently seen agent nothing would ever pick it up.
+        if (empty($s['agent_seen_at']) || strtotime($s['agent_seen_at']) < time() - 300) {
+            return $this->failure('This node has no running node agent, which carries out these commands. Install it from Servers → Connect a node (training agent), then try again.', 409);
+        }
+        $this->servers()->update((int) $id, ['pending_control' => $action, 'pending_control_at' => date('Y-m-d H:i:s'), 'control_result' => null, 'control_result_at' => null]);
+        return $this->ok($this->servers()->publicRow($this->servers()->find((int) $id)),
+            'Sent to the node agent. It runs it within about 15 seconds; the result shows on the server.', 202);
     }
 
     /** Whitelist + normalise incoming server fields. */

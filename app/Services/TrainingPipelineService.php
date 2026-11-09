@@ -262,7 +262,18 @@ class TrainingPipelineService
             'agent_seen_at' => $now, 'agent_version' => mb_substr((string) ($in['version'] ?? ''), 0, 20) ?: null, 'agent_job_id' => $busy,
         ]);
         if (! empty($in['probe'])) return ['action' => 'idle', 'why' => 'probe'];   // the installer's token check never takes work
-        $speech = $this->speech($server, $in) + $this->storage($server, $in);   // GPU speech service + storage helper on the node
+        // Node controls: record what the agent reports, then hand out a pending command (once, newest only, for 10 minutes).
+        if (($res = trim((string) ($in['control_result'] ?? ''))) !== '') {
+            $this->db->table('servers')->where('id', $server['id'])->update(['control_result' => mb_substr($res, 0, 255), 'control_result_at' => $now]);
+        }
+        $control = [];
+        if (! empty($server['pending_control']) && ! empty($server['pending_control_at']) && strtotime($server['pending_control_at']) > time() - 600) {
+            $control = ['control' => $server['pending_control']];
+            $this->db->table('servers')->where('id', $server['id'])->update(['pending_control' => null]);
+        } elseif (! empty($server['pending_control'])) {
+            $this->db->table('servers')->where('id', $server['id'])->update(['pending_control' => null, 'control_result' => 'Expired: the agent did not pick it up within 10 minutes.', 'control_result_at' => $now]);
+        }
+        $speech = $this->speech($server, $in) + $this->storage($server, $in) + $control;   // speech service, storage helper, node control
         if ($busy) {
             // only this node's own job: another node's token must not keep a job "alive" (audit S3)
             $job = $this->db->table('training_jobs')->where(['id' => $busy, 'server_id' => $server['id']])->get()->getRowArray();

@@ -53,6 +53,11 @@ export interface Server {
   metrics_at?: string | null;
   metrics_fresh?: boolean;
   availability?: Availability;
+  /** node controls (restart / update / shut down), carried out by the node agent */
+  pending_control?: string | null;
+  control_result?: string | null;
+  control_result_at?: string | null;
+  agent_seen_at?: string | null;
   self_hosted?: boolean;
 }
 
