@@ -59,7 +59,7 @@ final class OpenAIGatewayTest extends CIUnitTestCase
             ->addKey('id', true)->createTable('api_keys');
         $f->addField($id + ['api_key_id' => $null('INTEGER'), 'user_id' => $null('INTEGER'), 'endpoint' => $null(), 'model' => $null(), 'server_id' => $null('INTEGER'),
             'method' => $null(), 'prompt_tokens' => $null('INTEGER'), 'completion_tokens' => $null('INTEGER'), 'total_tokens' => $null('INTEGER'),
-            'processing_ms' => $null('INTEGER'), 'status' => $null('INTEGER'), 'client_ip' => $null(), 'country' => $null(), 'error' => $null(), 'created_at' => $null('DATETIME')])
+            'processing_ms' => $null('INTEGER'), 'status' => $null('INTEGER'), 'client_ip' => $null(), 'country' => $null(), 'error' => $null(), 'created_at' => $null('DATETIME'), 'end_user' => $null()])
             ->addKey('id', true)->createTable('api_logs');
         $f->addField($id + ['name' => $null(), 'kind' => $null(), 'api_url' => $null(), 'auth_token' => $null(), 'status' => $null(), 'health_score' => ['type' => 'INTEGER', 'default' => 100],
             'is_enabled' => ['type' => 'INTEGER', 'default' => 1], 'deleted_at' => $null('DATETIME'), 'gpu_vram_gb' => $null('REAL'), 'vram_used_gb' => $null('REAL'),
@@ -438,5 +438,29 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $this->assertStringContainsString('80%', $n[0]['title']);
         $this->api('post', 'chat/completions', ['model' => 'fake-chat', 'messages' => [['role' => 'user', 'content' => 'x']]]);
         $this->assertSame(1, $this->db->table('notifications')->countAllResults(), 'not repeated in the same day');
+    }
+
+    /** Gap 5: n > 1, the user field, translations, and clear answers for what is not served. */
+    public function testMoreOpenAiCompatibility(): void
+    {
+        $b = $this->body($this->api('post', 'chat/completions', ['model' => 'fake-chat', 'n' => 3, 'user' => 'end-user-42', 'messages' => [['role' => 'user', 'content' => 'x']]]));
+        $this->assertSame([0, 1, 2], array_column($b['choices'], 'index'));
+        $this->assertSame(36, $b['usage']['total_tokens'], 'usage covers every answer');
+        $this->assertSame('end-user-42', $this->db->table('api_logs')->orderBy('id', 'DESC')->get()->getRow()->end_user);
+
+        $this->assertSame('n', $this->body($this->api('post', 'chat/completions', ['model' => 'fake-chat', 'n' => 2, 'stream' => true, 'messages' => [['role' => 'user', 'content' => 'x']]]))['error']['param']);
+        $this->assertSame('logprobs', $this->body($this->api('post', 'chat/completions', ['model' => 'fake-chat', 'logprobs' => true, 'messages' => [['role' => 'user', 'content' => 'x']]]))['error']['param']);
+        $this->api('post', 'audio/speech', ['model' => 'tts-1', 'input' => 'hi', 'voice' => 'alloy'])->assertStatus(501);
+
+        $res = $this->transcribe(['model' => 'whisper-1', 'language' => 'si']);
+        $res->assertStatus(200);
+        $tmp = tempnam(sys_get_temp_dir(), 'aud');
+        file_put_contents($tmp, str_repeat("\0", 2048));
+        service('superglobals')->setFilesArray(['file' => ['name' => 'a.wav', 'type' => 'audio/wav', 'tmp_name' => $tmp, 'error' => 0, 'size' => 2048]]);
+        $this->withHeaders($this->auth())->post('api/openai/v1/audio/translations', ['model' => 'whisper-1'])->assertStatus(200);
+        service('superglobals')->setFilesArray([]);
+        @unlink($tmp);
+        $q = $this->sent()['query'];
+        $this->assertSame(['translate', 'small', 'auto'], [$q['task'], $q['model'], $q['language']], 'translation: multilingual model, any language in, English out');
     }
 }

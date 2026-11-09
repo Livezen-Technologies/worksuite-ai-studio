@@ -315,6 +315,8 @@ $routes->group('api/openai/v1', ['namespace' => 'App\Controllers\Api\Gateway', '
     $routes->post('completions', 'OpenAIController::completions');
     $routes->post('embeddings', 'OpenAIController::embeddings');
     $routes->post('audio/transcriptions', 'OpenAIController::transcriptions');
+    $routes->post('audio/translations', 'OpenAIController::translations');
+    $routes->post('audio/speech', 'OpenAIController::speech');
 });
 
 // OAuth 2.0 client_credentials: exchange a key + secret for a short-lived JWT access token.

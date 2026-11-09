@@ -92,7 +92,23 @@ class OpenAIController extends BaseApiController
      */
     public function transcriptions()
     {
+        return $this->audio('transcribe');
+    }
+
+    /**
+     * OpenAI `POST /audio/translations`: speech in any language → English text. Same fields as
+     * transcriptions except language. "whisper-1" or no model → Whisper Small (a multilingual model; the
+     * Sinhala fine-tune only writes Sinhala).
+     */
+    public function translations()
+    {
+        return $this->audio('translate');
+    }
+
+    private function audio(string $task)
+    {
         $this->begin();
+        $endpoint = $task === 'translate' ? 'audio.translations' : 'audio.transcriptions';
         if ($e = $this->scopeError('transcribe')) return $e;
         $file = $this->request->getFile('file');
         // is_uploaded_file() is always false under the CLI test runner; only there a plain temp file counts.
@@ -103,22 +119,24 @@ class OpenAIController extends BaseApiController
         $key   = $this->key();
         $reg   = new ModelRegistryService();
         $asked = trim((string) ($this->request->getPost('model') ?? ''));
-        if ($asked === '' || in_array($asked, ['default', 'whisper-1'], true)) $asked = (string) ($reg->defaultFor('transcription', $key['application'] ?? null) ?? 'whisper:sinhala');
+        if ($asked === '' || in_array($asked, ['default', 'whisper-1'], true)) {
+            $asked = $task === 'translate' ? 'whisper:small' : (string) ($reg->defaultFor('transcription', $key['application'] ?? null) ?? 'whisper:sinhala');
+        }
         $speechKey = \App\Services\SpeechService::keyFrom($asked);
         if ($speechKey === null) return $this->error("Unknown speech model '{$asked}'.", 400, 'invalid_value', 'model');
         $model = \App\Services\SpeechService::registryName($speechKey);
         $allowed = ! empty($key['allowed_models']) ? json_decode($key['allowed_models'], true) : null;
         if (is_array($allowed) && $allowed && ! in_array($model, $allowed, true)) {
-            return $this->failLogged('audio.transcriptions', $model, null, 403, "This API key may not use the model '{$model}'.", 'model_not_allowed');
+            return $this->failLogged($endpoint, $model, null, 403, "This API key may not use the model '{$model}'.", 'model_not_allowed');
         }
         if (! $reg->roleAllowed($model, $reg->roleOf(isset($key['user_id']) ? (int) $key['user_id'] : null))) {
-            return $this->failLogged('audio.transcriptions', $model, null, 403, "The model '{$model}' is not available to this key's owner.", 'model_not_allowed');
+            return $this->failLogged($endpoint, $model, null, 403, "The model '{$model}' is not available to this key's owner.", 'model_not_allowed');
         }
 
         if ($q = (new ApiGatewayService())->quotaError($key)) {
-            return $this->failLogged('audio.transcriptions', $model, null, 429, $q, 'insufficient_quota');
+            return $this->failLogged($endpoint, $model, null, 429, $q, 'insufficient_quota');
         }
-        $lang = strtolower(trim((string) ($this->request->getPost('language') ?? '')));
+        $lang = $task === 'translate' ? '' : strtolower(trim((string) ($this->request->getPost('language') ?? '')));
         $lang = match (true) {
             $lang === '' => 'auto', in_array($lang, ['si', 'en', 'mix'], true) => $lang, str_starts_with($lang, 'si') => 'si', str_starts_with($lang, 'en') => 'en', default => 'auto',
         };
@@ -128,12 +146,12 @@ class OpenAIController extends BaseApiController
         $words = in_array('word', $gran, true);
 
         $svc = new \App\Services\SpeechService();
-        [$code, $j, $used, $err] = $svc->transcribe($file->getTempName(), ['language' => $lang, 'model' => $speechKey, 'words' => $words], $svc->targets('auto'));
+        [$code, $j, $used, $err] = $svc->transcribe($file->getTempName(), ['language' => $lang, 'model' => $speechKey, 'words' => $words, 'task' => $task], $svc->targets('auto'));
         if ($j === null || $code !== 200) {
             $msg = $code === 0 ? 'The speech service is not running.' : ($j['error'] ?? 'Transcription failed.');
-            return $this->failLogged('audio.transcriptions', $model, $used['server_id'] ?? null, $code >= 400 && $code < 500 ? $code : ($code === 0 ? 503 : 502), $msg, 'upstream_error');
+            return $this->failLogged($endpoint, $model, $used['server_id'] ?? null, $code >= 400 && $code < 500 ? $code : ($code === 0 ? 503 : 502), $msg, 'upstream_error');
         }
-        $this->logCall('audio.transcriptions', $model, $used['server_id'] ?? null, 200, null, null);
+        $this->logCall($endpoint, $model, $used['server_id'] ?? null, 200, null, null);
         $text = (string) ($j['text'] ?? '');
         $segs = array_values((array) ($j['segments'] ?? []));
         $stamp = static function (float $t, string $sep): string {
@@ -152,7 +170,7 @@ class OpenAIController extends BaseApiController
                 }
                 return $this->plain($out, $format === 'srt' ? 'application/x-subrip' : 'text/vtt');
             case 'verbose_json':
-                $body = ['task' => 'transcribe', 'language' => $j['language'] ?? $lang, 'duration' => (float) ($j['duration'] ?? 0), 'text' => $text,
+                $body = ['task' => $task === 'translate' ? 'translate' : 'transcribe', 'language' => $j['language'] ?? $lang, 'duration' => (float) ($j['duration'] ?? 0), 'text' => $text,
                     'segments' => array_map(static fn ($sg, $i) => ['id' => $i, 'start' => (float) $sg['start'], 'end' => (float) $sg['end'], 'text' => (string) $sg['text']], $segs, array_keys($segs))];
                 if ($words) {
                     $body['words'] = [];
@@ -162,6 +180,12 @@ class OpenAIController extends BaseApiController
             default:
                 return $this->json(['text' => $text]);
         }
+    }
+
+    /** OpenAI `POST /audio/speech`: not served (voices run on devices as Sinhala Engine packages). */
+    public function speech()
+    {
+        return $this->error('Text to speech is not available on this server yet: voices run on devices as Sinhala Engine packages.', 501, 'not_implemented');
     }
 
     private function plain(string $body, string $type)
@@ -184,7 +208,12 @@ class OpenAIController extends BaseApiController
         } catch (\InvalidArgumentException $e) {
             return $this->error($e->getMessage(), 400, 'invalid_value', isset($in['tool_choice']) && ! str_starts_with($e->getMessage(), 'tools') ? 'tool_choice' : 'tools');
         }
-        if ((int) ($in['n'] ?? 1) > 1) return $this->error('Only n=1 is supported.', 400, 'unsupported_parameter', 'n');
+        $n = (int) ($in['n'] ?? 1);
+        if ($n < 1 || $n > 8) return $this->error('n must be from 1 to 8.', 400, 'invalid_value', 'n');
+        if ($n > 1 && ! empty($in['stream'])) return $this->error('n > 1 is supported without streaming only.', 400, 'unsupported_parameter', 'n');
+        if (! empty($in['logprobs']) || isset($in['top_logprobs'])) {
+            return $this->error('logprobs are not available: the engines behind this gateway do not all report them.', 400, 'unsupported_parameter', 'logprobs');
+        }
         try {
             $messages = $this->messages($in['messages'] ?? null);
         } catch (\InvalidArgumentException $e) {
@@ -291,8 +320,28 @@ class OpenAIController extends BaseApiController
                 ? ['index' => 0, 'message' => ['role' => 'assistant', 'content' => ($calls && $text === '') ? null : $text]
                     + ($calls ? ['tool_calls' => array_map(static function ($c) { unset($c['index']); return $c; }, $calls)] : []), 'logprobs' => null, 'finish_reason' => $finish]
                 : ['index' => 0, 'text' => $text, 'logprobs' => null, 'finish_reason' => $finish];
+            $choices = [$choice];
+            // n > 1: more answers from the same node, one after another (engines differ in batching support).
+            for ($i = 1, $want = (int) ($in['n'] ?? 1); $i < $want; $i++) {
+                $more = '';
+                try {
+                    $f2 = (new ProviderService())->chat($server, $model, $messages, ['params' => $params, 'tools' => $tools, 'tool_choice' => $toolChoice],
+                        function (string $d) use (&$more) { $more .= $d; });
+                } catch (\Throwable $e) {
+                    break; // keep the answers we have
+                }
+                $p2 = $f2['prompt_tokens'] ?? ApiGatewayService::estimateTokens($messages);
+                $c2 = $f2['completion_tokens'] ?? ApiGatewayService::estimateTokens($more);
+                $this->logCall($endpoint, $model, (int) $server['id'], 200, $p2, $c2);
+                $usage['prompt_tokens'] += (int) $p2; $usage['completion_tokens'] += (int) $c2; $usage['total_tokens'] += (int) $p2 + (int) $c2;
+                $calls2 = array_values(array_map(static fn ($tc) => ['id' => $tc['id'], 'type' => 'function', 'function' => ['name' => $tc['name'], 'arguments' => $tc['arguments']]], $f2['tool_calls'] ?? []));
+                $fin2 = $calls2 ? 'tool_calls' : ($f2['finish_reason'] ?? 'stop');
+                $choices[] = $object === 'chat.completion'
+                    ? ['index' => $i, 'message' => ['role' => 'assistant', 'content' => ($calls2 && $more === '') ? null : $more] + ($calls2 ? ['tool_calls' => $calls2] : []), 'logprobs' => null, 'finish_reason' => $fin2]
+                    : ['index' => $i, 'text' => $more, 'logprobs' => null, 'finish_reason' => $fin2];
+            }
             return $this->json(['id' => $id, 'object' => $object, 'created' => $created, 'model' => $model,
-                'system_fingerprint' => 'worksuite-' . substr(md5((string) $server['id']), 0, 8), 'choices' => [$choice], 'usage' => $usage]);
+                'system_fingerprint' => 'worksuite-' . substr(md5((string) $server['id']), 0, 8), 'choices' => $choices, 'usage' => $usage]);
         }
         return $this->failLogged($endpoint, $model, null, 502, $lastErr, 'upstream_error');
     }
@@ -456,6 +505,18 @@ class OpenAIController extends BaseApiController
         return $out;
     }
 
+    private function endUser(): ?string
+    {
+        static $cache = [];
+        $k = spl_object_id($this);
+        if (! array_key_exists($k, $cache)) {
+            $b = json_decode((string) $this->request->getBody(), true);
+            $u = is_array($b) ? ($b['user'] ?? null) : $this->request->getPost('user');
+            $cache[$k] = is_string($u) && trim($u) !== '' ? mb_substr(trim($u), 0, 120) : null;
+        }
+        return $cache[$k];
+    }
+
     private function body(): ?array
     {
         $raw = (string) $this->request->getBody();
@@ -473,6 +534,8 @@ class OpenAIController extends BaseApiController
             'total_tokens' => ($pt === null && $ct === null) ? null : (int) $pt + (int) $ct,
             'processing_ms' => $this->start ? (int) round((microtime(true) - $this->start) * 1000) : null,
             'status' => $status, 'client_ip' => $this->request->getIPAddress(), 'error' => $error ? mb_substr($error, 0, 255) : null,
+            // OpenAI's `user`: the caller's own id for the end user, kept for abuse tracing and per-user usage
+            'end_user' => ($u = $this->endUser()) !== null ? $u : null,
         ]);
     }
 

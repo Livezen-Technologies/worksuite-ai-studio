@@ -99,6 +99,7 @@ class SpeechService
         $query = http_build_query([
             'language' => $opts['language'] ?? 'si', 'model' => $opts['model'] ?? 'sinhala', 'words' => ! empty($opts['words']) ? 1 : 0,
             'fast' => ! empty($opts['fast']) ? 1 : 0, 'numerals' => ($opts['numerals'] ?? true) ? 1 : 0,
+            'task' => ($opts['task'] ?? 'transcribe') === 'translate' ? 'translate' : 'transcribe',
         ]);
         $code = 0; $body = false; $err = ''; $used = null;
         foreach ($targets as $t) {

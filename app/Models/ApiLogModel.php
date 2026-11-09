@@ -13,7 +13,7 @@ class ApiLogModel extends Model
     protected $allowedFields = [
         'api_key_id', 'user_id', 'endpoint', 'model', 'server_id', 'method',
         'prompt_tokens', 'completion_tokens', 'total_tokens', 'processing_ms',
-        'status', 'client_ip', 'country', 'error', 'created_at',
+        'status', 'client_ip', 'country', 'error', 'created_at', 'end_user',
     ];
 
     /** Token usage for a key since a given datetime (for quota enforcement). */
