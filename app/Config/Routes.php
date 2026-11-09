@@ -89,6 +89,8 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->get('registry', 'ModelRegistryController::index');
     $routes->get('registry/meta', 'ModelRegistryController::meta');
     $routes->get('registry/defaults', 'ModelRegistryController::defaults');
+    $routes->get('registry/catalogue', 'ModelRegistryController::catalogue');
+    $routes->post('registry/catalogue', 'ModelRegistryController::addFromCatalogue');
     $routes->put('registry/defaults', 'ModelRegistryController::saveDefaults');
     $routes->post('registry', 'ModelRegistryController::create');
     $routes->post('registry/discover', 'ModelRegistryController::discover');
@@ -312,6 +314,7 @@ $routes->group('api/openai/v1', ['namespace' => 'App\Controllers\Api\Gateway', '
     $routes->post('chat/completions', 'OpenAIController::chatCompletions');
     $routes->post('completions', 'OpenAIController::completions');
     $routes->post('embeddings', 'OpenAIController::embeddings');
+    $routes->post('audio/transcriptions', 'OpenAIController::transcriptions');
 });
 
 // OAuth 2.0 client_credentials: exchange a key + secret for a short-lived JWT access token.

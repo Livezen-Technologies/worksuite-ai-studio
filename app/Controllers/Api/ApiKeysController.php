@@ -24,7 +24,7 @@ use App\Services\ApiTokenService;
 class ApiKeysController extends BaseApiController
 {
     /** Gateway scopes a key can carry. download_* open /api/v1/catalog and the file / dataset downloads. */
-    public const SCOPES = ['chat', 'generate', 'embeddings', 'models', 'download_models', 'download_datasets', 'classify'];
+    public const SCOPES = ['chat', 'generate', 'embeddings', 'models', 'transcribe', 'download_models', 'download_datasets', 'classify'];
 
     public const TYPES       = ['personal', 'application', 'organization', 'service_account'];
     public const ADMIN_TYPES = ['organization', 'service_account'];

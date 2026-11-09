@@ -3,6 +3,11 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.34.0] — 2026-11-09 — Model catalogue and speech models in the registry
+- **Model catalogue** (Models → Catalogue): 37 curated models to browse by type and search — general, Sinhala, reasoning and code LLMs, vision and multimodal models, embeddings and Whisper speech models — with size, GPU memory, context, capabilities, licence and source. **Add** registers one for Ollama (its tag) or vLLM / llama.cpp (its Hugging Face id) and can deploy it to nodes straight away; each card shows whether it is already in the registry or on a node.
+- **Speech models in the registry**: Discover now adds every speech-to-text model the speech service offers (the built-in Whisper sizes and models trained in the Studio) as `whisper:<name>`. They show where they run (this server's speech service and ready GPU nodes) and get the same access roles, default model (task *transcription*) and 24-hour performance as other models. The Speech page only lists models your role may use and starts on the default.
+- **Speech to text in the gateway**: `POST /api/openai/v1/audio/transcriptions` works with OpenAI SDKs — `whisper-1` or no model uses the default, or name `whisper:<name>`; json, text, verbose_json (with word timings), srt and vtt. Needs the new **Speech to text** key scope. Speech models also appear in `/models` for keys with that scope.
+
 ## [1.33.0] — 2026-11-09 — Tool calling in the AI API gateway
 - **Function / tool calling** on `/api/openai/v1/chat/completions`: send `tools` and `tool_choice` (`auto`, `none`, `required` or one named tool) and get `tool_calls` back in the OpenAI format, with `finish_reason: "tool_calls"`, streamed or not. Send the results back as `tool` messages for the next turn; parallel tool calls work.
 - **Works on every engine**: OpenAI-compatible nodes (vLLM, llama.cpp, others) and OpenAI, Ollama, Anthropic Claude and Google Gemini. The gateway translates tool definitions, calls and results to each one's own format: Anthropic tool_use / tool_result blocks, Gemini function declarations and responses, and Ollama tool messages. On Ollama, `required` or a named tool is asked for in a system message, because Ollama has no tool_choice.

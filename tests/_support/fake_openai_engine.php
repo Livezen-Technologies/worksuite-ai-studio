@@ -60,6 +60,21 @@ if ($path === '/v1/models') {
 } elseif (str_starts_with($path, '/v1beta/models/')) { // Gemini
     $parts = ! empty($in['tools']) ? [['functionCall' => ['name' => 'get_weather', 'args' => ['city' => 'Jaffna']]]] : [['text' => 'Noted.']];
     $sse([['candidates' => [['content' => ['parts' => $parts]]], 'usageMetadata' => ['promptTokenCount' => 9, 'candidatesTokenCount' => 3]]]);
+} elseif ($path === '/health') { // the speech service (deploy/asr/asr_service.py)
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => true, 'model' => 'Whisper Small · Sinhala', 'models' => [
+        ['value' => 'sinhala', 'label' => 'Whisper Small · Sinhala', 'note' => 'Default.', 'installed' => true],
+        ['value' => 'turbo', 'label' => 'Whisper Large v3 Turbo', 'note' => '', 'installed' => false],
+        ['value' => 'clinic', 'label' => 'Clinic dictation', 'note' => 'Custom.', 'installed' => true],
+    ]]);
+} elseif ($path === '/transcribe') {
+    if ($log) file_put_contents($log, json_encode(['path' => $path, 'query' => $_GET, 'bytes' => strlen($raw)]));
+    header('Content-Type: application/json');
+    $w = ! empty($_GET['words']);
+    echo json_encode(['text' => 'ආයුබෝවන් ලංකා', 'language' => 'si', 'duration' => 2.5, 'segments' => [
+        ['start' => 0.0, 'end' => 1.2, 'text' => 'ආයුබෝවන්'] + ($w ? ['words' => [['start' => 0.0, 'end' => 1.2, 'word' => 'ආයුබෝවන්']]] : []),
+        ['start' => 1.2, 'end' => 2.5, 'text' => 'ලංකා'],
+    ]]);
 } else {
     http_response_code(404);
 }

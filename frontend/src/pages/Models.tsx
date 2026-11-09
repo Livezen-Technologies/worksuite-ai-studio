@@ -15,6 +15,7 @@ import InstallModal from './Models/InstallModal';
 import ConfigModal from './Models/ConfigModal';
 import SpeechModels from './Models/SpeechModels';
 import Registry from './Models/Registry';
+import Catalogue from './Models/Catalogue';
 
 interface Model {
   id: number; server_id: number; name: string; family: string | null; parameter_size: string | null; quantization: string | null;
@@ -36,7 +37,7 @@ export default function Models() {
   const [installing, setInstalling] = useState(false);
   const [configuring, setConfiguring] = useState<Model | null>(null);
   const [removing, setRemoving] = useState<Model | null>(null);
-  const [tab, setTab] = useState<'registry' | 'installed'>('registry');
+  const [tab, setTab] = useState<'registry' | 'catalogue' | 'installed'>('registry');
 
   const list = useQuery({ queryKey: ['models', serverId], queryFn: () => get<Model[]>('/models', { server_id: serverId }) });
   const servers = useQuery({ queryKey: ['servers'], queryFn: () => get<Server[]>('/servers') });
@@ -112,8 +113,9 @@ export default function Models() {
         </>}
       />
       <Tabs className="mb-4" value={tab} onChange={(k) => setTab(k as typeof tab)}
-        tabs={[{ key: 'registry', label: 'Registry' }, { key: 'installed', label: 'Installed on nodes' }]} />
+        tabs={[{ key: 'registry', label: 'Registry' }, { key: 'catalogue', label: 'Catalogue' }, { key: 'installed', label: 'Installed on nodes' }]} />
       {tab === 'registry' && <Registry />}
+      {tab === 'catalogue' && <Catalogue />}
       {tab === 'installed' && <>
       <Card>
         <Toolbar right={<span className="text-sm text-slate-500 dark:text-slate-400">{list.data ? `${rows.length} model${rows.length === 1 ? '' : 's'}` : ''}</span>}>

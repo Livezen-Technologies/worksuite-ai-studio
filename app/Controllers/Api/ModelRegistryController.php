@@ -16,6 +16,8 @@ use App\Services\ModelRegistryService;
  *   POST   /api/registry/{id}/deploy             {server_ids:[], force?} assign to nodes     (models.manage)
  *   DELETE /api/registry/{id}/deploy/{server}    remove from one node                        (models.manage)
  *   POST   /api/registry/{id}/update             re-pull on every assigned node              (models.manage)
+ *   GET    /api/registry/catalogue               curated models (LLM, embedding, vision, speech…) + registered/installed (models.view)
+ *   POST   /api/registry/catalogue               {id, engine, server_ids?} register a catalogue model, deploy optionally (models.manage)
  *   GET    /api/registry/defaults                default model per task / application        (models.view)
  *   PUT    /api/registry/defaults                {defaults:[{task, application?, model_name}]} (models.manage)
  */
@@ -93,6 +95,7 @@ class ModelRegistryController extends BaseApiController
         if ($r = $this->requirePermission('models.manage')) return $r;
         $svc = $this->svc();
         if (! ($m = $svc->find((int) $id))) return $this->failure('Model not found.', 404);
+        if ($m['engine'] === 'speech') return $this->failure('Speech models run on the speech service and reach GPU nodes with their speech sync; there is nothing to deploy.', 422);
         $in  = $this->input();
         $ids = is_array($in['server_ids'] ?? null) ? $in['server_ids'] : [];
         if (! $ids) return $this->failure('Choose at least one node.', 422);
@@ -123,6 +126,30 @@ class ModelRegistryController extends BaseApiController
         if (! ($m = $svc->find((int) $id))) return $this->failure('Model not found.', 404);
         $res = $svc->update($m);
         return $this->ok($res, $res['queued'] ? 'Update queued on ' . implode(', ', $res['queued']) . '.' : 'No Ollama node to update; other engines update on their own.');
+    }
+
+    public function catalogue()
+    {
+        if ($r = $this->requirePermission('models.view')) return $r;
+        return $this->ok($this->svc()->catalogue());
+    }
+
+    public function addFromCatalogue()
+    {
+        if ($r = $this->requirePermission('models.manage')) return $r;
+        $in  = $this->input();
+        $svc = $this->svc();
+        try {
+            $row = $svc->addFromCatalogue((string) ($in['id'] ?? ''), (string) ($in['engine'] ?? 'ollama'), $this->userId());
+        } catch (\InvalidArgumentException $e) {
+            return $this->failure($e->getMessage(), 422);
+        }
+        $msg = 'Added to the registry.';
+        if (! empty($in['server_ids']) && is_array($in['server_ids']) && $row['engine'] !== 'speech') {
+            $res = $svc->deploy($row, $in['server_ids']);
+            $msg .= $this->deployMessage($res);
+        }
+        return $this->ok($this->row((int) $row['id']), $msg, 201);
     }
 
     public function defaults()

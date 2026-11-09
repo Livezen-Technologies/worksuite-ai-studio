@@ -20,6 +20,7 @@ use App\Services\ProviderService;
  *                                Anthropic and Gemini — tool calls come back in the OpenAI format
  *   POST /completions            legacy text completion (also streams)
  *   POST /embeddings             embeddings; float or base64 encoding
+ *   POST /audio/transcriptions   speech to text (multipart `file`); json, text, verbose_json, srt or vtt; word timings
  *
  * Every request goes through the same pipeline as the native gateway: key scopes, the key's model
  * allowlist, model access roles from the registry, token quotas, node selection with failover, and
@@ -71,7 +72,98 @@ class OpenAIController extends BaseApiController
                 'context_length' => $r['context_length'] ?? null,
             ];
         }
+        // Speech models (the speech service), for keys with the transcribe scope.
+        if (in_array('transcribe', explode(',', (string) ($key['scopes'] ?? '')), true)) {
+            foreach ((new \App\Services\SpeechService())->models() as $k => $m) {
+                $id = \App\Services\SpeechService::registryName($k);
+                if ($m['installed'] === false || (is_array($allowed) && $allowed && ! in_array($id, $allowed, true)) || ! $registry->roleAllowed($id, $role)) continue;
+                $out[$id] = ['id' => $id, 'object' => 'model', 'created' => 0, 'owned_by' => 'worksuite-ai', 'type' => 'stt', 'capabilities' => ['audio_in'], 'context_length' => null];
+            }
+        }
         return $out;
+    }
+
+    // ---- Speech to text ------------------------------------------------------------------------
+
+    /**
+     * OpenAI `POST /audio/transcriptions`. Multipart: file (≤ 500 MB audio or video), model (whisper:<key>,
+     * a bare key, "whisper-1" or "default" → the registry's transcription default), language (ISO, e.g. si,
+     * en; "mix" for Sinhala + English), response_format, timestamp_granularities[] (word, segment).
+     */
+    public function transcriptions()
+    {
+        $this->begin();
+        if ($e = $this->scopeError('transcribe')) return $e;
+        $file = $this->request->getFile('file');
+        // is_uploaded_file() is always false under the CLI test runner; only there a plain temp file counts.
+        $ok = $file && ($file->isValid() || (ENVIRONMENT === 'testing' && $file->getError() === UPLOAD_ERR_OK && is_file($file->getTempName())));
+        if (! $ok) return $this->error('file is required (multipart/form-data).', 400, 'missing_required_parameter', 'file');
+        if ($file->getSize() > 500 * 1024 * 1024) return $this->error('The file can be up to 500 MB.', 413, 'file_too_large', 'file');
+
+        $key   = $this->key();
+        $reg   = new ModelRegistryService();
+        $asked = trim((string) ($this->request->getPost('model') ?? ''));
+        if ($asked === '' || in_array($asked, ['default', 'whisper-1'], true)) $asked = (string) ($reg->defaultFor('transcription', $key['application'] ?? null) ?? 'whisper:sinhala');
+        $speechKey = \App\Services\SpeechService::keyFrom($asked);
+        if ($speechKey === null) return $this->error("Unknown speech model '{$asked}'.", 400, 'invalid_value', 'model');
+        $model = \App\Services\SpeechService::registryName($speechKey);
+        $allowed = ! empty($key['allowed_models']) ? json_decode($key['allowed_models'], true) : null;
+        if (is_array($allowed) && $allowed && ! in_array($model, $allowed, true)) {
+            return $this->failLogged('audio.transcriptions', $model, null, 403, "This API key may not use the model '{$model}'.", 'model_not_allowed');
+        }
+        if (! $reg->roleAllowed($model, $reg->roleOf(isset($key['user_id']) ? (int) $key['user_id'] : null))) {
+            return $this->failLogged('audio.transcriptions', $model, null, 403, "The model '{$model}' is not available to this key's owner.", 'model_not_allowed');
+        }
+
+        $lang = strtolower(trim((string) ($this->request->getPost('language') ?? '')));
+        $lang = match (true) {
+            $lang === '' => 'auto', in_array($lang, ['si', 'en', 'mix'], true) => $lang, str_starts_with($lang, 'si') => 'si', str_starts_with($lang, 'en') => 'en', default => 'auto',
+        };
+        $format = (string) ($this->request->getPost('response_format') ?? 'json');
+        if (! in_array($format, ['json', 'text', 'verbose_json', 'srt', 'vtt'], true)) return $this->error('response_format must be json, text, verbose_json, srt or vtt.', 400, 'invalid_value', 'response_format');
+        $gran  = (array) ($this->request->getPost('timestamp_granularities') ?? $this->request->getPost('timestamp_granularities[]') ?? []);
+        $words = in_array('word', $gran, true);
+
+        $svc = new \App\Services\SpeechService();
+        [$code, $j, $used, $err] = $svc->transcribe($file->getTempName(), ['language' => $lang, 'model' => $speechKey, 'words' => $words], $svc->targets('auto'));
+        if ($j === null || $code !== 200) {
+            $msg = $code === 0 ? 'The speech service is not running.' : ($j['error'] ?? 'Transcription failed.');
+            return $this->failLogged('audio.transcriptions', $model, $used['server_id'] ?? null, $code >= 400 && $code < 500 ? $code : ($code === 0 ? 503 : 502), $msg, 'upstream_error');
+        }
+        $this->logCall('audio.transcriptions', $model, $used['server_id'] ?? null, 200, null, null);
+        $text = (string) ($j['text'] ?? '');
+        $segs = array_values((array) ($j['segments'] ?? []));
+        $stamp = static function (float $t, string $sep): string {
+            $ms = (int) round($t * 1000);
+            return sprintf('%02d:%02d:%02d%s%03d', intdiv($ms, 3600000), intdiv($ms, 60000) % 60, intdiv($ms, 1000) % 60, $sep, $ms % 1000);
+        };
+        switch ($format) {
+            case 'text':
+                return $this->plain($text . "\n", 'text/plain');
+            case 'srt':
+            case 'vtt':
+                $sep = $format === 'srt' ? ',' : '.';
+                $out = $format === 'vtt' ? "WEBVTT\n\n" : '';
+                foreach ($segs as $i => $sg) {
+                    $out .= ($format === 'srt' ? ($i + 1) . "\n" : '') . $stamp((float) $sg['start'], $sep) . ' --> ' . $stamp((float) $sg['end'], $sep) . "\n" . trim((string) $sg['text']) . "\n\n";
+                }
+                return $this->plain($out, $format === 'srt' ? 'application/x-subrip' : 'text/vtt');
+            case 'verbose_json':
+                $body = ['task' => 'transcribe', 'language' => $j['language'] ?? $lang, 'duration' => (float) ($j['duration'] ?? 0), 'text' => $text,
+                    'segments' => array_map(static fn ($sg, $i) => ['id' => $i, 'start' => (float) $sg['start'], 'end' => (float) $sg['end'], 'text' => (string) $sg['text']], $segs, array_keys($segs))];
+                if ($words) {
+                    $body['words'] = [];
+                    foreach ($segs as $sg) foreach ((array) ($sg['words'] ?? []) as $w) $body['words'][] = ['word' => (string) ($w['word'] ?? $w['text'] ?? ''), 'start' => (float) ($w['start'] ?? 0), 'end' => (float) ($w['end'] ?? 0)];
+                }
+                return $this->json($body);
+            default:
+                return $this->json(['text' => $text]);
+        }
+    }
+
+    private function plain(string $body, string $type)
+    {
+        return $this->response->setStatusCode(200)->setContentType($type)->setBody($body)->setHeader('x-request-id', $this->requestId);
     }
 
     // ---- Chat ------------------------------------------------------------------------------

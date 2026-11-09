@@ -65,6 +65,7 @@ class ModelRegistryService
      */
     public function discover(?int $userId = null): int
     {
+        $speech = $this->syncSpeech($userId);
         $known = array_flip(array_column($this->db->table('model_registry')->select('name')->get()->getResultArray(), 'name'));
         $rows  = $this->db->table('models m')
             ->select('m.name, m.family, m.parameter_size, m.quantization, m.context_length, MAX(m.size_bytes) AS size_bytes, s.kind')
@@ -90,7 +91,106 @@ class ModelRegistryService
             SELECT r.id, m.server_id, \'deployed\', ?, ? FROM ' . $this->db->prefixTable('model_registry') . ' r
             JOIN ' . $this->db->prefixTable('models') . ' m ON m.name = r.name
             WHERE NOT EXISTS (SELECT 1 FROM ' . $this->db->prefixTable('model_assignments') . ' a WHERE a.registry_id = r.id AND a.server_id = m.server_id)', [$now, $now]);
+        return $added + $speech;
+    }
+
+    /**
+     * Register every speech-to-text model the speech service offers (built-in Whisper sizes and models
+     * trained in the Studio) as `whisper:<key>`, engine "speech". Returns how many were added.
+     */
+    public function syncSpeech(?int $userId = null): int
+    {
+        $now = date('Y-m-d H:i:s');
+        $added = 0;
+        foreach ((new SpeechService())->models() as $key => $m) {
+            $name = SpeechService::registryName($key);
+            if ($this->findByName($name)) continue;
+            $cat = \App\Libraries\ModelCatalogue::find($name);
+            $this->db->table('model_registry')->insert([
+                'name' => $name, 'display_name' => $m['label'], 'type' => 'stt', 'engine' => 'speech', 'family' => 'whisper',
+                'capabilities' => json_encode(['audio_in']), 'description' => mb_substr((string) $m['note'], 0, 255) ?: null,
+                'parameter_size' => $cat['parameter_size'] ?? null, 'quantization' => $cat['quantization'] ?? 'INT8', 'vram_gb' => $cat['vram_gb'] ?? null,
+                'version' => $m['custom'] ? 'custom' : 'built-in', 'source' => $cat['source'] ?? null,
+                'created_by' => $userId, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+            $added++;
+        }
         return $added;
+    }
+
+    /** Where speech models run: this server's speech service, and every node whose speech service is up. */
+    private function speechDeployments(): array
+    {
+        $svc    = new SpeechService();
+        $models = $svc->models();
+        $up     = $svc->health() !== null;
+        $nodes  = $svc->readyNodes();
+        $out = [];
+        foreach ($models as $key => $m) {
+            $deps = [[
+                'server_id' => 0, 'server' => 'AI Studio server', 'kind' => 'speech', 'server_status' => $up ? 'online' : 'offline',
+                'status' => $m['installed'] === false ? 'pending' : ($up ? 'deployed' : 'failed'),
+                'error' => $up ? ($m['installed'] === false ? 'Model files are not on this server yet.' : null) : 'The speech service is not answering.',
+                'updated_at' => null, 'size_bytes' => null,
+            ]];
+            foreach ($nodes as $n) { // nodes receive every model with their speech sync
+                $deps[] = ['server_id' => (int) $n['id'], 'server' => $n['name'], 'kind' => 'speech', 'server_status' => 'online', 'status' => 'deployed',
+                    'error' => null, 'updated_at' => $n['asr_seen_at'], 'size_bytes' => null];
+            }
+            $out[SpeechService::registryName($key)] = $deps;
+        }
+        return $out;
+    }
+
+    /**
+     * The curated catalogue with what is already here: `registered` (in the registry under one of its
+     * names) and `installed_on` (nodes that have it).
+     */
+    public function catalogue(): array
+    {
+        $registered = array_flip(array_column($this->db->table('model_registry')->select('name')->get()->getResultArray(), 'name'));
+        $installed  = [];
+        foreach ($this->db->table('models m')->select('m.name, s.name AS server')->join('servers s', 's.id = m.server_id')->where('s.deleted_at', null)->get()->getResultArray() as $r) {
+            $installed[$r['name']][] = $r['server'];
+        }
+        $speech = (new SpeechService())->models();
+        return array_map(static function ($c) use ($registered, $installed, $speech) {
+            $names = array_values(array_filter([$c['id'], $c['ollama'], $c['hf']]));
+            $c['registered']   = (bool) array_filter($names, static fn ($n) => isset($registered[$n]));
+            $c['installed_on'] = array_values(array_unique(array_merge(...array_map(static fn ($n) => $installed[$n] ?? [], $names))));
+            if ($c['speech']) $c['installed_on'] = ($speech[$c['speech']]['installed'] ?? null) === false ? [] : ['Speech service'];
+            $c['engines'] = array_values(array_filter([$c['ollama'] ? 'ollama' : null, $c['hf'] && ! $c['speech'] ? 'vllm' : null, $c['speech'] ? 'speech' : null]));
+            return $c;
+        }, \App\Libraries\ModelCatalogue::all());
+    }
+
+    /**
+     * Register a catalogue model for an engine (ollama → its Ollama tag; vllm / llamacpp → its Hugging
+     * Face id; speech → whisper:<key>) and return the registry row. Existing entries are returned as-is.
+     */
+    public function addFromCatalogue(string $id, string $engine, ?int $userId = null): array
+    {
+        $c = \App\Libraries\ModelCatalogue::find($id);
+        if (! $c) throw new \InvalidArgumentException('That model is not in the catalogue.');
+        if ($c['speech']) $engine = 'speech';
+        $name = match ($engine) {
+            'ollama' => $c['ollama'],
+            'vllm', 'llamacpp', 'openai_compatible' => $c['hf'],
+            'speech' => $c['id'],
+            default  => null,
+        };
+        if (! $name) throw new \InvalidArgumentException("{$c['name']} is not available for that engine.");
+        if ($row = $this->findByName($name)) return $row;
+        $now = date('Y-m-d H:i:s');
+        $this->db->table('model_registry')->insert([
+            'name' => $name, 'display_name' => $c['name'], 'type' => $c['type'], 'family' => $c['family'], 'parameter_size' => $c['parameter_size'],
+            'quantization' => $engine === 'ollama' || $engine === 'speech' ? $c['quantization'] : null, 'vram_gb' => $c['vram_gb'],
+            'context_length' => $c['context_length'], 'capabilities' => json_encode($c['capabilities']), 'engine' => $engine,
+            'source' => $c['source'], 'description' => mb_substr($c['description'] . ' Licence: ' . $c['license'] . '.', 0, 255),
+            'version' => str_contains($name, ':') ? substr($name, strrpos($name, ':') + 1) : 'latest',
+            'created_by' => $userId, 'created_at' => $now, 'updated_at' => $now,
+        ]);
+        return $this->findByName($name);
     }
 
     // ---- Read ------------------------------------------------------------------
@@ -110,11 +210,12 @@ class ModelRegistryService
     {
         $rows = $this->db->table('model_registry')->orderBy('type')->orderBy('name')->get()->getResultArray();
         if (! $rows) return [];
-        $deps = $this->deployments(array_column($rows, 'id'));
-        $perf = $this->performance(array_column($rows, 'name'));
-        return array_map(function ($r) use ($deps, $perf) {
+        $deps   = $this->deployments(array_column($rows, 'id'));
+        $perf   = $this->performance(array_column($rows, 'name'));
+        $speech = in_array('speech', array_column($rows, 'engine'), true) ? $this->speechDeployments() : [];
+        return array_map(function ($r) use ($deps, $perf, $speech) {
             $r = $this->publicRow($r);
-            $r['deployments'] = $deps[$r['id']] ?? [];
+            $r['deployments'] = $r['engine'] === 'speech' ? ($speech[$r['name']] ?? []) : ($deps[$r['id']] ?? []);
             $r['performance'] = $perf[$r['name']] ?? null;
             $states = array_column($r['deployments'], 'status');
             $r['status'] = match (true) {

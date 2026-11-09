@@ -2,6 +2,8 @@
 
 namespace App\Controllers\Api;
 
+use App\Services\SpeechService;
+
 /**
  * Speech to text — record or upload audio and get a Sinhala (or English) transcript.
  *
@@ -17,27 +19,17 @@ class SpeechController extends BaseApiController
 {
     private const MAX_BYTES = 500 * 1024 * 1024; // video uploads for captions
 
-    private function serviceUrl(): string
-    {
-        return rtrim((string) (env('ASR_SERVICE_URL') ?: 'http://127.0.0.1:8096'), '/');
-    }
-
     public function status()
     {
         if ($r = $this->requirePermission('chat.use')) return $r;
-        $ch = curl_init($this->serviceUrl() . '/health');
-        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5]);
-        $body = curl_exec($ch);
-        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        $j = $code === 200 ? json_decode((string) $body, true) : null;
+        $j = (new SpeechService())->health(true);
         return $this->ok([
             'available' => (bool) ($j['ok'] ?? false),
             'model'     => $j['model'] ?? null,
             'busy'      => (bool) ($j['busy'] ?? false),
             'max_mb'    => self::MAX_BYTES / 1048576,
             'mixed'     => (bool) ($j['mixed'] ?? false),
-            'models'    => $j['models'] ?? [['value' => 'sinhala', 'label' => 'Whisper Small · Sinhala', 'note' => '', 'installed' => true]],
+            'models'    => $this->visibleModels($j['models'] ?? [['value' => 'sinhala', 'label' => 'Whisper Small · Sinhala', 'note' => '', 'installed' => true]]),
             'run_on'    => array_merge(
                 [['value' => 'auto', 'label' => 'Auto — fastest ready node, else this server', 'device' => null, 'ready' => true]],
                 $this->nodeChoices(),
@@ -52,19 +44,21 @@ class SpeechController extends BaseApiController
         ]);
     }
 
-    /** Nodes (GPU first) whose speech service reported healthy in the last 90 s (enabled, tunnel port known). */
-    private function gpuNodes(): array
+    /** Speech models the user's role may use (registry access rules), with the registry's default first. */
+    private function visibleModels(array $models): array
     {
-        return \Config\Database::connect()->table('servers')->select('id, name, asr_port, asr_device, asr_seen_at')
-            ->where('deleted_at', null)->where('is_enabled', 1)->where('asr_enabled', 1)->where('asr_port IS NOT NULL')
-            ->where('asr_seen_at >=', date('Y-m-d H:i:s', time() - 90))
-            ->orderBy('gpu_model IS NULL', '', false)->orderBy('gpu_count', 'DESC')->orderBy('id')->get()->getResultArray();
+        $reg  = new \App\Services\ModelRegistryService();
+        $role = $this->userRole();
+        $out  = array_values(array_filter($models, static fn ($m) => $reg->roleAllowed(SpeechService::registryName((string) ($m['value'] ?? '')), $role)));
+        $def  = SpeechService::keyFrom((string) $reg->defaultFor('transcription'));
+        usort($out, static fn ($a, $b) => (($b['value'] ?? '') === $def) <=> (($a['value'] ?? '') === $def));
+        return $out;
     }
 
     /** Every remote node, ready or not, with why it cannot take speech yet. */
     private function nodeChoices(): array
     {
-        $ready = array_column($this->gpuNodes(), null, 'id');
+        $ready = array_column((new SpeechService())->readyNodes(), null, 'id');
         $rows  = \Config\Database::connect()->table('servers')
             ->select('id, name, is_enabled, asr_enabled, tunnel_port, gpu_model, gpu_count, cpu_cores, agent_version, agent_seen_at')
             ->where('deleted_at', null)->where('is_local', 0)->orderBy('name')->get()->getResultArray();
@@ -85,24 +79,6 @@ class SpeechController extends BaseApiController
         return $out;
     }
 
-    /** Stream the upload to a speech service (never read into PHP memory). Returns [http code, body|false, curl error]. */
-    private function forward(string $base, string $query, string $path): array
-    {
-        $fh = fopen($path, 'rb');
-        $ch = curl_init(rtrim($base, '/') . '/transcribe?' . $query);
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true, CURLOPT_UPLOAD => true, CURLOPT_CUSTOMREQUEST => 'POST', CURLOPT_INFILE => $fh,
-            CURLOPT_INFILESIZE => filesize($path), CURLOPT_HTTPHEADER => ['Content-Type: application/octet-stream', 'Expect:'],
-            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 900, CURLOPT_CONNECTTIMEOUT => 5,
-        ]);
-        $body = curl_exec($ch);
-        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $err  = curl_error($ch);
-        curl_close($ch);
-        fclose($fh);
-        return [$code, $body, $err];
-    }
-
     public function transcribe()
     {
         if ($r = $this->requirePermission('chat.use')) return $r;
@@ -115,34 +91,27 @@ class SpeechController extends BaseApiController
         }
         $lang = strtolower((string) ($this->request->getPost('language') ?? 'si'));
         if (! in_array($lang, ['si', 'en', 'mix', 'auto'], true)) $lang = 'si';
-        $model = strtolower((string) ($this->request->getPost('model') ?? 'sinhala'));
-        if (! preg_match('/^[a-z0-9_-]{1,30}$/', $model)) $model = 'sinhala';   // keys like sinhala_numbers
-        $query = http_build_query(['language' => $lang, 'model' => $model, 'words' => $this->request->getPost('words') ? 1 : 0, 'fast' => $this->request->getPost('fast') ? 1 : 0, 'numerals' => $this->request->getPost('numerals') === '0' ? 0 : 1]);
+        // Model: the one asked for, else the registry's default for transcription, else Whisper Sinhala.
+        $registry = new \App\Services\ModelRegistryService();
+        $asked    = (string) ($this->request->getPost('model') ?? '');
+        $model    = SpeechService::keyFrom($asked !== '' ? $asked : (string) $registry->defaultFor('transcription')) ?? 'sinhala';
+        if (! $registry->roleAllowed(SpeechService::registryName($model), $this->userRole())) {
+            return $this->failure("You do not have access to the speech model '{$model}'.", 403);
+        }
 
         // Where to run: a GPU node's speech service (forwarded over its tunnel) or this server's CPU service.
-        $runOn   = (string) ($this->request->getPost('run_on') ?? 'auto');
-        $targets = [];
-        if ($runOn !== 'server') {
-            foreach ($this->gpuNodes() as $n) {
-                if ($runOn === 'auto' || $runOn === 'node:' . $n['id']) $targets[] = ['url' => 'http://127.0.0.1:' . (int) $n['asr_port'], 'name' => $n['name'], 'device' => $n['asr_device'] ?: 'GPU'];
-            }
-            if ($runOn !== 'auto' && ! $targets) return $this->failure('That GPU node is not ready for speech right now. Choose Auto or This server.', 409);
-        }
-        if ($runOn === 'auto' || $runOn === 'server') $targets[] = ['url' => $this->serviceUrl(), 'name' => 'AI Studio server', 'device' => 'CPU'];
-
-        $code = 0; $body = false; $err = ''; $used = null;
-        foreach ($targets as $t) {
-            [$code, $body, $err] = $this->forward($t['url'], $query, $file->getTempName());
-            $used = $t;
-            // a node that is unreachable, busy failing, or lacks this model hands over to the next target
-            if ($body !== false && $code !== 0 && $code !== 503 && $code < 500) break;
-            log_message('warning', "Speech on {$t['name']} failed ({$code} {$err}); trying the next target.");
-        }
-        if ($body === false || $code === 0) {
+        $svc     = new SpeechService();
+        $targets = $svc->targets((string) ($this->request->getPost('run_on') ?? 'auto'));
+        if ($targets === null) return $this->failure('That GPU node is not ready for speech right now. Choose Auto or This server.', 409);
+        [$code, $j, $used, $err] = $svc->transcribe($file->getTempName(), [
+            'language' => $lang, 'model' => $model, 'words' => (bool) $this->request->getPost('words'),
+            'fast' => (bool) $this->request->getPost('fast'), 'numerals' => $this->request->getPost('numerals') !== '0',
+        ], $targets);
+        if ($j === null && $code === 0) {
             log_message('error', 'Speech service unreachable: ' . $err);
             return $this->failure('The speech service is not running. Ask an administrator to start aistudio-asr.', 503);
         }
-        $j = json_decode((string) $body, true) ?: [];
+        $j = $j ?? [];
         if ($code !== 200) {
             return $this->failure($j['error'] ?? 'Transcription failed.', $code >= 400 && $code < 500 ? $code : 502);
         }

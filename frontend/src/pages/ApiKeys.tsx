@@ -32,6 +32,7 @@ const SCOPES = [
   { value: 'generate', label: 'Generate' },
   { value: 'embeddings', label: 'Embeddings' },
   { value: 'models', label: 'List models' },
+  { value: 'transcribe', label: 'Speech to text', hint: 'POST /audio/transcriptions on the OpenAI-compatible URL' },
   { value: 'download_models', label: 'Download models', hint: 'Engine packages: Whisper, vision and Sinhala chat model files' },
   { value: 'download_datasets', label: 'Download datasets', hint: 'Rights-approved datasets as JSONL; never a locked test split' },
   { value: 'classify', label: 'Classify text', hint: 'POST /classify with your trained text classifiers' },
@@ -449,7 +450,7 @@ export default function ApiKeys() {
                 <code className="min-w-0 flex-1 break-all font-mono text-sm text-slate-900 dark:text-slate-100">{openaiBase()}</code>
                 <CopyButton text={openaiBase()} />
               </div>
-              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Any OpenAI SDK or tool works here: GET /models, POST /chat/completions (streaming, tool calling, images as data: URLs, temperature, max_tokens, stop, seed, JSON mode), /completions and /embeddings. Use <code>key:secret</code> or an access token as the API key. Every model on every node, local or cloud, is reachable through it, within the key's scopes, model list, quotas and the registry's access rules.</p>
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Any OpenAI SDK or tool works here: GET /models, POST /chat/completions (streaming, tool calling, images as data: URLs, temperature, max_tokens, stop, seed, JSON mode), /completions, /embeddings and /audio/transcriptions (speech to text: json, text, verbose_json, srt, vtt). Use <code>key:secret</code> or an access token as the API key. Every model on every node, local or cloud, is reachable through it, within the key's scopes, model list, quotas and the registry's access rules.</p>
             </div>
             <div>
               <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">OpenAI SDK (Python) <CopyButton text={openaiExample()} /></div>

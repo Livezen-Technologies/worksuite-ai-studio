@@ -38,7 +38,7 @@ const STATUS_TONE: Record<RegistryModel['status'], BadgeTone> = {
 const QUANTS = ['', 'Q2_K', 'Q3_K_M', 'Q4_0', 'Q4_K_M', 'Q5_K_M', 'Q6_K', 'Q8_0', 'F16', 'BF16', 'AWQ', 'GPTQ', 'FP8'];
 const ENGINES = [
   { value: 'ollama', label: 'Ollama' }, { value: 'vllm', label: 'vLLM' }, { value: 'llamacpp', label: 'llama.cpp' },
-  { value: 'openai_compatible', label: 'OpenAI-compatible' }, { value: 'cloud', label: 'Hosted API' }, { value: 'any', label: 'Any engine' },
+  { value: 'openai_compatible', label: 'OpenAI-compatible' }, { value: 'speech', label: 'Speech service' }, { value: 'cloud', label: 'Hosted API' }, { value: 'any', label: 'Any engine' },
 ];
 
 const toggleIn = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
@@ -262,7 +262,7 @@ export default function Registry() {
         {m.deployments.length ? m.deployments.map((d) => (
           <span key={d.server_id} title={d.error ?? `${d.server}: ${d.status}`} className="inline-flex items-center gap-0.5">
             <Badge tone={DEP_TONE[d.status]}>{d.server} · {d.status}</Badge>
-            {manage && <button type="button" aria-label={`Remove from ${d.server}`} className="rounded p-0.5 text-slate-400 hover:text-red-500" onClick={() => setUndeploying({ m, d })}><XMarkIcon className="size-3" /></button>}
+            {manage && d.kind !== 'speech' && <button type="button" aria-label={`Remove from ${d.server}`} className="rounded p-0.5 text-slate-400 hover:text-red-500" onClick={() => setUndeploying({ m, d })}><XMarkIcon className="size-3" /></button>}
           </span>
         )) : <span className="text-xs text-slate-500 dark:text-slate-400">Not deployed</span>}
       </div>
@@ -277,7 +277,7 @@ export default function Registry() {
     { key: 'status', header: 'Status', cell: (m) => <Badge tone={STATUS_TONE[m.status]}>{m.status}</Badge> },
     ...(manage ? [{ key: 'actions', header: '', align: 'right' as const, cell: (m: RegistryModel) => (
       <ActionMenu actions={[
-        { label: 'Deploy to nodes', icon: CloudArrowDownIcon, onClick: () => setDeploying(m), disabled: !m.enabled },
+        { label: 'Deploy to nodes', icon: CloudArrowDownIcon, onClick: () => setDeploying(m), disabled: !m.enabled, hidden: m.engine === 'speech' },
         { label: 'Update on all nodes', icon: ArrowPathIcon, onClick: () => update.mutate(m.id), hidden: !m.deployments.some((d) => d.kind === 'ollama') },
         { label: 'Edit', icon: PencilSquareIcon, onClick: () => setEditing(m) },
         { label: 'Remove from registry', icon: TrashIcon, danger: true, onClick: () => setRemoving(m) },
@@ -298,7 +298,7 @@ export default function Registry() {
         </Toolbar>
         <DataTable columns={columns} rows={list.data ? rows : undefined} rowKey={(m) => m.id} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()}
           empty={<EmptyState icon={RectangleStackIcon} title="The registry is empty"
-            description="Register models to manage their type, version, GPU memory, access and placement in one place. Discover adds every model already on your nodes."
+            description="Register models to manage their type, version, GPU memory, access and placement in one place. Discover adds every model already on your nodes and the speech service; the Catalogue tab has more to add."
             action={manage && <Button icon={MagnifyingGlassIcon} loading={discover.isPending} onClick={() => discover.mutate()}>Discover installed models</Button>} />} />
       </Card>
       <Defaults models={list.data ?? []} meta={meta.data} manage={manage} />

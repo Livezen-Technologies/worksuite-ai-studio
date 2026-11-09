@@ -44,6 +44,7 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         parent::setUp();
         cache()->clean();
         unset($_SERVER['ohub_api_key']);
+        putenv('ASR_SERVICE_URL=http://127.0.0.1:' . self::$port); $_ENV['ASR_SERVICE_URL'] = $_SERVER['ASR_SERVICE_URL'] = 'http://127.0.0.1:' . self::$port;
         $f = \Config\Database::forge($this->DBGroup);
         foreach (['users', 'roles', 'api_keys', 'api_logs', 'servers', 'models', 'model_registry', 'model_assignments', 'model_defaults', 'settings'] as $t) $f->dropTable($t, true);
         $id = ['id' => ['type' => 'INTEGER', 'auto_increment' => true]];
@@ -60,7 +61,9 @@ final class OpenAIGatewayTest extends CIUnitTestCase
             'processing_ms' => $null('INTEGER'), 'status' => $null('INTEGER'), 'client_ip' => $null(), 'country' => $null(), 'error' => $null(), 'created_at' => $null('DATETIME')])
             ->addKey('id', true)->createTable('api_logs');
         $f->addField($id + ['name' => $null(), 'kind' => $null(), 'api_url' => $null(), 'auth_token' => $null(), 'status' => $null(), 'health_score' => ['type' => 'INTEGER', 'default' => 100],
-            'is_enabled' => ['type' => 'INTEGER', 'default' => 1], 'deleted_at' => $null('DATETIME'), 'gpu_vram_gb' => $null('REAL'), 'vram_used_gb' => $null('REAL')])->addKey('id', true)->createTable('servers');
+            'is_enabled' => ['type' => 'INTEGER', 'default' => 1], 'deleted_at' => $null('DATETIME'), 'gpu_vram_gb' => $null('REAL'), 'vram_used_gb' => $null('REAL'),
+            'asr_enabled' => ['type' => 'INTEGER', 'default' => 1], 'asr_port' => $null('INTEGER'), 'asr_device' => $null(), 'asr_seen_at' => $null('DATETIME'),
+            'gpu_model' => $null(), 'gpu_count' => $null('INTEGER')])->addKey('id', true)->createTable('servers');
         $f->addField($id + ['server_id' => $null('INTEGER'), 'name' => $null(), 'parameter_size' => $null(), 'quantization' => $null(), 'size_bytes' => $null('INTEGER'), 'status' => $null()])->addKey('id', true)->createTable('models');
         $f->addField($id + ['name' => $null(), 'display_name' => $null(), 'type' => $null(), 'version' => $null(), 'family' => $null(), 'parameter_size' => $null(),
             'quantization' => $null(), 'vram_gb' => $null('REAL'), 'context_length' => $null('INTEGER'), 'capabilities' => $null('TEXT'), 'engine' => $null(),
@@ -75,7 +78,7 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $this->db->table('roles')->insertBatch([['name' => 'customer'], ['name' => 'developer']]);
         $this->db->table('users')->insert(['name' => 'Ann', 'status' => 'active', 'role_id' => 1]);
         $this->db->table('api_keys')->insert(['name' => 'k', 'user_id' => 1, 'api_key' => 'ohub_k1', 'secret_hash' => password_hash('sk_s', PASSWORD_DEFAULT),
-            'scopes' => 'chat,generate,embeddings,models', 'status' => 'active', 'application' => 'HR portal']);
+            'scopes' => 'chat,generate,embeddings,models,transcribe', 'status' => 'active', 'application' => 'HR portal']);
         $this->db->table('servers')->insertBatch([
             ['name' => 'dead', 'kind' => 'vllm', 'api_url' => 'http://127.0.0.1:1', 'status' => 'online', 'health_score' => 100],
             ['name' => 'fake', 'kind' => 'vllm', 'api_url' => 'http://127.0.0.1:' . self::$port, 'status' => 'online', 'health_score' => 90],
@@ -303,5 +306,67 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $this->assertSame('tool_choice', $err(['tools' => self::TOOLS, 'tool_choice' => ['type' => 'function', 'function' => ['name' => 'other']]])['param']);
         $this->assertSame('functions', $err(['functions' => [['name' => 'f']]])['param']);
         $this->assertSame('invalid_value', $err(['messages' => [['role' => 'tool', 'content' => 'x']]])['code'], 'a tool message needs tool_call_id');
+    }
+
+    // ---- Speech to text ------------------------------------------------------------------------
+
+    private function transcribe(array $fields)
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'aud');
+        file_put_contents($tmp, str_repeat("\0", 2048));
+        service('superglobals')->setFilesArray(['file' => ['name' => 'a.wav', 'type' => 'audio/wav', 'tmp_name' => $tmp, 'error' => 0, 'size' => 2048]]);
+        try {
+            return $this->withHeaders($this->auth())->post('api/openai/v1/audio/transcriptions', $fields);
+        } finally {
+            service('superglobals')->setFilesArray([]);
+            @unlink($tmp);
+        }
+    }
+
+    public function testTranscriptionsInEveryFormat(): void
+    {
+        $res = $this->transcribe(["model" => "whisper-1", "language" => "si-LK"]);
+        $this->assertSame(200, $res->response()->getStatusCode(), (string) $res->response()->getBody());
+        $this->assertSame(['text' => 'ආයුබෝවන් ලංකා'], $this->body($res));
+        $sent = $this->sent();
+        $this->assertSame(['sinhala', 'si', 2048], [$sent['query']['model'], $sent['query']['language'], $sent['bytes']], 'whisper-1 → the default speech model; the audio is passed through');
+
+        $v = $this->body($this->transcribe(['model' => 'whisper:clinic', 'response_format' => 'verbose_json', 'timestamp_granularities' => ['word', 'segment']]));
+        $this->assertSame('clinic', $this->sent()['query']['model']);
+        $this->assertSame('1', (string) $this->sent()['query']['words']);
+        $this->assertSame('auto', $this->sent()['query']['language'], 'no language: detect it');
+        $this->assertSame(2.5, $v['duration']);
+        $this->assertSame([0, 1], array_column($v['segments'], 'id'));
+        $this->assertSame('ආයුබෝවන්', $v['words'][0]['word']);
+
+        $srt = (string) $this->transcribe(['response_format' => 'srt'])->response()->getBody();
+        $this->assertStringContainsString("1\n00:00:00,000 --> 00:00:01,200\nආයුබෝවන්\n\n2\n00:00:01,200 --> 00:00:02,500\nලංකා", $srt);
+        $vtt = (string) $this->transcribe(['response_format' => 'vtt'])->response()->getBody();
+        $this->assertStringStartsWith("WEBVTT\n\n00:00:00.000 --> 00:00:01.200", $vtt);
+        $this->assertSame("ආයුබෝවන් ලංකා\n", (string) $this->transcribe(['response_format' => 'text'])->response()->getBody());
+
+        $log = $this->db->table('api_logs')->orderBy('id', 'DESC')->get()->getRowArray();
+        $this->assertSame(['openai/audio.transcriptions', 'whisper:sinhala', 200], [$log['endpoint'], $log['model'], (int) $log['status']]);
+    }
+
+    public function testTranscriptionAccessAndDefaults(): void
+    {
+        $this->db->table('model_defaults')->insert(['task' => 'transcription', 'application' => '', 'model_name' => 'whisper:clinic']);
+        $this->transcribe([]);
+        $this->assertSame('clinic', $this->sent()['query']['model'], 'no model: the registry default');
+
+        $this->db->table('model_registry')->insert(['name' => 'whisper:clinic', 'type' => 'stt', 'access_roles' => json_encode(['developer']), 'enabled' => 1]);
+        $this->transcribe(['model' => 'whisper:clinic'])->assertStatus(403);
+        $this->assertSame('response_format', $this->body($this->transcribe(['model' => 'whisper:sinhala', 'response_format' => 'bad']))['error']['param']);
+        $this->transcribe(['model' => '../etc'])->assertStatus(400);
+
+        $ids = array_column($this->body($this->api('get', 'models'))['data'], 'id');
+        $this->assertContains('whisper:sinhala', $ids);
+        $this->assertNotContains('whisper:turbo', $ids, 'not installed on the speech service');
+        $this->assertNotContains('whisper:tiny', $ids, 'a built-in the running service does not offer');
+        $this->assertNotContains('whisper:clinic', $ids, 'restricted to another role');
+
+        $this->db->table('api_keys')->update(['scopes' => 'chat']);
+        $this->transcribe([])->assertStatus(403);
     }
 }
