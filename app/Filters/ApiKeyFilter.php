@@ -6,6 +6,7 @@ use CodeIgniter\Filters\FilterInterface;
 use CodeIgniter\HTTP\RequestInterface;
 use CodeIgniter\HTTP\ResponseInterface;
 use App\Models\ApiKeyModel;
+use App\Services\ApiTokenService;
 
 /**
  * ApiKeyFilter — authenticates external `/api/v1/*` gateway requests with an
@@ -15,22 +16,37 @@ use App\Models\ApiKeyModel;
  * Credentials accepted as:
  *   - Headers:  X-Api-Key: ohub_…   X-Api-Secret: sk_…
  *   - Bearer:   Authorization: Bearer ohub_…:sk_…
+ *   - Bearer:   Authorization: Bearer <jwt>   (short-lived access token, see ApiTokenService)
  */
 class ApiKeyFilter implements FilterInterface
 {
     public function before(RequestInterface $request, $arguments = null)
     {
         $response = service('response');
-        [$key, $secret] = $this->credentials($request);
+        $model    = new ApiKeyModel();
+        $token    = $this->bearerJwt($request);
 
-        if (! $key || ! $secret) {
-            return $this->deny($response, 'Missing API key or secret.', 401);
+        if ($token !== null) {
+            // Short-lived JWT access token issued for a key (dashboard or OAuth client_credentials).
+            $claims = (new ApiTokenService())->decode($token);
+            $row    = $claims ? $model->find((int) ($claims['kid'] ?? 0)) : null;
+            if (! $row || (int) ($row['token_version'] ?? 0) !== (int) ($claims['kv'] ?? -1)) {
+                return $this->deny($response, 'Invalid or expired access token.', 401);
+            }
+            // A token never widens its key: narrow scopes to what was granted at issue.
+            $row['scopes'] = implode(',', array_intersect((array) ($claims['scopes'] ?? []), explode(',', (string) $row['scopes'])));
+        } else {
+            [$key, $secret] = $this->credentials($request);
+            if (! $key || ! $secret) {
+                return $this->deny($response, 'Missing API key or secret.', 401);
+            }
+            $row = $model->findByKey($key);
+            if (! $row || ! password_verify($secret, $row['secret_hash'])) {
+                return $this->deny($response, 'Invalid API credentials.', 401);
+            }
         }
-
-        $model = new ApiKeyModel();
-        $row   = $model->findByKey($key);
-        if (! $row || ! password_verify($secret, $row['secret_hash'])) {
-            return $this->deny($response, 'Invalid API credentials.', 401);
+        if (! empty($row['revoked_at']) || $row['status'] === 'revoked') {
+            return $this->deny($response, 'This API key has been revoked.', 403);
         }
         if ($row['status'] !== 'active') {
             return $this->deny($response, 'This API key is disabled.', 403);
@@ -66,6 +82,15 @@ class ApiKeyFilter implements FilterInterface
 
     public function after(RequestInterface $request, ResponseInterface $response, $arguments = null)
     {
+    }
+
+    /** A Bearer value that looks like a JWT (three dot-separated parts, no key:secret colon). */
+    private function bearerJwt(RequestInterface $request): ?string
+    {
+        $auth = $request->getHeaderLine('Authorization');
+        if (! str_starts_with($auth, 'Bearer ')) return null;
+        $tok = trim(substr($auth, 7));
+        return (! str_contains($tok, ':') && substr_count($tok, '.') === 2) ? $tok : null;
     }
 
     /** Extract [key, secret] from headers or a Bearer "key:secret" token. */

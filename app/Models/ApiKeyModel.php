@@ -14,6 +14,8 @@ class ApiKeyModel extends Model
         'name', 'user_id', 'api_key', 'secret_hash', 'secret_prefix', 'scopes',
         'allowed_models', 'allowed_ips', 'daily_token_limit', 'monthly_token_limit',
         'rate_limit_per_min', 'status', 'expires_at', 'last_used_at',
+        'key_type', 'application', 'organization', 'description', 'rotation_days', 'rotated_at',
+        'revoked_at', 'token_version',
     ];
 
     /** Generate a fresh key id + secret. Returns [key, secret, secret_hash, prefix]. */
@@ -36,7 +38,27 @@ class ApiKeyModel extends Model
         $row['allowed_models'] = $row['allowed_models'] ? json_decode($row['allowed_models'], true) : null;
         $row['allowed_ips']    = $row['allowed_ips'] ? json_decode($row['allowed_ips'], true) : null;
         $row['scopes']         = $row['scopes'] ? explode(',', $row['scopes']) : [];
+        $row['state']          = self::state($row);
+        $row['rotation_due']   = self::rotationDue($row);
         return $row;
+    }
+
+    /** Effective status: revoked / disabled / expired / active. */
+    public static function state(array $row): string
+    {
+        if (! empty($row['revoked_at']) || ($row['status'] ?? '') === 'revoked') return 'revoked';
+        if (($row['status'] ?? 'active') !== 'active') return (string) $row['status'];
+        if (! empty($row['expires_at']) && strtotime($row['expires_at']) < time()) return 'expired';
+        return 'active';
+    }
+
+    /** True when a rotation policy is set and the secret is older than it. */
+    public static function rotationDue(array $row): bool
+    {
+        $days = (int) ($row['rotation_days'] ?? 0);
+        if ($days <= 0) return false;
+        $since = $row['rotated_at'] ?? null ?: ($row['created_at'] ?? null);
+        return $since !== null && strtotime($since) < time() - $days * 86400;
     }
 
     public function findByKey(string $key): ?array

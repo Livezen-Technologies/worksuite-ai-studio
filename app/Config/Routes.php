@@ -108,6 +108,9 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->put('apikeys/(:num)', 'ApiKeysController::update/$1');
     $routes->post('apikeys/(:num)/rotate', 'ApiKeysController::rotate/$1');
     $routes->delete('apikeys/(:num)', 'ApiKeysController::delete/$1');
+    $routes->post('apikeys/(:num)/revoke', 'ApiKeysController::revoke/$1');
+    $routes->post('apikeys/(:num)/tokens', 'ApiKeysController::tokens/$1');
+    $routes->get('apikeys/(:num)/usage', 'ApiKeysController::usage/$1');
     $routes->get('apilogs', 'ApiLogsController::index');
 
     // --- Users / Roles / Audit / Notifications / Settings (Phase 7) ---
@@ -287,12 +290,16 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->post('engine/bindings/rollback', 'EngineController::bindingRollback');
 });
 
+// OAuth 2.0 client_credentials: exchange a key + secret for a short-lived JWT access token.
+$routes->post('api/v1/oauth/token', 'Api\Gateway\OAuthController::token');
+
 /*
  * External API gateway (key/secret auth) — Phase 6.
  */
 $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\Gateway', 'filter' => 'apikey'], static function ($routes) {
     $routes->get('models', 'GatewayController::models');
     $routes->post('chat', 'GatewayController::chat');
+    $routes->post('chat/completions', 'GatewayController::chatCompletions'); // OpenAI-compatible
     $routes->post('generate', 'GatewayController::generate');
     $routes->post('embeddings', 'GatewayController::embeddings');
     $routes->post('translate', 'GatewayController::translate');   // SinLama (v1.3)

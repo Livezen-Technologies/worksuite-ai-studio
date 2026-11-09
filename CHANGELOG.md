@@ -3,6 +3,14 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.29.0] — 2026-11-09 — API key management, access tokens and OAuth
+- **Key types**: personal, application, organization and service-account keys. Everyone with API key access manages their own personal and application keys; organization and service-account keys, and other people's keys, need the new *Manage all API keys* permission (admins).
+- **Permissions granted**: Developer and Customer roles can now create, edit, rotate, revoke and delete their own keys and issue access tokens; Admin and Super Admin get every API key permission. Non-admins only see their own keys.
+- **Revoke** a key at once and for good; rotating or revoking also kills every access token issued for it.
+- **Short-lived JWT access tokens** (15 minutes to 30 days, scope subset) from the dashboard, and an **OAuth 2.0 client-credentials** endpoint: `POST /api/v1/oauth/token`. The gateway accepts them as `Authorization: Bearer`.
+- **OpenAI-compatible** `POST /api/v1/chat/completions`.
+- **Usage per key**: 30-day requests, tokens, errors, per-model totals and the last 50 requests; rotation-policy reminders ("rotation due"); created / last-used / expiry / status on every key.
+
 ## [1.28.3] — 2026-11-06 — Change your own password, and tidier security
 - **Change your password** from Account: it signs out your other devices and keeps you signed in here. New passwords need at least 12 characters and can't be a common password or your email.
 - **Clearer, safer errors**: unexpected server errors no longer show internal details in production; they are logged instead.

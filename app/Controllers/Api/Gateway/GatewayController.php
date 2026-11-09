@@ -13,6 +13,7 @@ use App\Services\ProviderService;
  *   POST /api/v1/generate    { model, prompt }
  *   POST /api/v1/embeddings  { model, input }
  *   GET  /api/v1/models      models available through the gateway
+ *   POST /api/v1/chat/completions  OpenAI-compatible chat (Bearer <jwt> or Bearer key:secret)
  *
  * Routes traffic to an online node hosting the model (round-robin + failover),
  * enforces key scopes / allowed-models / token quota, and logs every call.
@@ -29,7 +30,34 @@ class GatewayController extends BaseApiController
 
     public function chat()
     {
-        return $this->proxy('chat', function (array $server, string $model, array $in) {
+        return $this->proxy('chat', $this->chatCall());
+    }
+
+    /**
+     * OpenAI-compatible `POST /api/v1/chat/completions` — same routing, scopes and quotas as
+     * /chat, answered in the OpenAI response shape so existing OpenAI SDKs work by base URL.
+     */
+    public function chatCompletions()
+    {
+        $res  = $this->proxy('chat', $this->chatCall());
+        $body = json_decode((string) $res->getBody(), true);
+        if (($body['status'] ?? '') !== 'success') {
+            return $res->setJSON(['error' => ['message' => $body['message'] ?? 'Request failed.', 'type' => 'invalid_request_error', 'code' => $res->getStatusCode()]]);
+        }
+        $d = $body['data'];
+        return $res->setJSON([
+            'id'      => 'chatcmpl-' . bin2hex(random_bytes(12)),
+            'object'  => 'chat.completion',
+            'created' => time(),
+            'model'   => $d['model'],
+            'choices' => [['index' => 0, 'message' => $d['result'], 'finish_reason' => 'stop']],
+            'usage'   => array_map('intval', $d['usage']),
+        ]);
+    }
+
+    private function chatCall(): callable
+    {
+        return function (array $server, string $model, array $in) {
             $messages = $in['messages'] ?? [];
             if (! is_array($messages) || ! $messages) {
                 throw new \InvalidArgumentException('messages[] is required.');
@@ -42,7 +70,7 @@ class GatewayController extends BaseApiController
                 'output' => ['role' => 'assistant', 'content' => $content],
                 'usage'  => $final,
             ];
-        });
+        };
     }
 
     public function generate()
