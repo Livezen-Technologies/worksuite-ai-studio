@@ -1,0 +1,402 @@
+<?php
+
+namespace App\Services;
+
+/**
+ * ModelRegistryService — the central AI Model Registry.
+ *
+ * A registry entry is a logical model (type, version, capabilities, VRAM need, access roles,
+ * load policy). Assignments place it on nodes; each assignment has a deployment state. The
+ * per-node `models` table remains the record of what is actually installed, so deployment
+ * status is derived from both: an installed copy is "deployed" (or "loaded" when resident).
+ */
+class ModelRegistryService
+{
+    public const TYPES        = ['llm', 'embedding', 'stt', 'tts', 'vision', 'multimodal'];
+    public const CAPABILITIES = ['chat', 'completion', 'embeddings', 'tools', 'json', 'vision', 'audio_in', 'audio_out', 'code', 'reasoning'];
+    public const TASKS        = ['chat', 'generate', 'embeddings', 'translate', 'summarize', 'vision', 'code', 'transcription', 'speech'];
+
+    protected $db;
+
+    public function __construct()
+    {
+        $this->db = \Config\Database::connect();
+    }
+
+    // ---- Discovery & inference ------------------------------------------------
+
+    /** Best guess of type + capabilities from a model id ("nomic-embed-text", "llava:7b", "whisper-large-v3"). */
+    public static function infer(string $name): array
+    {
+        $n = strtolower($name);
+        $type = match (true) {
+            (bool) preg_match('/embed|bge|e5-|minilm|gte-/', $n)                => 'embedding',
+            (bool) preg_match('/whisper|asr|speech-to-text|stt/', $n)           => 'stt',
+            (bool) preg_match('/tts|piper|bark|xtts|kokoro/', $n)               => 'tts',
+            (bool) preg_match('/llava|vision|moondream|minicpm-v|bakllava/', $n) => 'vision',
+            (bool) preg_match('/qwen2\.5-omni|omni|gemma3/', $n)                => 'multimodal',
+            default                                                            => 'llm',
+        };
+        $caps = match ($type) {
+            'embedding'  => ['embeddings'],
+            'stt'        => ['audio_in'],
+            'tts'        => ['audio_out'],
+            'vision'     => ['chat', 'completion', 'vision'],
+            'multimodal' => ['chat', 'completion', 'vision', 'audio_in'],
+            default      => ['chat', 'completion'],
+        };
+        if ($type === 'llm') {
+            if (preg_match('/coder|code|starcoder/', $n)) $caps[] = 'code';
+            if (preg_match('/deepseek-r1|qwq|reason|o1|o3/', $n)) $caps[] = 'reasoning';
+            if (preg_match('/llama3\.[1-3]|qwen2\.5|qwen3|mistral|command-r|hermes/', $n)) $caps[] = 'tools';
+        }
+        return ['type' => $type, 'capabilities' => $caps];
+    }
+
+    /** VRAM a model needs: weights plus ~20 % for KV cache and runtime, from its file size. */
+    public static function vramFromSize(?int $bytes): ?float
+    {
+        return $bytes ? round($bytes / 1073741824 * 1.2 + 0.5, 1) : null;
+    }
+
+    /**
+     * Create registry entries for every installed model that has none yet. Returns how many
+     * were added. Existing entries are left as the admin configured them.
+     */
+    public function discover(?int $userId = null): int
+    {
+        $known = array_flip(array_column($this->db->table('model_registry')->select('name')->get()->getResultArray(), 'name'));
+        $rows  = $this->db->table('models m')
+            ->select('m.name, m.family, m.parameter_size, m.quantization, m.context_length, MAX(m.size_bytes) AS size_bytes, s.kind')
+            ->join('servers s', 's.id = m.server_id')->where('s.deleted_at', null)
+            ->groupBy('m.name')->get()->getResultArray();
+        $now = date('Y-m-d H:i:s');
+        $added = 0;
+        foreach ($rows as $r) {
+            if (isset($known[$r['name']])) continue;
+            $guess = self::infer($r['name']);
+            $this->db->table('model_registry')->insert([
+                'name' => $r['name'], 'type' => $guess['type'], 'capabilities' => json_encode($guess['capabilities']),
+                'family' => $r['family'], 'parameter_size' => $r['parameter_size'], 'quantization' => $r['quantization'],
+                'context_length' => $r['context_length'], 'vram_gb' => self::vramFromSize((int) $r['size_bytes'] ?: null),
+                'version' => str_contains($r['name'], ':') ? substr($r['name'], strpos($r['name'], ':') + 1) : 'latest',
+                'engine' => in_array($r['kind'], ProviderService::EXTERNAL, true) ? 'cloud' : ($r['kind'] ?: 'ollama'),
+                'created_by' => $userId, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+            $added++;
+        }
+        // Copies already on nodes count as deployed assignments.
+        $this->db->query('INSERT INTO ' . $this->db->prefixTable('model_assignments') . ' (registry_id, server_id, state, created_at, updated_at)
+            SELECT r.id, m.server_id, \'deployed\', ?, ? FROM ' . $this->db->prefixTable('model_registry') . ' r
+            JOIN ' . $this->db->prefixTable('models') . ' m ON m.name = r.name
+            WHERE NOT EXISTS (SELECT 1 FROM ' . $this->db->prefixTable('model_assignments') . ' a WHERE a.registry_id = r.id AND a.server_id = m.server_id)', [$now, $now]);
+        return $added;
+    }
+
+    // ---- Read ------------------------------------------------------------------
+
+    public function find(int $id): ?array
+    {
+        return $this->db->table('model_registry')->where('id', $id)->get()->getRowArray() ?: null;
+    }
+
+    public function findByName(string $name): ?array
+    {
+        return $this->db->table('model_registry')->where('name', $name)->get()->getRowArray() ?: null;
+    }
+
+    /** Every entry with its deployments and 24-hour performance. */
+    public function all(): array
+    {
+        $rows = $this->db->table('model_registry')->orderBy('type')->orderBy('name')->get()->getResultArray();
+        if (! $rows) return [];
+        $deps = $this->deployments(array_column($rows, 'id'));
+        $perf = $this->performance(array_column($rows, 'name'));
+        return array_map(function ($r) use ($deps, $perf) {
+            $r = $this->publicRow($r);
+            $r['deployments'] = $deps[$r['id']] ?? [];
+            $r['performance'] = $perf[$r['name']] ?? null;
+            $states = array_column($r['deployments'], 'status');
+            $r['status'] = match (true) {
+                ! $r['enabled']                         => 'disabled',
+                in_array('loaded', $states, true)       => 'loaded',
+                in_array('deployed', $states, true)     => 'deployed',
+                in_array('deploying', $states, true)    => 'deploying',
+                in_array('failed', $states, true)       => 'failed',
+                (bool) $states                          => 'pending',
+                default                                 => 'registered',
+            };
+            return $r;
+        }, $rows);
+    }
+
+    public function publicRow(array $r): array
+    {
+        $r['capabilities'] = $r['capabilities'] ? (json_decode($r['capabilities'], true) ?: []) : [];
+        $r['access_roles'] = $r['access_roles'] ? (json_decode($r['access_roles'], true) ?: null) : null;
+        $r['keep_loaded']  = (int) $r['keep_loaded'] === 1;
+        $r['enabled']      = (int) $r['enabled'] === 1;
+        foreach (['vram_gb'] as $f) $r[$f] = $r[$f] !== null ? (float) $r[$f] : null;
+        foreach (['context_length', 'idle_unload_minutes'] as $f) $r[$f] = $r[$f] !== null ? (int) $r[$f] : null;
+        return $r;
+    }
+
+    /** registry_id => [ {server_id, server, kind, server_status, status, error, size_bytes} ] */
+    public function deployments(array $ids): array
+    {
+        if (! $ids) return [];
+        $rows = $this->db->table('model_assignments a')
+            ->select('a.registry_id, a.server_id, a.state, a.error, a.updated_at, s.name AS server, s.kind, s.status AS server_status, s.gpu_vram_gb, s.vram_used_gb,
+                      m.status AS installed_status, m.size_bytes')
+            ->join('model_registry r', 'r.id = a.registry_id')
+            ->join('servers s', 's.id = a.server_id')
+            ->join('models m', 'm.server_id = a.server_id AND m.name = r.name', 'left')
+            ->whereIn('a.registry_id', $ids)->where('s.deleted_at', null)
+            ->get()->getResultArray();
+        $out = [];
+        foreach ($rows as $d) {
+            $status = match (true) {
+                $d['state'] === 'removing'                                => 'removing',
+                $d['installed_status'] === 'running'                      => 'loaded',
+                $d['installed_status'] !== null                           => 'deployed',
+                in_array($d['state'], ['deploying', 'failed'], true)      => $d['state'],
+                default                                                   => 'pending',
+            };
+            $out[(int) $d['registry_id']][] = [
+                'server_id' => (int) $d['server_id'], 'server' => $d['server'], 'kind' => $d['kind'], 'server_status' => $d['server_status'],
+                'status' => $status, 'error' => $d['error'], 'updated_at' => $d['updated_at'],
+                'size_bytes' => $d['size_bytes'] !== null ? (int) $d['size_bytes'] : null,
+            ];
+        }
+        return $out;
+    }
+
+    /** model name => {requests, errors, error_rate, avg_ms, tokens, tokens_per_sec} over $hours. */
+    public function performance(array $names, int $hours = 24): array
+    {
+        if (! $names) return [];
+        $rows = $this->db->table('api_logs')
+            ->select('model, COUNT(*) AS requests, SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS errors,
+                      AVG(CASE WHEN status < 400 THEN processing_ms END) AS avg_ms, COALESCE(SUM(total_tokens), 0) AS tokens,
+                      COALESCE(SUM(completion_tokens), 0) AS out_tokens, COALESCE(SUM(CASE WHEN completion_tokens IS NOT NULL THEN processing_ms END), 0) AS gen_ms')
+            ->whereIn('model', $names)->where('created_at >=', date('Y-m-d H:i:s', time() - $hours * 3600))
+            ->groupBy('model')->get()->getResultArray();
+        $out = [];
+        foreach ($rows as $r) {
+            $req = (int) $r['requests'];
+            $out[$r['model']] = [
+                'requests' => $req, 'errors' => (int) $r['errors'],
+                'error_rate' => $req ? round((int) $r['errors'] / $req * 100, 1) : 0.0,
+                'avg_ms' => $r['avg_ms'] !== null ? (int) round((float) $r['avg_ms']) : null,
+                'tokens' => (int) $r['tokens'],
+                'tokens_per_sec' => (int) $r['gen_ms'] > 0 ? round((int) $r['out_tokens'] / ((int) $r['gen_ms'] / 1000), 1) : null,
+            ];
+        }
+        return $out;
+    }
+
+    // ---- Write -----------------------------------------------------------------
+
+    /** Whitelist + normalise editable fields. */
+    public function fields(array $in): array
+    {
+        $out = [];
+        foreach (['display_name', 'version', 'family', 'parameter_size', 'quantization', 'engine', 'source', 'description'] as $f) {
+            if (array_key_exists($f, $in)) $out[$f] = ($v = trim((string) $in[$f])) === '' ? null : mb_substr($v, 0, $f === 'source' || $f === 'description' ? 255 : 191);
+        }
+        if (isset($in['type']) && in_array($in['type'], self::TYPES, true)) $out['type'] = $in['type'];
+        foreach (['vram_gb' => 4096, 'context_length' => 10000000, 'idle_unload_minutes' => 100000] as $f => $max) {
+            if (array_key_exists($f, $in)) $out[$f] = (is_numeric($in[$f]) && $in[$f] >= 0 && $in[$f] <= $max) ? $in[$f] + 0 : null;
+        }
+        if (array_key_exists('capabilities', $in) && is_array($in['capabilities'])) {
+            $out['capabilities'] = json_encode(array_values(array_intersect(self::CAPABILITIES, $in['capabilities'])));
+        }
+        if (array_key_exists('access_roles', $in)) {
+            $roles = is_array($in['access_roles']) ? array_values(array_filter(array_map('strval', $in['access_roles']))) : [];
+            $out['access_roles'] = $roles ? json_encode($roles) : null;
+        }
+        foreach (['keep_loaded', 'enabled'] as $f) if (array_key_exists($f, $in)) $out[$f] = ! empty($in[$f]) && $in[$f] !== 'false' ? 1 : 0;
+        return $out;
+    }
+
+    /**
+     * Check a node can host the model. Returns a reason it cannot, or null. Cloud APIs cannot
+     * be deployed to; a node whose total VRAM is known must have at least the model's need.
+     */
+    public function placementProblem(array $model, array $server): ?string
+    {
+        $kind = $server['kind'] ?? 'ollama';
+        if (in_array($kind, ProviderService::EXTERNAL, true)) return "{$server['name']} is a hosted API; models cannot be deployed to it.";
+        $need  = (float) ($model['vram_gb'] ?? 0);
+        $total = (float) ($server['gpu_vram_gb'] ?? 0);
+        if ($need > 0 && $total > 0 && $need > $total) {
+            return sprintf('%s needs about %.1f GB of VRAM; %s has %.1f GB.', $model['name'], $need, $server['name'], $total);
+        }
+        return null;
+    }
+
+    /**
+     * Assign a model to nodes. Ollama nodes get a queued pull; other engines serve a fixed model
+     * set, so the assignment is recorded and turns "deployed" once the engine lists the model.
+     *
+     * @return array{queued:list<string>, recorded:list<string>, skipped:array<string,string>}
+     */
+    public function deploy(array $model, array $serverIds, bool $force = false): array
+    {
+        $out = ['queued' => [], 'recorded' => [], 'skipped' => []];
+        $now = date('Y-m-d H:i:s');
+        foreach (array_unique(array_map('intval', $serverIds)) as $sid) {
+            $server = $this->db->table('servers')->where('id', $sid)->where('deleted_at', null)->get()->getRowArray();
+            if (! $server) { $out['skipped']["#{$sid}"] = 'Server not found.'; continue; }
+            if (($why = $this->placementProblem($model, $server)) && ! ($force && ! in_array($server['kind'] ?? 'ollama', ProviderService::EXTERNAL, true))) {
+                $out['skipped'][$server['name']] = $why;
+                continue;
+            }
+            $row = ['registry_id' => $model['id'], 'server_id' => $sid, 'error' => null, 'updated_at' => $now];
+            if (($server['kind'] ?? 'ollama') === 'ollama') {
+                $row['job_id'] = (new QueueService())->enqueue('pull_model', ['server_id' => $sid, 'name' => $model['name'], 'registry_id' => (int) $model['id']], 3, 2);
+                $row['state']  = 'deploying';
+                $out['queued'][] = $server['name'];
+            } else {
+                $row['state'] = 'pending';
+                $out['recorded'][] = $server['name'];
+            }
+            $existing = $this->db->table('model_assignments')->where(['registry_id' => $model['id'], 'server_id' => $sid])->get()->getRowArray();
+            $existing ? $this->db->table('model_assignments')->where('id', $existing['id'])->update($row)
+                      : $this->db->table('model_assignments')->insert($row + ['created_at' => $now]);
+        }
+        return $out;
+    }
+
+    /** Called by the queue when a pull finishes (or fails) so the assignment reflects it. */
+    public function pullFinished(int $registryId, int $serverId, ?string $error = null): void
+    {
+        $this->db->table('model_assignments')->where(['registry_id' => $registryId, 'server_id' => $serverId])
+            ->update(['state' => $error ? 'failed' : 'deployed', 'error' => $error ? mb_substr($error, 0, 255) : null, 'updated_at' => date('Y-m-d H:i:s')]);
+    }
+
+    /** Remove a model from one node (deletes the copy on Ollama nodes) and drop the assignment. */
+    public function undeploy(array $model, int $serverId): void
+    {
+        $server = $this->db->table('servers')->where('id', $serverId)->get()->getRowArray();
+        if ($server && ($server['kind'] ?? 'ollama') === 'ollama') {
+            $installed = $this->db->table('models')->where(['server_id' => $serverId, 'name' => $model['name']])->countAllResults();
+            if ($installed) {
+                (new OllamaService($server['api_url'], $server['auth_token'] ?? null))->delete($model['name']);
+                $this->db->table('models')->where(['server_id' => $serverId, 'name' => $model['name']])->delete();
+            }
+        }
+        $this->db->table('model_assignments')->where(['registry_id' => $model['id'], 'server_id' => $serverId])->delete();
+    }
+
+    /** Re-pull the model on every Ollama node it is assigned to (picks up a new version of the tag). */
+    public function update(array $model): array
+    {
+        $ids = array_column($this->db->table('model_assignments')->select('server_id')->where('registry_id', $model['id'])->get()->getResultArray(), 'server_id');
+        return $this->deploy($model, $ids, true);
+    }
+
+    // ---- Access & defaults -------------------------------------------------------
+
+    /** May a user with this role use the model? Unregistered models and entries without roles are open. */
+    public function roleAllowed(string $modelName, ?string $role): bool
+    {
+        $r = $this->findByName($modelName);
+        if (! $r) return true;
+        if ((int) $r['enabled'] !== 1) return false;
+        $roles = $r['access_roles'] ? json_decode($r['access_roles'], true) : null;
+        if (! is_array($roles) || ! $roles) return true;
+        return $role !== null && (in_array($role, $roles, true) || in_array($role, ['super_admin', 'admin'], true));
+    }
+
+    /** Role name of a user id (null when unknown). */
+    public function roleOf(?int $userId): ?string
+    {
+        if (! $userId) return null;
+        $row = $this->db->table('users u')->select('r.name')->join('roles r', 'r.id = u.role_id')->where('u.id', $userId)->get()->getRowArray();
+        return $row['name'] ?? null;
+    }
+
+    public function defaults(): array
+    {
+        return $this->db->table('model_defaults')->orderBy('task')->orderBy('application')->get()->getResultArray();
+    }
+
+    /** Default model for a task: the application's own choice first, then the global one. */
+    public function defaultFor(string $task, ?string $application = null): ?string
+    {
+        $rows = $this->db->table('model_defaults')->where('task', $task)->whereIn('application', array_values(array_unique([(string) $application, ''])))
+            ->get()->getResultArray();
+        usort($rows, static fn ($a, $b) => strcmp($b['application'], $a['application'])); // the application's row first
+        return $rows[0]['model_name'] ?? null;
+    }
+
+    /** Replace the defaults with $rows = [{task, application?, model_name}]. */
+    public function saveDefaults(array $rows): array
+    {
+        $now = date('Y-m-d H:i:s');
+        $this->db->transStart();
+        $this->db->table('model_defaults')->emptyTable();
+        $seen = [];
+        foreach ($rows as $r) {
+            $task = (string) ($r['task'] ?? '');
+            $app  = mb_substr(trim((string) ($r['application'] ?? '')), 0, 120);
+            $name = trim((string) ($r['model_name'] ?? ''));
+            if (! in_array($task, self::TASKS, true) || $name === '' || isset($seen["{$task}|{$app}"])) continue;
+            $seen["{$task}|{$app}"] = true;
+            $this->db->table('model_defaults')->insert(['task' => $task, 'application' => $app, 'model_name' => mb_substr($name, 0, 191), 'updated_at' => $now]);
+        }
+        $this->db->transComplete();
+        return $this->defaults();
+    }
+
+    // ---- Automatic loading / unloading ----------------------------------------------
+
+    /**
+     * Scheduler tick: keep "keep loaded" models resident on their online Ollama nodes, and unload
+     * models that have been idle longer than their idle_unload_minutes. Returns what it did.
+     */
+    public function autoload(): array
+    {
+        $done = ['loaded' => [], 'unloaded' => [], 'errors' => []];
+        $rows = $this->db->table('model_registry r')
+            ->select('r.name, r.keep_loaded, r.idle_unload_minutes, m.id AS model_id, m.status, s.id AS server_id, s.name AS server, s.api_url, s.auth_token')
+            ->join('model_assignments a', 'a.registry_id = r.id')
+            ->join('servers s', 's.id = a.server_id')
+            ->join('models m', 'm.server_id = s.id AND m.name = r.name')
+            ->where('r.enabled', 1)->where('s.deleted_at', null)->where('s.is_enabled', 1)->whereIn('s.status', ['online', 'degraded'])
+            ->groupStart()->where('r.keep_loaded', 1)->orWhere('r.idle_unload_minutes >', 0)->groupEnd()
+            ->get()->getResultArray();
+        foreach ($rows as $r) {
+            $label  = "{$r['name']}@{$r['server']}";
+            $client = new OllamaService($r['api_url'], $r['auth_token'] ?? null);
+            try {
+                if ((int) $r['keep_loaded'] === 1) {
+                    if ($r['status'] !== 'running') {
+                        $client->load($r['name']);
+                        $this->db->table('models')->where('id', $r['model_id'])->update(['status' => 'running']);
+                        $done['loaded'][] = $label;
+                    }
+                    continue;
+                }
+                $idle = (int) $r['idle_unload_minutes'];
+                if ($r['status'] === 'running' && $idle > 0 && ! $this->usedSince($r['name'], (int) $r['server_id'], time() - $idle * 60)) {
+                    $client->unload($r['name']);
+                    $this->db->table('models')->where('id', $r['model_id'])->update(['status' => 'available']);
+                    $done['unloaded'][] = $label;
+                }
+            } catch (\Throwable $e) {
+                $done['errors'][$label] = mb_substr($e->getMessage(), 0, 120);
+            }
+        }
+        return $done;
+    }
+
+    private function usedSince(string $model, int $serverId, int $since): bool
+    {
+        $t = date('Y-m-d H:i:s', $since);
+        if ($this->db->table('api_logs')->where(['model' => $model, 'server_id' => $serverId])->where('created_at >=', $t)->countAllResults()) return true;
+        return $this->db->tableExists('chat_messages')
+            && $this->db->table('chat_messages')->where('model', $model)->where('created_at >=', $t)->countAllResults() > 0;
+    }
+}

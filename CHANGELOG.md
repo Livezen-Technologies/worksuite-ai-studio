@@ -3,6 +3,14 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.31.0] — 2026-11-09 — AI Model Registry
+- **One registry for every model**: LLMs, embedding, speech-to-text, text-to-speech, vision and multimodal models, each with its version, family, parameters, quantization, GPU memory need, max context, capabilities, engine and source. **Discover installed** registers every model already on your nodes, guessing type and capabilities from the name.
+- **Deploy to nodes**: pick nodes and the model downloads on Ollama nodes (vLLM / llama.cpp nodes are assigned and show as deployed once they serve it). Nodes with too little VRAM are refused unless you deploy anyway. Each node shows pending, deploying, deployed, loaded or failed. **Update** re-pulls the latest version of the tag everywhere; remove a model from one node, or from the registry.
+- **Access by role**: restrict a model to chosen roles in chat and the API gateway; a disabled model is refused for everyone.
+- **Performance**: 24-hour requests, tokens, average latency, tokens per second and error rate per model.
+- **Automatic loading and unloading**: keep a model loaded on its nodes, or unload it after a chosen idle time (every 5 minutes, new *Model load policy* job).
+- **Default models** per task (chat, embeddings, vision, code, transcription and more), globally or for one application; gateway requests without a model use them.
+
 ## [1.30.0] — 2026-11-09 — GPU servers and AI nodes
 - **More inference engines**: register vLLM, llama.cpp and any OpenAI-compatible server next to Ollama nodes. Their models sync into the registry and serve chat, the gateway and embeddings with the same routing and failover.
 - **Node types**: local server, remote dedicated server, cloud GPU instance (provider, region) or Docker container (image), with NVIDIA CUDA, AMD ROCm or CPU-only acceleration, GPU count, VRAM and a concurrency limit.

@@ -85,6 +85,18 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->post('models/(:num)/default', 'ModelsController::setDefault/$1');
     $routes->get('models/(:num)/config', 'ModelsController::getConfig/$1');
     $routes->put('models/(:num)/config', 'ModelsController::saveConfig/$1');
+    // AI Model Registry (v1.31)
+    $routes->get('registry', 'ModelRegistryController::index');
+    $routes->get('registry/meta', 'ModelRegistryController::meta');
+    $routes->get('registry/defaults', 'ModelRegistryController::defaults');
+    $routes->put('registry/defaults', 'ModelRegistryController::saveDefaults');
+    $routes->post('registry', 'ModelRegistryController::create');
+    $routes->post('registry/discover', 'ModelRegistryController::discover');
+    $routes->put('registry/(:num)', 'ModelRegistryController::update/$1');
+    $routes->delete('registry/(:num)', 'ModelRegistryController::delete/$1');
+    $routes->post('registry/(:num)/deploy', 'ModelRegistryController::deploy/$1');
+    $routes->delete('registry/(:num)/deploy/(:num)', 'ModelRegistryController::undeploy/$1/$2');
+    $routes->post('registry/(:num)/update', 'ModelRegistryController::refresh/$1');
 
     // --- Chat Playground (Phase 4) ---
     $routes->get('chat/sessions', 'ChatController::sessions_list');

@@ -4,7 +4,7 @@ import {
   AdjustmentsHorizontalIcon, ArrowPathIcon, CpuChipIcon, PlayIcon, PlusIcon, StarIcon, StopIcon, TrashIcon,
 } from '@heroicons/react/24/outline';
 import {
-  ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, EmptyState, PageHeader, SearchInput, Select, StatusBadge,
+  ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, EmptyState, PageHeader, SearchInput, Select, StatusBadge, Tabs,
   Toolbar, useToast, type Column,
 } from '../components/ui';
 import { del, get, post } from '../lib/api';
@@ -14,6 +14,7 @@ import type { Server } from './Servers/shared';
 import InstallModal from './Models/InstallModal';
 import ConfigModal from './Models/ConfigModal';
 import SpeechModels from './Models/SpeechModels';
+import Registry from './Models/Registry';
 
 interface Model {
   id: number; server_id: number; name: string; family: string | null; parameter_size: string | null; quantization: string | null;
@@ -35,6 +36,7 @@ export default function Models() {
   const [installing, setInstalling] = useState(false);
   const [configuring, setConfiguring] = useState<Model | null>(null);
   const [removing, setRemoving] = useState<Model | null>(null);
+  const [tab, setTab] = useState<'registry' | 'installed'>('registry');
 
   const list = useQuery({ queryKey: ['models', serverId], queryFn: () => get<Model[]>('/models', { server_id: serverId }) });
   const servers = useQuery({ queryKey: ['servers'], queryFn: () => get<Server[]>('/servers') });
@@ -109,6 +111,10 @@ export default function Models() {
           {manage && <Button variant="primary" icon={PlusIcon} disabled={!hasServers} onClick={() => setInstalling(true)}>Install model</Button>}
         </>}
       />
+      <Tabs className="mb-4" value={tab} onChange={(k) => setTab(k as typeof tab)}
+        tabs={[{ key: 'registry', label: 'Registry' }, { key: 'installed', label: 'Installed on nodes' }]} />
+      {tab === 'registry' && <Registry />}
+      {tab === 'installed' && <>
       <Card>
         <Toolbar right={<span className="text-sm text-slate-500 dark:text-slate-400">{list.data ? `${rows.length} model${rows.length === 1 ? '' : 's'}` : ''}</span>}>
           <SearchInput value={search} onChange={setSearch} placeholder="Search models…" className="w-full sm:w-64" />
@@ -139,6 +145,7 @@ export default function Models() {
       </Card>
 
       <SpeechModels />
+      </>}
 
       <InstallModal
         open={installing}

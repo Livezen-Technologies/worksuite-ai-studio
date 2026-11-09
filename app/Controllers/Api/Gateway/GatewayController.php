@@ -165,8 +165,16 @@ class GatewayController extends BaseApiController
         $key   = $this->key();
         $in    = $this->input();
         $model = trim((string) ($in['model'] ?? ''));
+        $registry = new \App\Services\ModelRegistryService();
+        if ($model === '') { // fall back to the default model for this task (the key's application first)
+            $model = (string) $registry->defaultFor($endpoint, $key['application'] ?? null);
+            $in['model'] = $model;
+        }
         if ($model === '') {
-            return $this->logged($endpoint, $model, null, 422, 'model is required.');
+            return $this->logged($endpoint, $model, null, 422, 'model is required (no default model is set for this task).');
+        }
+        if (! $registry->roleAllowed($model, $registry->roleOf(isset($key['user_id']) ? (int) $key['user_id'] : null))) {
+            return $this->logged($endpoint, $model, null, 403, "Model '{$model}' is not available to this key's owner.");
         }
         if ($err = $this->modelAllowed($model)) return $err;
 

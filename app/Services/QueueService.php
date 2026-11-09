@@ -114,8 +114,15 @@ class QueueService
         $server = $this->db->table('servers')->where('id', (int) ($payload['server_id'] ?? 0))->get()->getRowArray();
         if (! $server) throw new \RuntimeException('Server not found.');
         $client = new OllamaService($server['api_url'], $server['auth_token'] ?? null);
-        $final = $client->pull((string) ($payload['name'] ?? ''));
-        (new ModelService())->syncServer($server);
+        $reg    = (int) ($payload['registry_id'] ?? 0);
+        try {
+            $final = $client->pull((string) ($payload['name'] ?? ''));
+            (new ModelService())->syncServer($server);
+        } catch (\Throwable $e) {
+            if ($reg) (new ModelRegistryService())->pullFinished($reg, (int) $server['id'], $e->getMessage());
+            throw $e;
+        }
+        if ($reg) (new ModelRegistryService())->pullFinished($reg, (int) $server['id']);
         return $final;
     }
 

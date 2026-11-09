@@ -96,6 +96,9 @@ class ChatController extends BaseApiController
         if (! $serverId || $model === '' || trim($content) === '') {
             return $this->failure('server_id, model and content (or an image) are required.', 422);
         }
+        if (! (new \App\Services\ModelRegistryService())->roleAllowed($model, $this->userRole())) {
+            return $this->failure("You do not have access to the model '{$model}'.", 403);
+        }
         $server = (new ServerModel())->find($serverId);
         if (! $server) return $this->failure('Server not found.', 404);
         if (! (int) ($server['is_enabled'] ?? 1)) return $this->failure('This node is disabled. Choose another server or enable it on the Servers page.', 409);
@@ -182,6 +185,9 @@ class ChatController extends BaseApiController
         $prompt   = (string) ($in['prompt'] ?? '');
         if (! $serverId || $model === '' || trim($prompt) === '') {
             return $this->failure('server_id, model and prompt are required.', 422);
+        }
+        if (! (new \App\Services\ModelRegistryService())->roleAllowed($model, $this->userRole())) {
+            return $this->failure("You do not have access to the model '{$model}'.", 403);
         }
         $server = (new ServerModel())->find($serverId);
         if (! $server) return $this->failure('Server not found.', 404);
