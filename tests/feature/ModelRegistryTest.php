@@ -39,7 +39,8 @@ final class ModelRegistryTest extends CIUnitTestCase
         $f->addField($id + ['task' => $null(), 'application' => ['type' => 'VARCHAR', 'default' => ''], 'model_name' => $null(), 'updated_at' => $null('DATETIME')])
             ->addKey('id', true)->createTable('model_defaults');
         $f->addField($id + ['type' => $null(), 'payload' => $null('TEXT'), 'status' => $null(), 'priority' => $null('INTEGER'), 'max_attempts' => $null('INTEGER'),
-            'attempts' => ['type' => 'INTEGER', 'default' => 0], 'available_at' => $null('DATETIME'), 'created_at' => $null('DATETIME')])->addKey('id', true)->createTable('queues');
+            'attempts' => ['type' => 'INTEGER', 'default' => 0], 'available_at' => $null('DATETIME'), 'created_at' => $null('DATETIME'),
+            'started_at' => $null('DATETIME'), 'finished_at' => $null('DATETIME'), 'result' => $null('TEXT'), 'error' => $null()])->addKey('id', true)->createTable('queues');
         $f->addField($id + ['name' => $null(), 'role_id' => $null('INTEGER')])->addKey('id', true)->createTable('users');
         $f->addField($id + ['name' => $null()])->addKey('id', true)->createTable('roles');
         $f->addField($id + ['model' => $null(), 'server_id' => $null('INTEGER'), 'status' => $null('INTEGER'), 'processing_ms' => $null('INTEGER'),
@@ -167,5 +168,34 @@ final class ModelRegistryTest extends CIUnitTestCase
 
         $this->expectException(\InvalidArgumentException::class);
         $svc->addFromCatalogue('helalm:4b', 'ollama'); // only published as Hugging Face weights
+    }
+
+    /** Audit B3: a deployment can't stay "deploying" for ever, and a retry is not shown as failed. */
+    public function testStuckDeploymentsResolve(): void
+    {
+        $svc = new ModelRegistryService();
+        $this->db->table('model_registry')->insert(['name' => 'big:70b', 'vram_gb' => 20, 'enabled' => 1]);
+        $m = $svc->findByName('big:70b');
+        $svc->deploy($m, [1]);
+        $job = $this->db->table('queues')->get()->getRowArray();
+        $status = fn () => $svc->deployments([(int) $m['id']])[(int) $m['id']][0];
+
+        // the worker died mid-pull hours ago: the reaper puts the job back in line (1 of 2 attempts used)
+        $this->db->table('queues')->where('id', $job['id'])->update(['status' => 'running', 'attempts' => 1, 'started_at' => date('Y-m-d H:i:s', time() - 7 * 3600)]);
+        $this->assertSame(1, (new \App\Services\QueueService())->reapStale());
+        $this->assertSame('pending', $this->db->table('queues')->where('id', $job['id'])->get()->getRow()->status);
+        $this->assertSame('deploying', $status()['status'], 'a retry is still deploying');
+
+        // out of attempts: failed, with the reason
+        $this->db->table('queues')->where('id', $job['id'])->update(['status' => 'running', 'attempts' => 2, 'started_at' => date('Y-m-d H:i:s', time() - 7 * 3600)]);
+        (new \App\Services\QueueService())->reapStale();
+        $this->assertSame('failed', $status()['status']);
+        $this->assertStringContainsString('worker stopped', $status()['error']);
+
+        // a deleted job also ends "deploying"
+        $svc->deploy($m, [1], true);
+        $this->db->table('queues')->emptyTable();
+        $this->assertSame('failed', $status()['status']);
+        $this->assertSame('The download job no longer exists.', $status()['error']);
     }
 }

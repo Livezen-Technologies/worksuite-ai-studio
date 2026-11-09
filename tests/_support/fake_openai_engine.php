@@ -29,7 +29,8 @@ if ($path === '/v1/models') {
     $echo = 'Hello ' . json_encode(['t' => $in['temperature'] ?? null, 'max' => $in['max_tokens'] ?? null, 'json' => $in['response_format']['type'] ?? null,
         'last' => end($in['messages'])['content'] ?? null]);
     $events = array_map(static fn ($p) => ['choices' => [['delta' => ['content' => $p]]]], str_split($echo, 8));
-    $events[] = ['choices' => [], 'usage' => ['prompt_tokens' => 7, 'completion_tokens' => 5]];
+    if (($in['max_tokens'] ?? null) === 3) $events[] = ['choices' => [['delta' => new stdClass(), 'finish_reason' => 'length']]];
+    if (($in['model'] ?? '') !== 'nousage') $events[] = ['choices' => [], 'usage' => ['prompt_tokens' => 7, 'completion_tokens' => 5]];
     $sse($events);
     echo "data: [DONE]\n\n";
 } elseif ($path === '/v1/embeddings') {
@@ -44,6 +45,13 @@ if ($path === '/v1/models') {
         echo json_encode(['message' => ['role' => 'assistant', 'content' => 'It is sunny.'], 'done' => false]) . "\n";
     }
     echo json_encode(['message' => ['role' => 'assistant', 'content' => ''], 'done' => true, 'prompt_eval_count' => 11, 'eval_count' => 4]) . "\n";
+} elseif ($path === '/api/ps') { // Ollama: what is in memory
+    header('Content-Type: application/json');
+    echo json_encode(['models' => [['name' => 'idle-model', 'model' => 'idle-model']]]);
+} elseif ($path === '/api/generate') { // Ollama load / unload (keep_alive) — appended to the log
+    if ($log) file_put_contents($log . '.generate', json_encode($in) . "\n", FILE_APPEND);
+    header('Content-Type: application/json');
+    echo json_encode(['done' => true]);
 } elseif ($path === '/v1/messages') { // Anthropic
     $events = [['type' => 'message_start', 'message' => ['usage' => ['input_tokens' => 30]]]];
     if (! empty($in['tools'])) {

@@ -90,6 +90,7 @@ class ModelRegistryService
         $this->db->query('INSERT INTO ' . $this->db->prefixTable('model_assignments') . ' (registry_id, server_id, state, created_at, updated_at)
             SELECT r.id, m.server_id, \'deployed\', ?, ? FROM ' . $this->db->prefixTable('model_registry') . ' r
             JOIN ' . $this->db->prefixTable('models') . ' m ON m.name = r.name
+            JOIN ' . $this->db->prefixTable('servers') . ' s ON s.id = m.server_id AND s.deleted_at IS NULL
             WHERE NOT EXISTS (SELECT 1 FROM ' . $this->db->prefixTable('model_assignments') . ' a WHERE a.registry_id = r.id AND a.server_id = m.server_id)', [$now, $now]);
         return $added + $speech;
     }
@@ -247,15 +248,21 @@ class ModelRegistryService
     {
         if (! $ids) return [];
         $rows = $this->db->table('model_assignments a')
-            ->select('a.registry_id, a.server_id, a.state, a.error, a.updated_at, s.name AS server, s.kind, s.status AS server_status, s.gpu_vram_gb, s.vram_used_gb,
-                      m.status AS installed_status, m.size_bytes')
+            ->select('a.registry_id, a.server_id, a.state, a.error, a.updated_at, a.job_id, s.name AS server, s.kind, s.status AS server_status, s.gpu_vram_gb, s.vram_used_gb,
+                      m.status AS installed_status, m.size_bytes, q.status AS job_status, q.error AS job_error')
             ->join('model_registry r', 'r.id = a.registry_id')
             ->join('servers s', 's.id = a.server_id')
             ->join('models m', 'm.server_id = a.server_id AND m.name = r.name', 'left')
+            ->join('queues q', 'q.id = a.job_id', 'left')
             ->whereIn('a.registry_id', $ids)->where('s.deleted_at', null)
             ->get()->getResultArray();
         $out = [];
         foreach ($rows as $d) {
+            // A download whose queue job is gone, failed or cancelled is not "deploying" any more.
+            if ($d['state'] === 'deploying' && $d['installed_status'] === null && ($d['job_status'] === null || in_array($d['job_status'], ['failed', 'cancelled'], true))) {
+                $d['state'] = 'failed';
+                $d['error'] = $d['job_error'] ?: ($d['job_status'] === null ? 'The download job no longer exists.' : 'The download job ' . $d['job_status'] . '.');
+            }
             $status = match (true) {
                 $d['state'] === 'removing'                                => 'removing',
                 $d['installed_status'] === 'running'                      => 'loaded',
@@ -399,6 +406,22 @@ class ModelRegistryService
 
     // ---- Access & defaults -------------------------------------------------------
 
+    /** name => registry row for every entry (one query), for checking many models at once. */
+    public function index(): array
+    {
+        return array_column($this->db->table('model_registry')->get()->getResultArray(), null, 'name');
+    }
+
+    /** roleAllowed() against a row already loaded (null = not registered). */
+    public static function rowAllows(?array $r, ?string $role): bool
+    {
+        if (! $r) return true;
+        if ((int) $r['enabled'] !== 1) return false;
+        $roles = $r['access_roles'] ? json_decode($r['access_roles'], true) : null;
+        if (! is_array($roles) || ! $roles) return true;
+        return $role !== null && (in_array($role, $roles, true) || in_array($role, ['super_admin', 'admin'], true));
+    }
+
     /** May a user with this role use the model? Unregistered models and entries without roles are open. */
     public function roleAllowed(string $modelName, ?string $role): bool
     {
@@ -461,27 +484,38 @@ class ModelRegistryService
     {
         $done = ['loaded' => [], 'unloaded' => [], 'errors' => []];
         $rows = $this->db->table('model_registry r')
-            ->select('r.name, r.keep_loaded, r.idle_unload_minutes, m.id AS model_id, m.status, s.id AS server_id, s.name AS server, s.api_url, s.auth_token')
+            ->select('r.name, r.keep_loaded, r.idle_unload_minutes, m.id AS model_id, s.id AS server_id, s.name AS server, s.api_url, s.auth_token')
             ->join('model_assignments a', 'a.registry_id = r.id')
             ->join('servers s', 's.id = a.server_id')
             ->join('models m', 'm.server_id = s.id AND m.name = r.name')
             ->where('r.enabled', 1)->where('s.deleted_at', null)->where('s.is_enabled', 1)->whereIn('s.status', ['online', 'degraded'])
+            ->where('s.kind', 'ollama') // load / unload is an Ollama API; other engines manage their own memory
             ->groupStart()->where('r.keep_loaded', 1)->orWhere('r.idle_unload_minutes >', 0)->groupEnd()
             ->get()->getResultArray();
+        $loaded = []; // server id => [model names in memory], read from the node itself
         foreach ($rows as $r) {
+            $sid    = (int) $r['server_id'];
             $label  = "{$r['name']}@{$r['server']}";
             $client = new OllamaService($r['api_url'], $r['auth_token'] ?? null);
             try {
+                if (! isset($loaded[$sid])) {
+                    $loaded[$sid] = array_map(static fn ($m) => (string) ($m['name'] ?? $m['model'] ?? ''), $client->ps()['models'] ?? []);
+                    // Record what is really in memory, whoever loaded it (a chat, the gateway, this job).
+                    $this->db->table('models')->where('server_id', $sid)->whereIn('status', ['running', 'available'])
+                        ->update(['status' => 'available']);
+                    if ($loaded[$sid]) $this->db->table('models')->where('server_id', $sid)->whereIn('name', $loaded[$sid])->update(['status' => 'running']);
+                }
+                $inMemory = in_array($r['name'], $loaded[$sid], true);
                 if ((int) $r['keep_loaded'] === 1) {
-                    if ($r['status'] !== 'running') {
-                        $client->load($r['name']);
+                    if (! $inMemory) {
+                        $client->load($r['name']); // keep_alive -1: stays until unloaded
                         $this->db->table('models')->where('id', $r['model_id'])->update(['status' => 'running']);
                         $done['loaded'][] = $label;
                     }
                     continue;
                 }
                 $idle = (int) $r['idle_unload_minutes'];
-                if ($r['status'] === 'running' && $idle > 0 && ! $this->usedSince($r['name'], (int) $r['server_id'], time() - $idle * 60)) {
+                if ($inMemory && $idle > 0 && ! $this->usedSince($r['name'], $sid, time() - $idle * 60)) {
                     $client->unload($r['name']);
                     $this->db->table('models')->where('id', $r['model_id'])->update(['status' => 'available']);
                     $done['unloaded'][] = $label;
@@ -491,6 +525,29 @@ class ModelRegistryService
             }
         }
         return $done;
+    }
+
+    /** Pinned ("keep loaded") model names, cached for the request: chat calls pass keep_alive -1 for them. */
+    private static ?array $pinned = null;
+
+    /** Forget the cached pinned list (after the registry changes, and between tests). */
+    public static function forgetPinned(): void
+    {
+        self::$pinned = null;
+    }
+
+    public static function isPinned(string $model): bool
+    {
+        $pinned = &self::$pinned;
+        if ($pinned === null) {
+            try {
+                $pinned = array_flip(array_column(\Config\Database::connect()->table('model_registry')->select('name')
+                    ->where(['keep_loaded' => 1, 'enabled' => 1])->get()->getResultArray(), 'name'));
+            } catch (\Throwable) {
+                $pinned = [];
+            }
+        }
+        return isset($pinned[$model]);
     }
 
     private function usedSince(string $model, int $serverId, int $since): bool

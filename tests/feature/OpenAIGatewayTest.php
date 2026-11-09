@@ -46,7 +46,7 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         unset($_SERVER['ohub_api_key']);
         putenv('ASR_SERVICE_URL=http://127.0.0.1:' . self::$port); $_ENV['ASR_SERVICE_URL'] = $_SERVER['ASR_SERVICE_URL'] = 'http://127.0.0.1:' . self::$port;
         $f = \Config\Database::forge($this->DBGroup);
-        foreach (['users', 'roles', 'api_keys', 'api_logs', 'servers', 'models', 'model_registry', 'model_assignments', 'model_defaults', 'settings'] as $t) $f->dropTable($t, true);
+        foreach (['users', 'roles', 'api_keys', 'api_logs', 'servers', 'models', 'model_registry', 'model_assignments', 'model_defaults', 'settings', 'queues'] as $t) $f->dropTable($t, true);
         $id = ['id' => ['type' => 'INTEGER', 'auto_increment' => true]];
         $null = static fn (string $type = 'VARCHAR') => ['type' => $type, 'null' => true];
         $f->addField($id + ['name' => $null(), 'status' => $null(), 'role_id' => $null('INTEGER'), 'deleted_at' => $null('DATETIME')])->addKey('id', true)->createTable('users');
@@ -75,6 +75,7 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $f->addField($id + ['task' => $null(), 'application' => ['type' => 'VARCHAR', 'default' => ''], 'model_name' => $null(), 'updated_at' => $null('DATETIME')])->addKey('id', true)->createTable('model_defaults');
         $f->addField($id + ['group' => $null(), 'key' => $null(), 'value' => $null('TEXT'), 'is_secret' => ['type' => 'INTEGER', 'default' => 0], 'updated_at' => $null('DATETIME')])->addKey('id', true)->createTable('settings');
 
+        $f->addField($id + ['type' => $null(), 'status' => $null(), 'error' => $null()])->addKey('id', true)->createTable('queues');
         $this->db->table('roles')->insertBatch([['name' => 'customer'], ['name' => 'developer']]);
         $this->db->table('users')->insert(['name' => 'Ann', 'status' => 'active', 'role_id' => 1]);
         $this->db->table('api_keys')->insert(['name' => 'k', 'user_id' => 1, 'api_key' => 'ohub_k1', 'secret_hash' => password_hash('sk_s', PASSWORD_DEFAULT),
@@ -368,5 +369,50 @@ final class OpenAIGatewayTest extends CIUnitTestCase
 
         $this->db->table('api_keys')->update(['scopes' => 'chat']);
         $this->transcribe([])->assertStatus(403);
+    }
+
+    // ---- Model load policy (audit B2) -------------------------------------------------------------
+
+    public function testAutoloadUsesWhatIsReallyInMemory(): void
+    {
+        @unlink(self::$log . '.generate');
+        $f = \Config\Database::forge($this->DBGroup);
+        foreach (['pinned-model' => [1, null], 'idle-model' => [0, 10], 'vllm-pinned' => [1, null]] as $name => [$keep, $idle]) {
+            $sid = $name === 'vllm-pinned' ? 2 : 3;
+            $this->db->table('models')->insert(['server_id' => $sid, 'name' => $name, 'status' => 'available']);
+            $this->db->table('model_registry')->insert(['name' => $name, 'keep_loaded' => $keep, 'idle_unload_minutes' => $idle, 'enabled' => 1]);
+            $this->db->table('model_assignments')->insert(['registry_id' => $this->db->insertID(), 'server_id' => $sid, 'state' => 'deployed']);
+        }
+        $this->db->table('servers')->where('id', 3)->update(['kind' => 'ollama']);
+        $this->db->table('servers')->where('id', 2)->update(['kind' => 'vllm']);
+        $this->db->table('servers')->update(['is_enabled' => 1]);
+
+        $out = (new \App\Services\ModelRegistryService())->autoload();
+        $this->assertSame(['pinned-model@ollama'], $out['loaded'], 'pinned and not in memory: loaded; the vLLM node is left alone');
+        $this->assertSame(['idle-model@ollama'], $out['unloaded'], 'in memory (per /api/ps) and unused for 10 minutes: unloaded');
+        $calls = array_map('json_decode', array_filter(explode("\n", (string) @file_get_contents(self::$log . '.generate'))));
+        $this->assertEquals([['pinned-model', -1], ['idle-model', 0]], array_map(static fn ($c) => [$c->model, $c->keep_alive], $calls));
+        \App\Services\ModelRegistryService::forgetPinned();
+        $this->assertTrue(\App\Services\ModelRegistryService::isPinned('pinned-model'));
+    }
+
+    /** Audit B4, B10, B11. */
+    public function testUsageEstimatesFinishReasonAndEmbeddingOptions(): void
+    {
+        $this->db->table('models')->insert(['server_id' => 2, 'name' => 'nousage', 'status' => 'available']);
+        $b = $this->body($this->api('post', 'chat/completions', ['model' => 'nousage', 'messages' => [['role' => 'user', 'content' => str_repeat('a', 40)]]]));
+        $this->assertGreaterThan(0, $b['usage']['prompt_tokens'], 'no usage from the engine: estimated, not free');
+        $this->assertGreaterThan(0, $b['usage']['completion_tokens']);
+        $this->assertGreaterThan(0, (int) $this->db->table('api_logs')->orderBy('id', 'DESC')->get()->getRow()->total_tokens);
+
+        $b = $this->body($this->api('post', 'chat/completions', ['model' => 'fake-chat', 'max_tokens' => 3, 'messages' => [['role' => 'user', 'content' => 'x']]]));
+        $this->assertSame('length', $b['choices'][0]['finish_reason'], 'the engine said it hit the limit');
+
+        $e = $this->body($this->api('post', 'embeddings', ['model' => 'fake-embed', 'input' => ['a', 'b'], 'dimensions' => 2]));
+        $v = $e['data'][1]['embedding'];
+        $this->assertCount(2, $v);
+        $this->assertEqualsWithDelta(1.0, sqrt($v[0] ** 2 + $v[1] ** 2), 1e-9, 'shortened and re-normalised');
+        $err = $this->body($this->api('post', 'embeddings', ['model' => 'fake-embed', 'input' => [[101, 202]]]))['error'];
+        $this->assertSame('unsupported_value', $err['code']);
     }
 }

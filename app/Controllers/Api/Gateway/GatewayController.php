@@ -93,7 +93,7 @@ class GatewayController extends BaseApiController
                 ['role' => 'user', 'content' => $text],
             ], [], function (string $d) use (&$out) { $out .= $d; });
             return ['output' => ['translation' => trim($out)], 'usage' => $final];
-        });
+        }, 'translate');
     }
 
     /**
@@ -118,7 +118,7 @@ class GatewayController extends BaseApiController
                 ['role' => 'user', 'content' => $text],
             ], [], function (string $d) use (&$out) { $out .= $d; });
             return ['output' => ['summary' => trim($out)], 'usage' => $final];
-        });
+        }, 'summarize');
     }
 
     public function embeddings()
@@ -137,15 +137,20 @@ class GatewayController extends BaseApiController
      * Shared proxy pipeline: scope/model/quota checks → node selection with
      * failover → run $call → token-accounting + logging.
      */
-    private function proxy(string $endpoint, callable $call)
+    /**
+     * $scope is the key scope the call needs; $task (translate, summarize…) names the endpoint for
+     * the default model and the log, when it differs from the scope.
+     */
+    private function proxy(string $scope, callable $call, ?string $task = null)
     {
-        if ($r = $this->scope($endpoint)) return $r;
+        if ($r = $this->scope($scope)) return $r;
+        $endpoint = $task ?? $scope;
         $key   = $this->key();
         $in    = $this->input();
         $model = trim((string) ($in['model'] ?? ''));
         $registry = new \App\Services\ModelRegistryService();
         if ($model === '') { // fall back to the default model for this task (the key's application first)
-            $model = (string) $registry->defaultFor($endpoint, $key['application'] ?? null);
+            $model = (string) ($registry->defaultFor($endpoint, $key['application'] ?? null) ?? ($task ? $registry->defaultFor($scope, $key['application'] ?? null) : null));
             $in['model'] = $model;
         }
         if ($model === '') {
@@ -172,8 +177,9 @@ class GatewayController extends BaseApiController
             try {
                 $result = $call($server, $model, $in);
                 $usage  = $result['usage'] ?? [];
-                $pt = $usage['prompt_tokens'] ?? null;
-                $ct = $usage['completion_tokens'] ?? null;
+                // No usage from the provider (or embeddings, which report none): estimate, so the call still counts.
+                $pt = $usage['prompt_tokens'] ?? ApiGatewayService::estimateTokens($in['messages'] ?? $in['prompt'] ?? $in['text'] ?? $in['input'] ?? null);
+                $ct = $usage['completion_tokens'] ?? ($endpoint === 'embeddings' ? 0 : ApiGatewayService::estimateTokens($result['output'] ?? null));
                 $gw->log([
                     'api_key_id' => $key['id'], 'user_id' => $key['user_id'] ?? null,
                     'endpoint' => $endpoint, 'model' => $model, 'server_id' => $server['id'],
@@ -192,6 +198,9 @@ class GatewayController extends BaseApiController
                 return $this->logged($endpoint, $model, $server['id'], 422, $e->getMessage());
             } catch (\Throwable $e) {
                 $lastErr = $this->publicError($e, 'The model node failed.'); // try the next node (failover)
+                // record the failed attempt against its node, so per-node error rates are real
+                $gw->log(['api_key_id' => $key['id'] ?? null, 'user_id' => $key['user_id'] ?? null, 'endpoint' => $endpoint, 'model' => $model,
+                    'server_id' => $server['id'], 'status' => 502, 'client_ip' => $this->request->getIPAddress(), 'error' => mb_substr('failover: ' . $lastErr, 0, 255)]);
             }
         }
         return $this->logged($endpoint, $model, null, 502, $lastErr);

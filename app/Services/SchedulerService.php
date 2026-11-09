@@ -57,6 +57,14 @@ class SchedulerService
             ->get()->getResultArray();
         $out = [];
         foreach ($jobs as $job) {
+            // Claim the run first: move next_run_at on only if nobody else has. A job still running from
+            // the previous minute's cron (a long sync) is then not started a second time alongside it.
+            // Still running from an earlier tick (started under an hour ago)? Leave it alone.
+            if (($job['last_status'] ?? '') === 'running' && ! empty($job['updated_at']) && strtotime($job['updated_at']) > time() - 3600) continue;
+            $b = $this->db->table('cron_jobs')->where('id', $job['id']);
+            $job['next_run_at'] === null ? $b->where('next_run_at', null) : $b->where('next_run_at', $job['next_run_at']);
+            $b->update(['next_run_at' => $this->nextRun($job['schedule']), 'last_status' => 'running', 'updated_at' => date('Y-m-d H:i:s')]);
+            if ($this->db->affectedRows() === 0) continue;
             $out[$job['key']] = $this->run($job);
         }
         return $out;

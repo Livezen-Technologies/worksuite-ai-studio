@@ -86,7 +86,10 @@ class ApiKeyFilter implements FilterInterface
             return $this->deny($response, 'Rate limit exceeded. Try again shortly.', 429);
         }
 
-        $model->update($row['id'], ['last_used_at' => date('Y-m-d H:i:s')]);
+        // last used: written at most once a minute per key, not on every call
+        if (empty($row['last_used_at']) || strtotime($row['last_used_at']) < time() - 60) {
+            $model->update($row['id'], ['last_used_at' => date('Y-m-d H:i:s')]);
+        }
         $_SERVER['ohub_api_key'] = $row;
     }
 

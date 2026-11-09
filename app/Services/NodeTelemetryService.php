@@ -45,10 +45,8 @@ class NodeTelemetryService
             'gpu_temp_c'   => $num($in['gpu_temp'] ?? null, 0, 150),
         ];
         $m = array_filter($m, static fn ($v) => $v !== null);
-        if (! $m) return [];
-
         $now = date('Y-m-d H:i:s');
-        $upd = $m + ['metrics_at' => $now];
+        $upd = $m ? $m + ['metrics_at' => $now] : []; // a report with only hardware facts still fills them in
         // Hardware facts the agent can see fill in what the admin left blank.
         if (($acc = strtolower((string) ($in['accelerator'] ?? ''))) && in_array($acc, self::ACCELERATORS, true)) $upd['accelerator'] = $acc;
         if (($v = $mb2gb($num($in['vram_total_mb'] ?? null, 1, 1e7))) !== null) $upd['gpu_vram_gb'] = $v;
@@ -61,7 +59,9 @@ class NodeTelemetryService
             if ($f === 'gpu_name') { if (empty($server['gpu_model'])) $upd['gpu_model'] = mb_substr($v, 0, $len); }
             else $upd[$f] = mb_substr($v, 0, $len);
         }
+        if (! $upd) return [];
         $this->db->table('servers')->where('id', $server['id'])->update($upd);
+        if (! $m) return $upd;
 
         $last = $this->db->table('server_metrics')->select('recorded_at')->where('server_id', $server['id'])
             ->orderBy('id', 'DESC')->limit(1)->get()->getRowArray();

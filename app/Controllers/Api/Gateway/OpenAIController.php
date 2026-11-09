@@ -57,26 +57,26 @@ class OpenAIController extends BaseApiController
         $allowed  = ! empty($key['allowed_models']) ? json_decode($key['allowed_models'], true) : null;
         $registry = new ModelRegistryService();
         $role     = $registry->roleOf(isset($key['user_id']) ? (int) $key['user_id'] : null);
-        $meta     = [];
-        foreach ((new ModelRegistryService())->all() as $r) $meta[$r['name']] = $r;
+        $meta     = $registry->index(); // one query; roles are checked in memory
         $out = [];
-        foreach ((new ApiGatewayService())->availableModels() as $m) {
+        foreach ((new ApiGatewayService())->availableModels(true) as $m) {
             $id = $m['name'];
             if (is_array($allowed) && $allowed && ! in_array($id, $allowed, true)) continue;
-            if (! $registry->roleAllowed($id, $role)) continue;
             $r = $meta[$id] ?? null;
+            if (! ModelRegistryService::rowAllows($r, $role)) continue;
+            $guess = $r ? null : ModelRegistryService::infer($id);
             $out[$id] = [
                 'id' => $id, 'object' => 'model', 'created' => isset($r['created_at']) ? (int) strtotime($r['created_at']) : 0, 'owned_by' => 'worksuite-ai',
-                'type' => $r['type'] ?? ModelRegistryService::infer($id)['type'],
-                'capabilities' => $r['capabilities'] ?? ModelRegistryService::infer($id)['capabilities'],
-                'context_length' => $r['context_length'] ?? null,
+                'type' => $r['type'] ?? $guess['type'],
+                'capabilities' => $r ? (json_decode((string) $r['capabilities'], true) ?: []) : $guess['capabilities'],
+                'context_length' => isset($r['context_length']) ? (int) $r['context_length'] : null,
             ];
         }
         // Speech models (the speech service), for keys with the transcribe scope.
         if (in_array('transcribe', explode(',', (string) ($key['scopes'] ?? '')), true)) {
             foreach ((new \App\Services\SpeechService())->models() as $k => $m) {
                 $id = \App\Services\SpeechService::registryName($k);
-                if ($m['installed'] === false || (is_array($allowed) && $allowed && ! in_array($id, $allowed, true)) || ! $registry->roleAllowed($id, $role)) continue;
+                if ($m['installed'] === false || (is_array($allowed) && $allowed && ! in_array($id, $allowed, true)) || ! ModelRegistryService::rowAllows($meta[$id] ?? null, $role)) continue;
                 $out[$id] = ['id' => $id, 'object' => 'model', 'created' => 0, 'owned_by' => 'worksuite-ai', 'type' => 'stt', 'capabilities' => ['audio_in'], 'context_length' => null];
             }
         }
@@ -258,20 +258,24 @@ class OpenAIController extends BaseApiController
             } catch (\Throwable $e) {
                 $lastErr = $this->publicError($e, 'The model node failed.');
                 if ($started) { // mid-stream: cannot switch nodes any more; end the stream with an error event
-                    $this->logCall($endpoint, $model, (int) $server['id'], 502, null, null, $lastErr);
+                    // what was already streamed was generated, and counts
+                    $this->logCall($endpoint, $model, (int) $server['id'], 502, ApiGatewayService::estimateTokens($messages), ApiGatewayService::estimateTokens($text), $lastErr);
                     echo 'data: ' . json_encode(['error' => ['message' => $lastErr, 'type' => 'api_error', 'code' => 'upstream_error']]) . "\n\ndata: [DONE]\n\n";
                     flush();
                     exit;
                 }
                 $text = '';
+                $this->logCall($endpoint, $model, (int) $server['id'], 502, null, null, 'failover: ' . $lastErr); // per-node error rates stay real
                 continue; // fail over to the next node
             }
-            $pt = $final['prompt_tokens'] ?? null;
-            $ct = $final['completion_tokens'] ?? null;
+            // Providers that report no usage still count toward quotas, by estimate.
+            $pt = $final['prompt_tokens'] ?? ApiGatewayService::estimateTokens($messages);
+            $ct = $final['completion_tokens'] ?? ApiGatewayService::estimateTokens($text);
             $usage  = ['prompt_tokens' => (int) $pt, 'completion_tokens' => (int) $ct, 'total_tokens' => (int) $pt + (int) $ct];
             $calls  = array_map(static fn ($tc, $i) => ['index' => $i, 'id' => $tc['id'], 'type' => 'function', 'function' => ['name' => $tc['name'], 'arguments' => $tc['arguments']]],
                 $final['tool_calls'] ?? [], array_keys($final['tool_calls'] ?? []));
-            $finish = $calls ? 'tool_calls' : ((isset($params['max_tokens']) && $ct !== null && $ct >= $params['max_tokens']) ? 'length' : 'stop');
+            // The provider's own reason (normalised by ProviderService) wins; otherwise infer from max_tokens.
+            $finish = $calls ? 'tool_calls' : ($final['finish_reason'] ?? ((isset($params['max_tokens']) && $ct >= $params['max_tokens']) ? 'length' : 'stop'));
             $this->logCall($endpoint, $model, (int) $server['id'], 200, $pt, $ct);
 
             if ($stream) {
@@ -302,6 +306,11 @@ class OpenAIController extends BaseApiController
         if ($in === null) return $this->error('The request body must be JSON.', 400);
         $input = $in['input'] ?? null;
         $list  = is_array($input) ? array_values($input) : [$input];
+        // Token-array input (what OpenAI-oriented clients such as LangChain send by default) is not
+        // portable across engines' tokenizers: say so plainly instead of a vague validation error.
+        if ($list && (is_int($list[0]) || is_array($list[0]))) {
+            return $this->error('Token-array input is not supported; send the text. (In LangChain set check_embedding_ctx_length=False.)', 400, 'unsupported_value', 'input');
+        }
         if (! $list || array_filter($list, static fn ($t) => ! is_string($t) || $t === '')) {
             return $this->error('input must be a non-empty string or an array of strings.', 400, 'invalid_value', 'input');
         }
@@ -320,6 +329,17 @@ class OpenAIController extends BaseApiController
                 continue;
             }
             $vecs = $res['embeddings'] ?? [];
+            if (count($vecs) !== count($list)) { $lastErr = 'The node returned ' . count($vecs) . ' embeddings for ' . count($list) . ' inputs.'; continue; }
+            // `dimensions`: shorten each vector and re-normalise it, as OpenAI does for its v3 models. Useful for
+            // models trained for it (nomic-embed v1.5, mxbai, bge-m3 Matryoshka); a plain cut otherwise.
+            $dims = (int) ($in['dimensions'] ?? 0);
+            if ($dims > 0) {
+                $vecs = array_map(static function (array $v) use ($dims) {
+                    $v = array_slice($v, 0, $dims);
+                    $norm = sqrt(array_sum(array_map(static fn ($x) => $x * $x, $v))) ?: 1.0;
+                    return array_map(static fn ($x) => $x / $norm, $v);
+                }, $vecs);
+            }
             $pt   = (int) ($res['prompt_eval_count'] ?? array_sum(array_map(static fn ($t) => (int) ceil(mb_strlen($t) / 4), $list)));
             $this->logCall('embeddings', $model, (int) $server['id'], 200, $pt, 0);
             $data = [];

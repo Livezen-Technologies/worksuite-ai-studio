@@ -96,6 +96,7 @@ class ProviderService
         $this->toolChoice = self::normalizeToolChoice($extra['tool_choice'] ?? null, $this->tools);
         if ($this->toolChoice === 'none') $this->tools = [];
         $this->toolCalls  = [];
+        $this->finish     = null;
         unset($extra['params'], $extra['tools'], $extra['tool_choice']);
         if ($this->params && $this->isOllama($kind)) {
             $map = ['temperature' => 'temperature', 'top_p' => 'top_p', 'max_tokens' => 'num_predict', 'stop' => 'stop', 'seed' => 'seed',
@@ -111,6 +112,7 @@ class ProviderService
             default     => $this->ollamaChat($server, $model, $messages, $extra, $onDelta, $start),
         };
         $out['tool_calls'] = array_values($this->toolCalls);
+        $out['finish_reason'] = $this->finish; // stop | length | content_filter, or null when the provider didn't say
         return $out;
     }
 
@@ -120,6 +122,21 @@ class ProviderService
     private array $tools = [];
     /** 'auto' | 'required' | 'none' | ['name' => string] */
     private $toolChoice = 'auto';
+    /** Why generation stopped, normalised to OpenAI's names; null when the provider didn't say. */
+    private ?string $finish = null;
+
+    private function setFinish(?string $reason): void
+    {
+        $r = strtolower((string) $reason);
+        $this->finish = match (true) {
+            $r === '' => $this->finish,
+            in_array($r, ['length', 'max_tokens'], true) => 'length',
+            in_array($r, ['content_filter', 'safety', 'recitation', 'blocklist', 'prohibited_content', 'spii'], true) => 'content_filter',
+            in_array($r, ['tool_calls', 'tool_use', 'function_call'], true) => $this->finish, // tool calls are reported separately
+            default => 'stop',
+        };
+    }
+
     /** Tool calls the model made in the current call: index => {id, name, arguments (JSON string)}. */
     private array $toolCalls = [];
 
@@ -219,6 +236,8 @@ class ProviderService
                 array_unshift($messages, ['role' => 'system', 'content' => 'You must answer by calling ' . (is_array($this->toolChoice) ? "the tool {$this->toolChoice['name']}" : 'one of the tools') . '.']);
             }
         }
+        // A pinned ("keep loaded") model must stay in memory: Ollama otherwise drops it 5 minutes after this call.
+        if (! isset($extra['keep_alive']) && ModelRegistryService::isPinned($model)) $extra['keep_alive'] = -1;
         $client = new OllamaService($server['api_url'], $server['auth_token'] ?? null);
         $final  = $client->chat($model, array_map([$this, 'ollamaMessage'], $messages), $extra, function (array $line) use ($onDelta) {
             $d = $line['message']['content'] ?? '';
@@ -229,6 +248,7 @@ class ProviderService
                 $this->toolCalls[] = ['id' => self::callId(), 'name' => (string) ($tc['function']['name'] ?? ''), 'arguments' => self::argsJson($tc['function']['arguments'] ?? null)];
             }
         });
+        $this->setFinish($final['done_reason'] ?? null);
         return [
             'prompt_tokens'     => $final['prompt_eval_count'] ?? null,
             'completion_tokens' => $final['eval_count'] ?? null,
@@ -249,6 +269,12 @@ class ProviderService
         foreach (['temperature', 'top_p', 'max_tokens', 'stop', 'seed', 'presence_penalty', 'frequency_penalty'] as $k) {
             if (array_key_exists($k, $this->params)) $body[$k] = $this->params[$k];
         }
+        // OpenAI's current models (o-series, gpt-5) refuse max_tokens; max_completion_tokens works for all of them.
+        // Self-hosted engines (vLLM, llama.cpp) still expect max_tokens.
+        if (($server['kind'] ?? '') === 'openai' && isset($body['max_tokens'])) {
+            $body['max_completion_tokens'] = $body['max_tokens'];
+            unset($body['max_tokens']);
+        }
         if (! empty($this->params['json'])) $body['response_format'] = ['type' => 'json_object'];
         if ($this->tools) {
             $body['tools'] = array_map(static fn ($t) => ['type' => 'function', 'function' => $t], $this->tools);
@@ -259,6 +285,7 @@ class ProviderService
         if (! empty($server['auth_token']) || ($server['kind'] ?? '') === 'openai') $headers[] = 'Authorization: Bearer ' . ($server['auth_token'] ?? '');
         $this->sse($this->base($server) . '/chat/completions', $headers, $body, function (array $j) use ($onDelta, &$usage) {
             $delta = $j['choices'][0]['delta'] ?? [];
+            if (! empty($j['choices'][0]['finish_reason'])) $this->setFinish($j['choices'][0]['finish_reason']);
             $d = $delta['content'] ?? '';
             if ($d !== '' && $d !== null) {
                 $onDelta($d);
@@ -334,6 +361,7 @@ class ProviderService
                 $usage['p'] = $j['message']['usage']['input_tokens'] ?? $usage['p'];
             } elseif ($t === 'message_delta') {
                 $usage['c'] = $j['usage']['output_tokens'] ?? $usage['c'];
+                $this->setFinish($j['delta']['stop_reason'] ?? null);
             }
         });
         foreach ($this->toolCalls as &$tc) $tc['arguments'] = $tc['arguments'] === '' ? '{}' : $tc['arguments'];
@@ -380,6 +408,7 @@ class ProviderService
             . ':streamGenerateContent?alt=sse&key=' . urlencode((string) ($server['auth_token'] ?? ''));
         $usage = ['p' => null, 'c' => null];
         $this->sse($url, ['Content-Type: application/json'], $body, function (array $j) use ($onDelta, &$usage) {
+            if (! empty($j['candidates'][0]['finishReason'])) $this->setFinish($j['candidates'][0]['finishReason']);
             foreach ($j['candidates'][0]['content']['parts'] ?? [] as $part) {
                 if (isset($part['text']) && $part['text'] !== '') {
                     $onDelta($part['text']);

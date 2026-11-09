@@ -97,6 +97,17 @@ class ApiGatewayService
     }
 
     /** Record one gateway request. Returns the inserted id. */
+    /**
+     * Rough token count (about 4 characters a token) for calls whose provider reports no usage, so
+     * they still count toward quotas instead of being free.
+     */
+    public static function estimateTokens($value): int
+    {
+        if ($value === null || $value === '' || $value === []) return 0;
+        $text = is_string($value) ? $value : (string) json_encode($value, JSON_UNESCAPED_UNICODE);
+        return max(1, (int) ceil(mb_strlen($text) / 4));
+    }
+
     public function log(array $data): int
     {
         $data['created_at'] = date('Y-m-d H:i:s');
@@ -126,13 +137,22 @@ class ApiGatewayService
     }
 
     /** Models available through the gateway (installed on reachable nodes). */
-    public function availableModels(): array
+    /** $servable: only models on at least one enabled node that can take traffic (as candidates() would route). */
+    public function availableModels(bool $servable = false): array
     {
-        return $this->db->table('models m')
+        // Read the setting before building the query: another query mid-build clobbers the table alias.
+        $statuses = null;
+        if ($servable) {
+            $cfg = (new SettingsService())->group('gateway', false);
+            $statuses = ($cfg['include_degraded'] ?? '1') === '1' ? ['online', 'degraded'] : ['online'];
+        }
+        $b = $this->db->table('models m')
             // Every selected column is aggregated, so this runs under MySQL's ONLY_FULL_GROUP_BY.
             ->select('m.name, MAX(m.parameter_size) AS parameter_size, MAX(m.quantization) AS quantization, MIN(s.name) AS server, MIN(s.status) AS status')
             ->join('servers s', 's.id = m.server_id')
-            ->where('s.deleted_at', null)
+            ->where('s.deleted_at', null);
+        if ($statuses) $b->where('s.is_enabled', 1)->whereIn('s.status', $statuses);
+        return $b
             ->groupBy('m.name')
             ->orderBy('m.name', 'ASC')
             ->get()->getResultArray();
