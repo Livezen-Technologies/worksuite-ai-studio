@@ -9,7 +9,7 @@
 # it is alive, stops the run if the job is cancelled, and reports how the process ended. Get the token on the Servers
 # page: ⋯ → Install training agent. Run as your normal user (not root); it asks for sudo once to keep running after logout.
 set -euo pipefail
-VERSION="1.4.0"
+VERSION="1.5.0"
 DIR="${HOME}/.aistudio-agent"
 SERVER="" TOKEN="" UNINSTALL=0 FORCE_VENV=0
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -60,7 +60,7 @@ printf 'SERVER=%s\nTOKEN=%s\nAISTUDIO_PYENV=%s\nAISTUDIO_CONDA=%s\n' "$SERVER" "
 cat > "$DIR/agent-loop.sh" <<'LOOP'
 #!/usr/bin/env bash
 # AI Studio training agent loop (installed by aistudio-agent.sh).
-VERSION="1.4.0"
+VERSION="1.5.0"
 DIR="${HOME}/.aistudio-agent"
 . "$DIR/agent.env"
 JOB="" PID="" EXITED="" CODE="" TAIL="" ASR_STATE="" STORE_STATE="" ASR_DEVICE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"; ASR_DEVICE="${ASR_DEVICE:-$(nproc) CPU cores}"
@@ -70,6 +70,42 @@ log "agent ${VERSION} started"
 curl -fsS -m 60 -o "$DIR/aistudio-asr-node.sh.new" "${SERVER}/node/aistudio-asr-node.sh" && mv "$DIR/aistudio-asr-node.sh.new" "$DIR/aistudio-asr-node.sh" && chmod 700 "$DIR/aistudio-asr-node.sh"
 curl -fsS -m 60 -o "$DIR/aistudio-store-node.sh.new" "${SERVER}/node/aistudio-store-node.sh" && mv "$DIR/aistudio-store-node.sh.new" "$DIR/aistudio-store-node.sh" && chmod 700 "$DIR/aistudio-store-node.sh"
 trap '[ -n "$PID" ] && kill -TERM -- "-$PID" 2>/dev/null; exit 0' TERM INT
+# Live utilization for the Studio's node dashboard: NVIDIA (nvidia-smi), AMD (rocm-smi) or CPU-only. Prints
+# curl --data-urlencode arguments, one per line; every value is optional and a missing tool just leaves it out.
+CPU_PREV=""
+metrics() {
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    echo "accelerator=cuda"
+    nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null \
+      | awk -F', *' '{u+=$1; m+=$2; t+=$3; if ($4>h) h=$4; n++} END {if (n) printf "gpu_util=%.1f\nvram_used_mb=%d\nvram_total_mb=%d\ngpu_temp=%d\n", u/n, m, t, h}'
+    nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | sed 's/^/gpu_name=/'
+    nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: *\([0-9.]*\).*/cuda_version=\1/p' | head -1
+  elif command -v rocm-smi >/dev/null 2>&1; then
+    echo "accelerator=rocm"
+    rocm-smi --showuse --showmeminfo vram --showtemp --csv 2>/dev/null | awk -F, 'NR==1 {for (i=1;i<=NF;i++) c[$i]=i; next}
+      { u+=$c["GPU use (%)"]; m+=$c["VRAM Total Used Memory (B)"]; t+=$c["VRAM Total Memory (B)"]; x=$c["Temperature (Sensor edge) (C)"]; if (x>h) h=x; n++ }
+      END { if (n) printf "gpu_util=%.1f\nvram_used_mb=%d\nvram_total_mb=%d\ngpu_temp=%d\n", u/n, m/1048576, t/1048576, h }'
+    rocm-smi --showproductname 2>/dev/null | sed -n 's/.*Card [Ss]eries: *\(.*\)$/gpu_name=\1/p' | head -1
+    [ -r /opt/rocm/.info/version ] && sed 's/^/rocm_version=/' /opt/rocm/.info/version | head -1
+  else
+    echo "accelerator=cpu"
+  fi
+  # CPU busy % since the previous heartbeat, from /proc/stat.
+  if [ -r /proc/stat ]; then
+    CUR="$(awk '/^cpu /{print $2+$3+$4+$6+$7+$8, $5}' /proc/stat)"
+    if [ -n "$CPU_PREV" ]; then
+      set -- $CPU_PREV $CUR
+      [ $(( ($3-$1)+($4-$2) )) -gt 0 ] && awk -v b=$(( $3-$1 )) -v i=$(( $4-$2 )) 'BEGIN {printf "cpu_util=%.1f\n", b*100/(b+i)}'
+    fi
+    CPU_PREV="$CUR"
+  fi
+  echo "cpu_cores=$(nproc 2>/dev/null || echo 0)"
+  [ -r /proc/meminfo ] && awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END {printf "ram_total_mb=%d\nram_used_mb=%d\n", t/1024, (t-a)/1024}' /proc/meminfo
+  df -Pk / 2>/dev/null | awk 'NR==2 {printf "disk_total_gb=%.1f\ndisk_used_gb=%.1f\n", $2/1048576, $3/1048576}'
+}
+# Runs in this shell (not a subshell) so CPU_PREV carries over to the next heartbeat.
+metric_args() { MARGS=(); metrics > "$DIR/metrics.txt" 2>/dev/null; while IFS= read -r kv; do [ -n "$kv" ] && MARGS+=(--data-urlencode "$kv"); done < "$DIR/metrics.txt"; }
+
 while true; do
   # Did the current run end?
   if [ -n "$PID" ] && ! kill -0 "$PID" 2>/dev/null; then
@@ -78,10 +114,11 @@ while true; do
     log "job $JOB ended with code $CODE"
     JOB="" PID=""
   fi
+  metric_args
   R="$(curl -s -m 30 -X POST -H "Authorization: Bearer ${TOKEN}" \
         --data-urlencode "version=${VERSION}" --data-urlencode "job_id=${JOB}" --data-urlencode "gpus=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU')" \
         --data-urlencode "exited_job_id=${EXITED}" --data-urlencode "exit_code=${CODE}" --data-urlencode "tail=${TAIL}" \
-        --data-urlencode "asr_state=${ASR_STATE}" --data-urlencode "asr_device=${ASR_DEVICE}" --data-urlencode "store_state=${STORE_STATE}" \
+        --data-urlencode "asr_state=${ASR_STATE}" --data-urlencode "asr_device=${ASR_DEVICE}" --data-urlencode "store_state=${STORE_STATE}" "${MARGS[@]}" \
         "${SERVER}/api/agent/heartbeat?format=env" 2>>"$DIR/agent.log")" || { sleep 30; continue; }
   EXITED="" CODE="" TAIL=""
   get() { printf '%s\n' "$R" | sed -n "s/^$1=//p" | head -1; }

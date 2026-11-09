@@ -2,17 +2,22 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { FormModal, FormSection, Input, Select, Textarea, Toggle, Alert, useToast } from '../../components/ui';
 import { ApiError, post, put } from '../../lib/api';
-import { KINDS, type Kind, type Server } from './shared';
+import { ACCELERATORS, DEPLOYMENTS, KINDS, type Kind, type Server } from './shared';
 
 type Form = Record<string, string | number | boolean>;
 
 function initial(s: Server | null): Form {
-  if (!s) return { kind: 'ollama', name: '', description: '', ip_address: '', hostname: '', port: 11434, api_url: '', auth_token: '', cpu_cores: '', ram_gb: '', storage_gb: '', gpu_model: '', cuda_version: '', os: '', is_local: false };
+  const infra = (x: Server | null): Form => ({
+    deployment: x?.deployment ?? 'remote', accelerator: x?.accelerator ?? '', gpu_count: x?.gpu_count ?? '', gpu_vram_gb: x?.gpu_vram_gb ? Number(x.gpu_vram_gb) : '',
+    rocm_version: x?.rocm_version ?? '', cloud_provider: x?.cloud_provider ?? '', region: x?.region ?? '', container_image: x?.container_image ?? '',
+    max_concurrency: x?.max_concurrency ?? '',
+  });
+  if (!s) return { kind: 'ollama', name: '', description: '', ip_address: '', hostname: '', port: 11434, api_url: '', auth_token: '', cpu_cores: '', ram_gb: '', storage_gb: '', gpu_model: '', cuda_version: '', os: '', is_local: false, ...infra(null) };
   return {
     kind: s.kind ?? 'ollama', name: s.name, description: s.description ?? '', ip_address: s.ip_address ?? '', hostname: s.hostname ?? '',
     port: s.port ?? 11434, api_url: s.api_url ?? '', auth_token: '', cpu_cores: s.cpu_cores ?? '', ram_gb: s.ram_gb ? Number(s.ram_gb) : '',
     storage_gb: s.storage_gb ? Number(s.storage_gb) : '', gpu_model: s.gpu_model ?? '', cuda_version: s.cuda_version ?? '', os: s.os ?? '',
-    is_local: Number(s.is_local) === 1,
+    is_local: Number(s.is_local) === 1, ...infra(s),
   };
 }
 
@@ -22,14 +27,14 @@ export default function ServerForm({ server, onClose }: { server: Server | null;
   const [f, setF] = useState<Form>(() => initial(server));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const kind = String(f.kind) as Kind;
-  const external = kind !== 'ollama';
+  const external = !!KINDS[kind].cloud;
   const meta = KINDS[kind];
   const set = (k: string) => (e: { target: { value: string } }) => setF((p) => ({ ...p, [k]: e.target.value }));
 
   const save = useMutation({
     mutationFn: () => {
       const body: Form = { ...f, is_local: f.is_local ? 1 : 0 };
-      if (external) for (const k of ['ip_address', 'hostname', 'port', 'cpu_cores', 'ram_gb', 'storage_gb', 'gpu_model', 'cuda_version', 'os']) delete body[k];
+      if (external) for (const k of ['ip_address', 'hostname', 'port', 'cpu_cores', 'ram_gb', 'storage_gb', 'gpu_model', 'cuda_version', 'os', 'deployment', 'accelerator', 'gpu_count', 'gpu_vram_gb', 'rocm_version', 'cloud_provider', 'region', 'container_image', 'max_concurrency']) delete body[k];
       return server ? put<Server>(`/servers/${server.id}`, body) : post<Server>('/servers', body);
     },
     onSuccess: () => {
@@ -48,7 +53,7 @@ export default function ServerForm({ server, onClose }: { server: Server | null;
       onClose={onClose}
       size="lg"
       title={server ? 'Edit connection' : 'Add a server or provider'}
-      description="A self-hosted Ollama node, or a commercial LLM API used as a model source."
+      description="A self-hosted GPU or CPU inference node (Ollama, vLLM, llama.cpp or any OpenAI-compatible server), or a commercial LLM API used as a model source."
       submitLabel={server ? 'Save' : external ? 'Connect' : 'Register'}
       submitting={save.isPending}
       onSubmit={() => save.mutate()}
@@ -61,7 +66,7 @@ export default function ServerForm({ server, onClose }: { server: Server | null;
               value={kind}
               disabled={!!server}
               hint={server ? 'The type cannot change after creation.' : undefined}
-              onChange={set('kind')}
+              onChange={(e) => setF((p) => ({ ...p, kind: e.target.value, port: KINDS[e.target.value as Kind].port ?? p.port }))}
               options={(Object.keys(KINDS) as Kind[]).map((k) => ({ value: k, label: KINDS[k].label }))}
             />
             <Input label="Name" required value={String(f.name)} onChange={set('name')} error={errors.name}
@@ -90,12 +95,12 @@ export default function ServerForm({ server, onClose }: { server: Server | null;
               <div className="grid gap-4 sm:grid-cols-3">
                 <Input wrapperClassName="sm:col-span-2" label="IP address" value={String(f.ip_address)} onChange={set('ip_address')} error={errors.ip_address}
                   placeholder="192.168.1.20" hint="The API URL is built from this and the port when left blank." />
-                <Input label="Ollama port" type="number" min={1} max={65535} value={String(f.port)} onChange={set('port')} error={errors.port} />
+                <Input label={`${KINDS[kind].label.replace(/ (node|server)$/, '')} port`} type="number" min={1} max={65535} value={String(f.port)} onChange={set('port')} error={errors.port} />
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Input label="Hostname" value={String(f.hostname)} onChange={set('hostname')} placeholder="gpu-01.internal" />
                 <Input label="API URL" value={String(f.api_url)} onChange={set('api_url')} error={errors.api_url}
-                  placeholder="http://192.168.1.20:11434" hint="Overrides IP and port." />
+                  placeholder={meta.urlHint} hint="Overrides IP and port." />
               </div>
               <Input label="Auth token" type="password" autoComplete="new-password" value={String(f.auth_token)} onChange={set('auth_token')}
                 placeholder={server?.has_token ? '•••••••• (unchanged)' : 'Optional'}
@@ -104,13 +109,33 @@ export default function ServerForm({ server, onClose }: { server: Server | null;
           )}
         </FormSection>
         {!external && (
+          <FormSection title="Infrastructure" description="Where the node runs and what accelerates it. The node agent fills in and updates what it can detect.">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Select label="Deployment" value={String(f.deployment)} onChange={set('deployment')}
+                options={Object.entries(DEPLOYMENTS).map(([value, label]) => ({ value, label }))} />
+              <Select label="Accelerator" value={String(f.accelerator)} onChange={set('accelerator')}
+                options={[{ value: '', label: 'Detect from agent' }, ...Object.entries(ACCELERATORS).map(([value, label]) => ({ value, label }))]} />
+              <Input label="Max concurrent requests" type="number" min={1} value={String(f.max_concurrency)} onChange={set('max_concurrency')} placeholder="No limit" />
+              {f.deployment === 'cloud' && <>
+                <Input label="Cloud provider" value={String(f.cloud_provider)} onChange={set('cloud_provider')} placeholder="e.g. AWS, Lambda, RunPod" />
+                <Input label="Region" value={String(f.region)} onChange={set('region')} placeholder="e.g. eu-central-1" />
+              </>}
+              {f.deployment === 'docker' && <Input wrapperClassName="sm:col-span-2" label="Container image" value={String(f.container_image)} onChange={set('container_image')} placeholder="vllm/vllm-openai:latest" />}
+            </div>
+          </FormSection>
+        )}
+        {!external && (
           <FormSection title="Hardware" description="For your reference and capacity planning.">
             <div className="grid gap-4 sm:grid-cols-3">
               <Input label="CPU cores" type="number" min={1} value={String(f.cpu_cores)} onChange={set('cpu_cores')} />
               <Input label="RAM (GB)" type="number" min={1} step="0.1" value={String(f.ram_gb)} onChange={set('ram_gb')} />
               <Input label="Storage (GB)" type="number" min={1} step="0.1" value={String(f.storage_gb)} onChange={set('storage_gb')} />
               <Input label="GPU" value={String(f.gpu_model)} onChange={set('gpu_model')} placeholder="CPU-only" />
-              <Input label="CUDA version" value={String(f.cuda_version)} onChange={set('cuda_version')} placeholder="12.4" />
+              <Input label="GPU count" type="number" min={0} value={String(f.gpu_count)} onChange={set('gpu_count')} placeholder="0" />
+              <Input label="Total VRAM (GB)" type="number" min={0} step="0.1" value={String(f.gpu_vram_gb)} onChange={set('gpu_vram_gb')} />
+              {f.accelerator === 'rocm'
+                ? <Input label="ROCm version" value={String(f.rocm_version)} onChange={set('rocm_version')} placeholder="6.2" />
+                : <Input label="CUDA version" value={String(f.cuda_version)} onChange={set('cuda_version')} placeholder="12.4" />}
               <Input label="OS" value={String(f.os)} onChange={set('os')} placeholder="Ubuntu 24.04" />
             </div>
             <Toggle checked={Boolean(f.is_local)} onChange={(v) => setF((p) => ({ ...p, is_local: v }))}

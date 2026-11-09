@@ -66,6 +66,7 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->get('servers/summary', 'ServersController::summary');
     $routes->get('servers/(:num)', 'ServersController::show/$1');
     $routes->get('servers/(:num)/usage', 'ServersController::usage/$1');
+    $routes->get('servers/(:num)/metrics', 'ServersController::metrics/$1');
     $routes->put('servers/(:num)', 'ServersController::update/$1');
     $routes->delete('servers/(:num)', 'ServersController::delete/$1');
     $routes->post('servers/(:num)/health', 'ServersController::health/$1');

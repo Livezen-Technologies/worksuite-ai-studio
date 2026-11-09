@@ -16,6 +16,7 @@ use App\Services\ServerService;
  *   DELETE /api/servers/{id}            delete            (servers.manage)
  *   POST   /api/servers/{id}/health     run a health check (servers.manage)
  *   GET    /api/servers/{id}/models     installed models on the node
+ *   GET    /api/servers/{id}/metrics    GPU / VRAM / CPU / RAM / disk history from the node agent
  *   POST   /api/servers/{id}/restart|shutdown|update  node control (needs agent)
  */
 class ServersController extends BaseApiController
@@ -34,7 +35,7 @@ class ServersController extends BaseApiController
     public function summary()
     {
         if ($r = $this->requirePermission('servers.view')) return $r;
-        $rows  = $this->servers()->where('kind', 'ollama')->findAll();
+        $rows  = $this->servers()->whereNotIn('kind', \App\Services\ProviderService::EXTERNAL)->findAll();
         $vram  = 0.0;
         $gpus  = 0;
         $cuda  = 0;
@@ -69,9 +70,33 @@ class ServersController extends BaseApiController
             'vram_gb'      => round($vram, 1),
             'cuda_cores'   => $cuda,
             'cuda_known'   => $known,
+            'vram_used_gb' => round(array_sum(array_map(static fn ($s) => (float) ($s['vram_used_gb'] ?? 0), $rows)), 1),
+            'gpu_util_avg' => self::avg($rows, 'gpu_util_pct'),
+            'cpu_util_avg' => self::avg($rows, 'cpu_util_pct'),
+            'availability' => array_count_values(array_map([\App\Services\NodeTelemetryService::class, 'availability'], $rows)),
+            'engines'      => array_count_values(array_map(static fn ($s) => (string) ($s['kind'] ?? 'ollama'), $rows)),
+            'accelerators' => array_count_values(array_map(static fn ($s) => (string) ($s['accelerator'] ?: (empty($s['gpu_model']) ? 'cpu' : 'unknown')), $rows)),
             'requests_24h' => (int) $use['requests'],
             'tokens_24h'   => (int) $use['tokens'],
         ]);
+    }
+
+    /** Mean of a utilization column over nodes with a fresh report; null when none reported. */
+    private static function avg(array $rows, string $col): ?float
+    {
+        $cut  = time() - \App\Services\NodeTelemetryService::STALE_SECONDS;
+        $vals = array_map(static fn ($s) => (float) $s[$col], array_filter($rows, static fn ($s) =>
+            isset($s[$col]) && $s[$col] !== null && ! empty($s['metrics_at']) && strtotime($s['metrics_at']) >= $cut));
+        return $vals ? round(array_sum($vals) / count($vals), 1) : null;
+    }
+
+    /** GET /api/servers/{id}/metrics?hours=24 — utilization history reported by the node agent. */
+    public function metrics($id = null)
+    {
+        if ($r = $this->requirePermission('servers.view')) return $r;
+        if (! $this->servers()->find((int) $id)) return $this->failure('Server not found.', 404);
+        $hours = max(1, min(168, (int) ($this->request->getGet('hours') ?? 24)));
+        return $this->ok((new \App\Services\NodeTelemetryService())->history((int) $id, $hours));
     }
 
     /** CUDA cores per GPU (nvidia-smi doesn't report them); one table for the summary and each server row. */
@@ -165,8 +190,8 @@ class ServersController extends BaseApiController
         $server = $m->find($id);
         (new ServerService())->check($server);
 
-        // Pull the provider's model catalogue so they appear in the picker now.
-        if ($external) {
+        // Pull the provider's / engine's model catalogue so they appear in the picker now.
+        if (! (new \App\Services\ProviderService())->isOllama($payload['kind'] ?? 'ollama')) {
             try { (new \App\Services\ModelService())->syncServer($server); } catch (\Throwable $e) { /* surfaced via health */ }
         }
 
@@ -237,7 +262,7 @@ class ServersController extends BaseApiController
 
         $provider = new \App\Services\ProviderService();
         try {
-            if ($provider->isExternal($server['kind'] ?? 'ollama')) {
+            if (! $provider->isOllama($server['kind'] ?? 'ollama')) {
                 $names = $provider->listModels($server, true);
                 return $this->ok(array_map(static fn ($n) => ['name' => $n], $names));
             }
@@ -270,6 +295,7 @@ class ServersController extends BaseApiController
         $fields = [
             'name', 'description', 'kind', 'hostname', 'ip_address', 'api_url', 'port', 'auth_token',
             'gpu_model', 'cuda_version', 'cpu_cores', 'ram_gb', 'storage_gb', 'os', 'is_local',
+            'deployment', 'accelerator', 'rocm_version', 'cloud_provider', 'region', 'container_image', 'max_concurrency', 'gpu_vram_gb', 'gpu_count',
         ];
         $out = [];
         foreach ($fields as $f) {
@@ -281,6 +307,12 @@ class ServersController extends BaseApiController
                 $out[$f] = $in[$f] === '' ? null : $in[$f];
             }
         }
+        // Closed lists: an unknown engine, deployment or accelerator is dropped rather than stored.
+        foreach (['kind' => \App\Services\ProviderService::KINDS, 'deployment' => \App\Services\NodeTelemetryService::DEPLOYMENTS,
+                  'accelerator' => \App\Services\NodeTelemetryService::ACCELERATORS] as $f => $allowed) {
+            if (isset($out[$f]) && ! in_array($out[$f], $allowed, true)) unset($out[$f]);
+        }
+        if (! $partial && ! empty($out['is_local']) && empty($out['deployment'])) $out['deployment'] = 'local';
         // Derive api_url from ip/port when omitted.
         if (! $partial && empty($out['api_url']) && ! empty($out['ip_address'])) {
             $port = (int) ($out['port'] ?? 11434);

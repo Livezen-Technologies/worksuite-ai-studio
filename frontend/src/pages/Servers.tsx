@@ -12,7 +12,7 @@ import {
 import { del, get, post } from '../lib/api';
 import { ago, compact, num } from '../lib/format';
 import { useAuth } from '../lib/auth';
-import { HealthScore, KINDS, type ControlAction, type Server } from './Servers/shared';
+import { ACCELERATORS, AVAILABILITY, DEPLOYMENTS, HealthScore, KINDS, Utilization, isCloud, type ControlAction, type Server } from './Servers/shared';
 import ServerForm from './Servers/ServerForm';
 import ServerDetail from './Servers/ServerDetail';
 import EnrolNode from './Servers/EnrolNode';
@@ -85,9 +85,10 @@ export default function Servers() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium text-slate-900 dark:text-white">{s.name}</span>
               {kind !== 'ollama' && <Badge tone={k.tone}>{k.label}</Badge>}
+              {s.deployment && !k.cloud && <Badge tone="gray">{DEPLOYMENTS[s.deployment]}</Badge>}
               {Number(s.is_local) === 1 && <Badge>local</Badge>}
             </div>
-            <div className="truncate text-xs text-slate-500 dark:text-slate-400">{kind !== 'ollama' ? s.api_url || k.base : s.api_url}</div>
+            <div className="truncate text-xs text-slate-500 dark:text-slate-400">{k.cloud ? s.api_url || k.base : s.api_url}</div>
           </div>
         );
       },
@@ -96,16 +97,19 @@ export default function Servers() {
       key: 'status', header: 'Status', cell: (s) => (
         <div className="flex flex-wrap items-center gap-1.5">
           <StatusBadge status={s.status} />
-          {s.is_enabled === false && <Badge tone="amber">Disabled</Badge>}
+          {s.availability && s.availability !== 'offline' && s.availability !== 'unknown' && s.status !== 'degraded' &&
+            <Badge tone={AVAILABILITY[s.availability].tone}>{AVAILABILITY[s.availability].label}</Badge>}
         </div>
       ),
     },
     { key: 'health', header: 'Health', cell: (s) => <HealthScore score={s.health_score} />, hideBelow: 'sm' },
+    { key: 'util', header: 'Utilization', hideBelow: 'lg', cell: (s) => isCloud(s.kind) ? <span className="text-xs text-slate-400 dark:text-slate-500">Hosted API</span> : <Utilization s={s} compact /> },
     {
       key: 'specs', header: 'Specs', hideBelow: 'lg', cell: (s) => (
         <div className="text-xs text-slate-500 dark:text-slate-400">
           <div>{s.cpu_cores ? `${s.cpu_cores} cores` : '—'}{s.ram_gb ? ` · ${Number(s.ram_gb)} GB RAM` : ''}</div>
-          <div>{s.gpu_model || ((s.kind ?? 'ollama') === 'ollama' ? 'CPU-only' : 'Hosted API')}{s.ollama_version ? ` · Ollama ${s.ollama_version}` : ''}</div>
+          <div>{s.gpu_model || (!isCloud(s.kind) ? 'CPU-only' : 'Hosted API')}{s.gpu_vram_gb ? ` · ${Number(s.gpu_vram_gb)} GB VRAM` : ''}{s.accelerator ? ` · ${ACCELERATORS[s.accelerator]}` : ''}</div>
+          {s.ollama_version && <div>{(s.kind ?? 'ollama') === 'ollama' ? `Ollama ${s.ollama_version}` : s.ollama_version}</div>}
           {s.gpu_model && <div>{s.cuda_cores ? `${num(s.cuda_cores)} CUDA cores` : 'CUDA cores unknown'}{s.cuda_version ? ` · CUDA ${s.cuda_version}` : ''}</div>}
         </div>
       ),
@@ -154,9 +158,9 @@ export default function Servers() {
         </>}
       />
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
-        <StatCard name="Servers" icon={ServerStackIcon} loading={summary.isLoading} value={t ? num(t.servers) : '—'} hint={t ? `${t.online} online` : undefined} />
+        <StatCard name="Servers" icon={ServerStackIcon} loading={summary.isLoading} value={t ? num(t.servers) : '—'} hint={t ? `${t.online} online${t.availability?.available ? ` · ${t.availability.available} available` : ''}${t.availability?.busy ? ` · ${t.availability.busy} busy` : ''}` : undefined} />
         <StatCard name="CPU cores" icon={CpuChipIcon} loading={summary.isLoading} value={t ? num(t.cpu_cores) : '—'} hint={t ? `${num(t.ram_gb)} GB RAM in total` : undefined} />
-        <StatCard name="GPUs" icon={Squares2X2Icon} loading={summary.isLoading} value={t ? num(t.gpus) : '—'} hint={t ? (t.vram_gb ? `${num(t.vram_gb)} GB VRAM in total` : 'No GPU nodes yet') : undefined} />
+        <StatCard name="GPUs" icon={Squares2X2Icon} loading={summary.isLoading} value={t ? num(t.gpus) : '—'} hint={t ? (t.vram_gb ? `${t.vram_used_gb ? `${num(t.vram_used_gb)} / ` : ''}${num(t.vram_gb)} GB VRAM${t.gpu_util_avg != null ? ` · ${t.gpu_util_avg}% busy` : ''}` : 'No GPU nodes yet') : undefined} />
         <StatCard name="CUDA cores" icon={Squares2X2Icon} loading={summary.isLoading} value={t ? num(t.cuda_cores) : '—'}
           hint={t ? (t.gpus ? `${t.cuda_known} of ${t.gpus} GPU${t.gpus === 1 ? '' : 's'} identified` : 'No GPU nodes yet') : undefined} />
         <StatCard name="Requests (24 h)" icon={ChartBarIcon} loading={summary.isLoading} value={t ? num(t.requests_24h) : '—'} hint={t ? `${compact(t.tokens_24h)} tokens` : undefined} />
@@ -220,6 +224,7 @@ export default function Servers() {
 
 interface FleetSummary {
   servers: number; online: number; cpu_cores: number; ram_gb: number; gpus: number; vram_gb: number; cuda_cores: number; cuda_known: number; requests_24h: number; tokens_24h: number;
+  vram_used_gb?: number; gpu_util_avg?: number | null; cpu_util_avg?: number | null; availability?: Record<string, number>;
 }
 
 const CONTROL_LABEL: Record<ControlAction, string> = { restart: 'Restart Ollama', update: 'Update Ollama', shutdown: 'Shut down' };

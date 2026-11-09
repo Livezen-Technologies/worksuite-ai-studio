@@ -3,6 +3,12 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.30.0] — 2026-11-09 — GPU servers and AI nodes
+- **More inference engines**: register vLLM, llama.cpp and any OpenAI-compatible server next to Ollama nodes. Their models sync into the registry and serve chat, the gateway and embeddings with the same routing and failover.
+- **Node types**: local server, remote dedicated server, cloud GPU instance (provider, region) or Docker container (image), with NVIDIA CUDA, AMD ROCm or CPU-only acceleration, GPU count, VRAM and a concurrency limit.
+- **Live utilization**: the node agent (1.5.0) reports GPU use, VRAM, temperature, CPU, RAM and disk with each heartbeat (nvidia-smi, rocm-smi or CPU only) and fills in hardware it detects. Servers shows utilization bars, a 24-hour chart per node, and fleet VRAM use and average GPU load.
+- **Availability**: every node is shown as available, busy, degraded, offline or disabled.
+
 ## [1.29.0] — 2026-11-09 — API key management, access tokens and OAuth
 - **Key types**: personal, application, organization and service-account keys. Everyone with API key access manages their own personal and application keys; organization and service-account keys, and other people's keys, need the new *Manage all API keys* permission (admins).
 - **Permissions granted**: Developer and Customer roles can now create, edit, rotate, revoke and delete their own keys and issue access tokens; Admin and Super Admin get every API key permission. Non-admins only see their own keys.

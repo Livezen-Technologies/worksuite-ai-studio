@@ -1,7 +1,7 @@
 {
   "name": "worksuite-ai-studio-frontend",
   "private": true,
-  "version": "1.29.0",
+  "version": "1.30.0",
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {

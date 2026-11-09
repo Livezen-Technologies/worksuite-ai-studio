@@ -95,7 +95,9 @@ class AgentController extends BaseApiController
 
         $in = $this->request->getPost() ?: [];
         if (! $in) { try { $in = $this->input(); } catch (\Throwable) { $in = []; } }
-        $out = (new TrainingPipelineService())->heartbeat($server, is_array($in) ? $in : []);
+        $in  = is_array($in) ? $in : [];
+        if (empty($in['probe'])) (new \App\Services\NodeTelemetryService())->record($server, $in); // live utilization
+        $out = (new TrainingPipelineService())->heartbeat($server, $in);
 
         if ($this->request->getGet('format') === 'env') {
             $lines = [];

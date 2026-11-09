@@ -22,12 +22,20 @@ class ProviderService
     /** Kinds that are external cloud APIs rather than Ollama nodes. */
     public const EXTERNAL = ['openai', 'anthropic', 'gemini'];
 
+    /** Self-hosted inference engines that speak the OpenAI API (base URL …/v1). */
+    public const OPENAI_ENGINES = ['vllm', 'llamacpp', 'openai_compatible'];
+
+    /** Every kind a server row may carry. */
+    public const KINDS = ['ollama', 'vllm', 'llamacpp', 'openai_compatible', 'openai', 'anthropic', 'gemini'];
+
     /** Default base URLs per external kind (used when api_url is blank). */
     private const DEFAULT_BASE = [
         'openai'    => 'https://api.openai.com/v1',
         'anthropic' => 'https://api.anthropic.com/v1',
         'gemini'    => 'https://generativelanguage.googleapis.com/v1beta',
     ];
+
+    public const LABELS = ['vllm' => 'vLLM', 'llamacpp' => 'llama.cpp', 'openai_compatible' => 'OpenAI-compatible'];
 
     /** Curated fallbacks shown when a provider's model list can't be fetched. */
     private const FALLBACK_MODELS = [
@@ -39,6 +47,12 @@ class ProviderService
     public function isExternal(string $kind): bool
     {
         return in_array($kind, self::EXTERNAL, true);
+    }
+
+    /** True for Ollama nodes (native /api/* protocol); false for anything spoken to over an OpenAI-style or vendor API. */
+    public function isOllama(string $kind): bool
+    {
+        return ! in_array($kind, self::EXTERNAL, true) && ! in_array($kind, self::OPENAI_ENGINES, true);
     }
 
     private function timeout(): int
@@ -53,7 +67,12 @@ class ProviderService
         if ($url === '') {
             $url = self::DEFAULT_BASE[$kind] ?? '';
         }
-        return rtrim($url, '/');
+        $url = rtrim($url, '/');
+        // vLLM / llama.cpp servers serve the OpenAI API under /v1; accept the bare host:port too.
+        if (in_array($kind, self::OPENAI_ENGINES, true) && ! preg_match('#/v\d+$#', $url)) {
+            $url .= '/v1';
+        }
+        return $url;
     }
 
     // ---- Chat --------------------------------------------------------------
@@ -71,7 +90,7 @@ class ProviderService
         $start = microtime(true);
 
         return match ($kind) {
-            'openai'    => $this->openaiChat($server, $model, $messages, $onDelta, $start),
+            'openai', 'vllm', 'llamacpp', 'openai_compatible' => $this->openaiChat($server, $model, $messages, $onDelta, $start),
             'anthropic' => $this->anthropicChat($server, $model, $messages, $onDelta, $start),
             'gemini'    => $this->geminiChat($server, $model, $messages, $onDelta, $start),
             default     => $this->ollamaChat($server, $model, $messages, $extra, $onDelta, $start),
@@ -252,7 +271,7 @@ class ProviderService
         $kind   = $server['kind'] ?? 'ollama';
         $inputs = is_array($input) ? array_values($input) : [(string) $input];
 
-        if ($kind === 'openai') {
+        if ($kind === 'openai' || in_array($kind, self::OPENAI_ENGINES, true)) {
             $res  = $this->jsonPost($this->base($server) . '/embeddings', [
                 'Authorization: Bearer ' . ($server['auth_token'] ?? ''),
             ], ['model' => $model, 'input' => $inputs]);
@@ -286,7 +305,7 @@ class ProviderService
     public function probe(array $server): array
     {
         $kind = $server['kind'] ?? 'ollama';
-        if (! $this->isExternal($kind)) {
+        if ($this->isOllama($kind)) {
             return (new OllamaService($server['api_url'], $server['auth_token'] ?? null))->probe();
         }
         $start = microtime(true);
@@ -295,7 +314,7 @@ class ProviderService
             return [
                 'ok'             => true,
                 'latency_ms'     => $this->elapsed($start),
-                'version'        => ucfirst($kind),
+                'version'        => self::LABELS[$kind] ?? ucfirst($kind),
                 'models_total'   => count($models),
                 'models_running' => 0,
                 'error'          => null,
@@ -327,6 +346,7 @@ class ProviderService
                 'openai'    => $this->openaiModels($server),
                 'anthropic' => $this->anthropicModels($server),
                 'gemini'    => $this->geminiModels($server),
+                'vllm', 'llamacpp', 'openai_compatible' => $this->engineModels($server),
                 default     => [],
             };
         } catch (\Throwable $e) {
@@ -346,6 +366,16 @@ class ProviderService
         $ids = array_values(array_filter($ids, static fn ($id) => (bool) preg_match('/^(gpt|o[0-9]|chatgpt)/i', $id)));
         sort($ids);
         return $ids ?: self::FALLBACK_MODELS['openai'];
+    }
+
+    /** Every model a self-hosted OpenAI-compatible engine serves (no vendor filter, no fallback list). */
+    private function engineModels(array $server): array
+    {
+        $headers = ! empty($server['auth_token']) ? ['Authorization: Bearer ' . $server['auth_token']] : [];
+        $res = $this->jsonGet($this->base($server) . '/models', $headers);
+        $ids = array_values(array_filter(array_map(static fn ($m) => (string) ($m['id'] ?? ''), $res['data'] ?? [])));
+        sort($ids);
+        return $ids;
     }
 
     private function anthropicModels(array $server): array
