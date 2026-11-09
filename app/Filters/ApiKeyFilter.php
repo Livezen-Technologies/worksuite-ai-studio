@@ -38,7 +38,10 @@ class ApiKeyFilter implements FilterInterface
         } else {
             [$key, $secret] = $this->credentials($request);
             if (! $key || ! $secret) {
-                return $this->deny($response, 'Missing API key or secret.', 401);
+                $hasBearer = str_starts_with($request->getHeaderLine('Authorization'), 'Bearer ');
+                return $this->deny($response, $hasBearer
+                    ? 'Invalid API key. Use "key:secret" (ohub_…:sk_…) or an access token as the Bearer value.'
+                    : 'Missing API key or secret.', 401);
             }
             $row = $model->findByKey($key);
             if (! $row || ! password_verify($secret, $row['secret_hash'])) {
@@ -111,6 +114,13 @@ class ApiKeyFilter implements FilterInterface
 
     private function deny(ResponseInterface $response, string $message, int $code)
     {
+        // OpenAI-compatible routes answer in the OpenAI error shape so SDKs surface the message.
+        $path = trim(service('request')->getUri()->getPath(), '/');
+        if (str_contains($path, 'api/openai/') || str_ends_with($path, 'api/v1/chat/completions')) {
+            return $response->setStatusCode($code)->setJSON(\App\Controllers\Api\Gateway\OpenAIController::errorBody($message, $code, match ($code) {
+                401 => 'invalid_api_key', 429 => 'rate_limit_exceeded', default => null,
+            }));
+        }
         return $response->setStatusCode($code)
             ->setJSON(['status' => 'error', 'message' => $message, 'data' => null]);
     }

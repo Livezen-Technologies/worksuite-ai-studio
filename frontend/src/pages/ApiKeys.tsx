@@ -49,6 +49,19 @@ curl -C - -o model.bin -H "X-Api-Key: ${key}" -H "X-Api-Secret: ${secret}" \\
 # a dataset as JSONL (frozen sets: train and dev only)
 curl -o data.jsonl -H "X-Api-Key: ${key}" -H "X-Api-Secret: ${secret}" \\
   "${gatewayBase()}/datasets/36/download?split=train"`;
+const openaiBase = () => `${window.location.origin}/api/openai/v1`;
+const openaiExample = () =>
+  `from openai import OpenAI
+
+client = OpenAI(base_url="${openaiBase()}", api_key="ohub_your_key:sk_your_secret")
+
+reply = client.chat.completions.create(
+    model="llama3.1:8b",          # or "default" for the default chat model
+    messages=[{"role": "user", "content": "Hello"}],
+    stream=True,
+)
+for chunk in reply:
+    print(chunk.choices[0].delta.content or "", end="")`;
 const oauthExample = () =>
   `curl ${gatewayBase()}/oauth/token \\
   -d grant_type=client_credentials -d client_id=ohub_your_key -d client_secret=sk_your_secret \\
@@ -431,9 +444,21 @@ export default function ApiKeys() {
               <CodeBlock>{curlFor()}</CodeBlock>
             </div>
             <div>
+              <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">OpenAI-compatible base URL</div>
+              <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200 dark:bg-white/5 dark:ring-white/10">
+                <code className="min-w-0 flex-1 break-all font-mono text-sm text-slate-900 dark:text-slate-100">{openaiBase()}</code>
+                <CopyButton text={openaiBase()} />
+              </div>
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Any OpenAI SDK or tool works here: GET /models, POST /chat/completions (streaming, images as data: URLs, temperature, max_tokens, stop, seed, JSON mode), /completions and /embeddings. Use <code>key:secret</code> or an access token as the API key. Every model on every node, local or cloud, is reachable through it, within the key's scopes, model list, quotas and the registry's access rules.</p>
+            </div>
+            <div>
+              <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">OpenAI SDK (Python) <CopyButton text={openaiExample()} /></div>
+              <CodeBlock>{openaiExample()}</CodeBlock>
+            </div>
+            <div>
               <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">OAuth 2.0 access token (client credentials) <CopyButton text={oauthExample()} /></div>
               <CodeBlock>{oauthExample()}</CodeBlock>
-              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Returns a JWT valid for <code>expires_in</code> seconds (max 30 days). Use it as <code>Authorization: Bearer …</code>; POST /chat/completions answers in the OpenAI format, so OpenAI SDKs work with this base URL.</p>
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Returns a JWT valid for <code>expires_in</code> seconds (max 30 days). Use it as <code>Authorization: Bearer …</code>, or as the API key with the OpenAI-compatible base URL above.</p>
             </div>
             <div>
               <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">Download a model or dataset <CopyButton text={downloadExample()} /></div>

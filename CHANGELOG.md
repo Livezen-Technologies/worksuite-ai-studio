@@ -3,6 +3,13 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.32.0] — 2026-11-09 — Unified OpenAI-compatible AI API gateway
+- **One OpenAI-compatible endpoint for every model**: point any OpenAI SDK or tool at `/api/openai/v1` and use `key:secret` or an access token as the API key. Models on Ollama, vLLM, llama.cpp and OpenAI-compatible nodes, and on connected cloud providers, are all reachable through it.
+- **Endpoints**: `GET /models` (with type and capabilities, only what the key may use), `GET /models/{id}`, `POST /chat/completions` with **streaming**, `POST /completions`, `POST /embeddings` (float or base64).
+- **Request options** are passed to every engine: temperature, top_p, max_tokens, stop, seed, presence and frequency penalties, and JSON mode. Image input works as data: URLs on vision models; `developer` messages count as system messages.
+- **The same controls as the rest of the gateway**: key scopes and model list, registry access roles, token quotas, rate limits, node failover (a stream switches nodes when the first one fails before answering), the default model when none is named, and every call logged to API logs.
+- **OpenAI-style responses and errors**, `x-request-id` and rate-limit headers, so SDK error handling works as with OpenAI. Tool/function calling is not supported yet and returns a clear error.
+
 ## [1.31.0] — 2026-11-09 — AI Model Registry
 - **One registry for every model**: LLMs, embedding, speech-to-text, text-to-speech, vision and multimodal models, each with its version, family, parameters, quantization, GPU memory need, max context, capabilities, engine and source. **Discover installed** registers every model already on your nodes, guessing type and capabilities from the name.
 - **Deploy to nodes**: pick nodes and the model downloads on Ollama nodes (vLLM / llama.cpp nodes are assigned and show as deployed once they serve it). Nodes with too little VRAM are refused unless you deploy anyway. Each node shows pending, deploying, deployed, loaded or failed. **Update** re-pulls the latest version of the tag everywhere; remove a model from one node, or from the registry.

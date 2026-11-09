@@ -88,6 +88,16 @@ class ProviderService
     {
         $kind  = $server['kind'] ?? 'ollama';
         $start = microtime(true);
+        // Provider-neutral generation parameters (OpenAI names): temperature, top_p, max_tokens, stop, seed,
+        // presence_penalty, frequency_penalty, json (bool). Each adapter maps them to its own wire format.
+        $this->params = self::cleanParams((array) ($extra['params'] ?? []));
+        unset($extra['params']);
+        if ($this->params && $this->isOllama($kind)) {
+            $map = ['temperature' => 'temperature', 'top_p' => 'top_p', 'max_tokens' => 'num_predict', 'stop' => 'stop', 'seed' => 'seed',
+                    'presence_penalty' => 'presence_penalty', 'frequency_penalty' => 'frequency_penalty'];
+            foreach ($map as $from => $to) if (array_key_exists($from, $this->params)) $extra['options'][$to] = $this->params[$from];
+            if (! empty($this->params['json'])) $extra['format'] = 'json';
+        }
 
         return match ($kind) {
             'openai', 'vllm', 'llamacpp', 'openai_compatible' => $this->openaiChat($server, $model, $messages, $onDelta, $start),
@@ -95,6 +105,26 @@ class ProviderService
             'gemini'    => $this->geminiChat($server, $model, $messages, $onDelta, $start),
             default     => $this->ollamaChat($server, $model, $messages, $extra, $onDelta, $start),
         };
+    }
+
+    /** Generation parameters for the current chat() call (see chat()). */
+    private array $params = [];
+
+    /** Keep only known parameters, with sane types and ranges. */
+    public static function cleanParams(array $p): array
+    {
+        $out = [];
+        foreach (['temperature' => [0, 2], 'top_p' => [0, 1], 'presence_penalty' => [-2, 2], 'frequency_penalty' => [-2, 2]] as $k => [$lo, $hi]) {
+            if (isset($p[$k]) && is_numeric($p[$k])) $out[$k] = max($lo, min($hi, (float) $p[$k]));
+        }
+        if (isset($p['max_tokens']) && (int) $p['max_tokens'] > 0) $out['max_tokens'] = min(1000000, (int) $p['max_tokens']);
+        if (isset($p['seed']) && is_numeric($p['seed'])) $out['seed'] = (int) $p['seed'];
+        if (isset($p['stop'])) {
+            $stop = array_values(array_filter(array_map('strval', (array) $p['stop']), static fn ($x) => $x !== ''));
+            if ($stop) $out['stop'] = array_slice($stop, 0, 4);
+        }
+        if (! empty($p['json'])) $out['json'] = true;
+        return $out;
     }
 
     private function elapsed(float $start): int
@@ -128,6 +158,10 @@ class ProviderService
             'stream'         => true,
             'stream_options' => ['include_usage' => true],
         ];
+        foreach (['temperature', 'top_p', 'max_tokens', 'stop', 'seed', 'presence_penalty', 'frequency_penalty'] as $k) {
+            if (array_key_exists($k, $this->params)) $body[$k] = $this->params[$k];
+        }
+        if (! empty($this->params['json'])) $body['response_format'] = ['type' => 'json_object'];
         $usage = ['p' => null, 'c' => null];
         $this->sse($this->base($server) . '/chat/completions', [
             'Content-Type: application/json',
@@ -156,7 +190,10 @@ class ProviderService
             }
             $msgs[] = $this->anthropicMessage($m);
         }
-        $body = ['model' => $model, 'max_tokens' => 4096, 'messages' => $msgs, 'stream' => true];
+        $body = ['model' => $model, 'max_tokens' => $this->params['max_tokens'] ?? 4096, 'messages' => $msgs, 'stream' => true];
+        if (isset($this->params['temperature'])) $body['temperature'] = min(1.0, $this->params['temperature']);
+        if (isset($this->params['top_p'])) $body['top_p'] = $this->params['top_p'];
+        if (isset($this->params['stop'])) $body['stop_sequences'] = $this->params['stop'];
         if ($system !== '') {
             $body['system'] = $system;
         }
@@ -190,6 +227,12 @@ class ProviderService
             $contents[] = $this->geminiContent($m);
         }
         $body = ['contents' => $contents];
+        $gc = array_filter([
+            'temperature' => $this->params['temperature'] ?? null, 'topP' => $this->params['top_p'] ?? null,
+            'maxOutputTokens' => $this->params['max_tokens'] ?? null, 'stopSequences' => $this->params['stop'] ?? null,
+            'seed' => $this->params['seed'] ?? null, 'responseMimeType' => ! empty($this->params['json']) ? 'application/json' : null,
+        ], static fn ($v) => $v !== null);
+        if ($gc) $body['generationConfig'] = $gc;
         if ($sys !== '') {
             $body['systemInstruction'] = ['parts' => [['text' => $sys]]];
         }

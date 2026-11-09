@@ -303,6 +303,17 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->post('engine/bindings/rollback', 'EngineController::bindingRollback');
 });
 
+/*
+ * Unified OpenAI-compatible gateway: point any OpenAI SDK at {host}/api/openai/v1 (v1.32).
+ */
+$routes->group('api/openai/v1', ['namespace' => 'App\Controllers\Api\Gateway', 'filter' => 'apikey'], static function ($routes) {
+    $routes->get('models', 'OpenAIController::models');
+    $routes->get('models/(:any)', 'OpenAIController::model/$1');
+    $routes->post('chat/completions', 'OpenAIController::chatCompletions');
+    $routes->post('completions', 'OpenAIController::completions');
+    $routes->post('embeddings', 'OpenAIController::embeddings');
+});
+
 // OAuth 2.0 client_credentials: exchange a key + secret for a short-lived JWT access token.
 $routes->post('api/v1/oauth/token', 'Api\Gateway\OAuthController::token');
 
@@ -312,7 +323,7 @@ $routes->post('api/v1/oauth/token', 'Api\Gateway\OAuthController::token');
 $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\Gateway', 'filter' => 'apikey'], static function ($routes) {
     $routes->get('models', 'GatewayController::models');
     $routes->post('chat', 'GatewayController::chat');
-    $routes->post('chat/completions', 'GatewayController::chatCompletions'); // OpenAI-compatible
+    $routes->post('chat/completions', 'OpenAIController::chatCompletions'); // OpenAI-compatible (same as /api/openai/v1)
     $routes->post('generate', 'GatewayController::generate');
     $routes->post('embeddings', 'GatewayController::embeddings');
     $routes->post('translate', 'GatewayController::translate');   // SinLama (v1.3)

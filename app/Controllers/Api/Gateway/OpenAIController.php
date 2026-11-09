@@ -1,0 +1,376 @@
+<?php
+
+namespace App\Controllers\Api\Gateway;
+
+use App\Controllers\Api\BaseApiController;
+use App\Services\ApiGatewayService;
+use App\Services\ModelRegistryService;
+use App\Services\ProviderService;
+
+/**
+ * Unified, OpenAI-compatible AI API gateway — base URL `/api/openai/v1`.
+ *
+ * Any OpenAI SDK or tool works by pointing its base URL here and using an AI Studio credential as
+ * the API key: `ohub_…:sk_…`, or a short-lived access token from /api/v1/oauth/token.
+ *
+ *   GET  /models                 models this key may use (OpenAI list format, with type and capabilities)
+ *   GET  /models/{id}            one model
+ *   POST /chat/completions       chat; `stream: true` for server-sent events; text + image (data: URL) content
+ *   POST /completions            legacy text completion (also streams)
+ *   POST /embeddings             embeddings; float or base64 encoding
+ *
+ * Every request goes through the same pipeline as the native gateway: key scopes, the key's model
+ * allowlist, model access roles from the registry, token quotas, node selection with failover, and
+ * request logging. A request with no model (or "default") uses the registry's default for the task.
+ * Errors use the OpenAI error shape.
+ */
+class OpenAIController extends BaseApiController
+{
+    private string $requestId = '';
+    private float $start = 0.0;
+
+    private function key(): array { return $_SERVER['ohub_api_key'] ?? []; }
+
+    // ---- Models ------------------------------------------------------------------------
+
+    public function models()
+    {
+        if ($e = $this->scopeError('models')) return $e;
+        return $this->json(['object' => 'list', 'data' => array_values($this->visibleModels())]);
+    }
+
+    public function model(...$parts)
+    {
+        if ($e = $this->scopeError('models')) return $e;
+        $id = urldecode(implode('/', $parts));
+        $all = $this->visibleModels();
+        return isset($all[$id]) ? $this->json($all[$id]) : $this->error("The model '{$id}' does not exist or you do not have access to it.", 404, 'model_not_found');
+    }
+
+    /** id => OpenAI model object, for models this key may call. */
+    private function visibleModels(): array
+    {
+        $key      = $this->key();
+        $allowed  = ! empty($key['allowed_models']) ? json_decode($key['allowed_models'], true) : null;
+        $registry = new ModelRegistryService();
+        $role     = $registry->roleOf(isset($key['user_id']) ? (int) $key['user_id'] : null);
+        $meta     = [];
+        foreach ((new ModelRegistryService())->all() as $r) $meta[$r['name']] = $r;
+        $out = [];
+        foreach ((new ApiGatewayService())->availableModels() as $m) {
+            $id = $m['name'];
+            if (is_array($allowed) && $allowed && ! in_array($id, $allowed, true)) continue;
+            if (! $registry->roleAllowed($id, $role)) continue;
+            $r = $meta[$id] ?? null;
+            $out[$id] = [
+                'id' => $id, 'object' => 'model', 'created' => isset($r['created_at']) ? (int) strtotime($r['created_at']) : 0, 'owned_by' => 'worksuite-ai',
+                'type' => $r['type'] ?? ModelRegistryService::infer($id)['type'],
+                'capabilities' => $r['capabilities'] ?? ModelRegistryService::infer($id)['capabilities'],
+                'context_length' => $r['context_length'] ?? null,
+            ];
+        }
+        return $out;
+    }
+
+    // ---- Chat ------------------------------------------------------------------------------
+
+    public function chatCompletions()
+    {
+        $in = $this->body();
+        if ($in === null) return $this->error('The request body must be JSON.', 400);
+        if (! empty($in['tools']) || ! empty($in['functions'])) {
+            return $this->error('Tool and function calling are not supported by this gateway yet.', 400, 'unsupported_parameter', 'tools');
+        }
+        if ((int) ($in['n'] ?? 1) > 1) return $this->error('Only n=1 is supported.', 400, 'unsupported_parameter', 'n');
+        try {
+            $messages = $this->messages($in['messages'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 400, 'invalid_value', 'messages');
+        }
+        return $this->run('chat', 'chat.completions', $in, $messages, (bool) ($in['stream'] ?? false), 'chat.completion');
+    }
+
+    public function completions()
+    {
+        $in = $this->body();
+        if ($in === null) return $this->error('The request body must be JSON.', 400);
+        $prompt = $in['prompt'] ?? null;
+        if (is_array($prompt)) {
+            if (count($prompt) > 1) return $this->error('Only a single prompt per request is supported.', 400, 'unsupported_parameter', 'prompt');
+            $prompt = $prompt[0] ?? '';
+        }
+        if (! is_string($prompt) || trim($prompt) === '') return $this->error('prompt is required.', 400, 'missing_required_parameter', 'prompt');
+        return $this->run('generate', 'completions', $in, [['role' => 'user', 'content' => $prompt]], (bool) ($in['stream'] ?? false), 'text_completion');
+    }
+
+    /**
+     * Shared chat / completion pipeline. $object is "chat.completion" or "text_completion".
+     */
+    private function run(string $scope, string $endpoint, array $in, array $messages, bool $stream, string $object)
+    {
+        $this->begin();
+        [$model, $err] = $this->resolveModel($scope, $endpoint, $in);
+        if ($err) return $err;
+        $gw = new ApiGatewayService();
+        $candidates = $gw->candidates($model);
+        if (! $candidates) return $this->failLogged($endpoint, $model, null, 503, 'No online node is serving this model right now.', 'model_unavailable');
+
+        $params = ProviderService::cleanParams([
+            'temperature' => $in['temperature'] ?? null, 'top_p' => $in['top_p'] ?? null,
+            'max_tokens' => $in['max_completion_tokens'] ?? ($in['max_tokens'] ?? null), 'stop' => $in['stop'] ?? null,
+            'seed' => $in['seed'] ?? null, 'presence_penalty' => $in['presence_penalty'] ?? null, 'frequency_penalty' => $in['frequency_penalty'] ?? null,
+            'json' => in_array($in['response_format']['type'] ?? '', ['json_object', 'json_schema'], true),
+        ]);
+        $id      = ($object === 'chat.completion' ? 'chatcmpl-' : 'cmpl-') . bin2hex(random_bytes(12));
+        $created = time();
+        $chunkObj = $object === 'chat.completion' ? 'chat.completion.chunk' : 'text_completion';
+        $includeUsage = (bool) ($in['stream_options']['include_usage'] ?? false);
+
+        $started = false;
+        $text    = '';
+        $chunk = function (array $choice, ?array $usage = null) use ($id, $created, $model, $chunkObj) {
+            $c = ['id' => $id, 'object' => $chunkObj, 'created' => $created, 'model' => $model, 'choices' => $choice ? [$choice] : []];
+            if ($usage !== null) $c['usage'] = $usage;
+            echo 'data: ' . json_encode($c, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n\n";
+            flush();
+        };
+        $onDelta = function (string $d) use (&$started, &$text, $stream, $chunk, $object) {
+            $text .= $d;
+            if (! $stream) return;
+            if (! $started) { // headers go out with the first token, so a node that fails before answering can still fail over
+                $started = true;
+                $this->openStream();
+                if ($object === 'chat.completion') $chunk(['index' => 0, 'delta' => ['role' => 'assistant', 'content' => ''], 'finish_reason' => null]);
+            }
+            $chunk($object === 'chat.completion'
+                ? ['index' => 0, 'delta' => ['content' => $d], 'finish_reason' => null]
+                : ['index' => 0, 'text' => $d, 'finish_reason' => null]);
+        };
+
+        $lastErr = 'Every node serving this model failed.';
+        foreach ($candidates as $server) {
+            try {
+                $final = (new ProviderService())->chat($server, $model, $messages, ['params' => $params], $onDelta);
+            } catch (\Throwable $e) {
+                $lastErr = $this->publicError($e, 'The model node failed.');
+                if ($started) { // mid-stream: cannot switch nodes any more; end the stream with an error event
+                    $this->logCall($endpoint, $model, (int) $server['id'], 502, null, null, $lastErr);
+                    echo 'data: ' . json_encode(['error' => ['message' => $lastErr, 'type' => 'api_error', 'code' => 'upstream_error']]) . "\n\ndata: [DONE]\n\n";
+                    flush();
+                    exit;
+                }
+                $text = '';
+                continue; // fail over to the next node
+            }
+            $pt = $final['prompt_tokens'] ?? null;
+            $ct = $final['completion_tokens'] ?? null;
+            $usage  = ['prompt_tokens' => (int) $pt, 'completion_tokens' => (int) $ct, 'total_tokens' => (int) $pt + (int) $ct];
+            $finish = (isset($params['max_tokens']) && $ct !== null && $ct >= $params['max_tokens']) ? 'length' : 'stop';
+            $this->logCall($endpoint, $model, (int) $server['id'], 200, $pt, $ct);
+
+            if ($stream) {
+                if (! $started) { $this->openStream(); if ($object === 'chat.completion') $chunk(['index' => 0, 'delta' => ['role' => 'assistant', 'content' => ''], 'finish_reason' => null]); }
+                $chunk($object === 'chat.completion' ? ['index' => 0, 'delta' => (object) [], 'finish_reason' => $finish] : ['index' => 0, 'text' => '', 'finish_reason' => $finish]);
+                if ($includeUsage) $chunk([], $usage);
+                echo "data: [DONE]\n\n";
+                flush();
+                exit;
+            }
+            $choice = $object === 'chat.completion'
+                ? ['index' => 0, 'message' => ['role' => 'assistant', 'content' => $text], 'logprobs' => null, 'finish_reason' => $finish]
+                : ['index' => 0, 'text' => $text, 'logprobs' => null, 'finish_reason' => $finish];
+            return $this->json(['id' => $id, 'object' => $object, 'created' => $created, 'model' => $model,
+                'system_fingerprint' => 'worksuite-' . substr(md5((string) $server['id']), 0, 8), 'choices' => [$choice], 'usage' => $usage]);
+        }
+        return $this->failLogged($endpoint, $model, null, 502, $lastErr, 'upstream_error');
+    }
+
+    // ---- Embeddings ------------------------------------------------------------------------
+
+    public function embeddings()
+    {
+        $this->begin();
+        $in = $this->body();
+        if ($in === null) return $this->error('The request body must be JSON.', 400);
+        $input = $in['input'] ?? null;
+        $list  = is_array($input) ? array_values($input) : [$input];
+        if (! $list || array_filter($list, static fn ($t) => ! is_string($t) || $t === '')) {
+            return $this->error('input must be a non-empty string or an array of strings.', 400, 'invalid_value', 'input');
+        }
+        if (count($list) > 2048) return $this->error('At most 2048 inputs per request.', 400, 'invalid_value', 'input');
+        [$model, $err] = $this->resolveModel('embeddings', 'embeddings', $in);
+        if ($err) return $err;
+        $candidates = (new ApiGatewayService())->candidates($model);
+        if (! $candidates) return $this->failLogged('embeddings', $model, null, 503, 'No online node is serving this model right now.', 'model_unavailable');
+        $base64  = ($in['encoding_format'] ?? 'float') === 'base64';
+        $lastErr = 'Every node serving this model failed.';
+        foreach ($candidates as $server) {
+            try {
+                $res = (new ProviderService())->embeddings($server, $model, $list);
+            } catch (\Throwable $e) {
+                $lastErr = $this->publicError($e, 'The model node failed.');
+                continue;
+            }
+            $vecs = $res['embeddings'] ?? [];
+            $pt   = (int) ($res['prompt_eval_count'] ?? array_sum(array_map(static fn ($t) => (int) ceil(mb_strlen($t) / 4), $list)));
+            $this->logCall('embeddings', $model, (int) $server['id'], 200, $pt, 0);
+            $data = [];
+            foreach ($vecs as $i => $v) {
+                $data[] = ['object' => 'embedding', 'index' => $i, 'embedding' => $base64 ? base64_encode(pack('g*', ...array_map('floatval', $v))) : $v];
+            }
+            return $this->json(['object' => 'list', 'data' => $data, 'model' => $model, 'usage' => ['prompt_tokens' => $pt, 'total_tokens' => $pt]]);
+        }
+        return $this->failLogged('embeddings', $model, null, 502, $lastErr, 'upstream_error');
+    }
+
+    // ---- Pipeline helpers --------------------------------------------------------------------
+
+    private function begin(): void
+    {
+        $this->start     = microtime(true);
+        $this->requestId = 'req_' . bin2hex(random_bytes(12));
+    }
+
+    /** Scope, model (default), key allowlist, access roles, quota. Returns [model, errorResponse|null]. */
+    private function resolveModel(string $scope, string $endpoint, array $in): array
+    {
+        if ($e = $this->scopeError($scope)) return ['', $e];
+        $key   = $this->key();
+        $reg   = new ModelRegistryService();
+        $model = trim((string) ($in['model'] ?? ''));
+        if ($model === '' || $model === 'default') {
+            $model = (string) $reg->defaultFor($scope === 'generate' ? 'generate' : $scope, $key['application'] ?? null);
+            if ($model === '' && $scope === 'generate') $model = (string) $reg->defaultFor('chat', $key['application'] ?? null);
+        }
+        if ($model === '') return ['', $this->error('model is required (no default model is set for this task).', 400, 'missing_required_parameter', 'model')];
+        $allowed = ! empty($key['allowed_models']) ? json_decode($key['allowed_models'], true) : null;
+        if (is_array($allowed) && $allowed && ! in_array($model, $allowed, true)) {
+            return [$model, $this->failLogged($endpoint, $model, null, 403, "This API key may not use the model '{$model}'.", 'model_not_allowed')];
+        }
+        if (! $reg->roleAllowed($model, $reg->roleOf(isset($key['user_id']) ? (int) $key['user_id'] : null))) {
+            return [$model, $this->failLogged($endpoint, $model, null, 403, "The model '{$model}' is not available to this key's owner.", 'model_not_allowed')];
+        }
+        if ($q = (new ApiGatewayService())->quotaError($key)) {
+            return [$model, $this->failLogged($endpoint, $model, null, 429, $q, 'insufficient_quota')];
+        }
+        return [$model, null];
+    }
+
+    private function scopeError(string $scope)
+    {
+        $scopes = explode(',', (string) ($this->key()['scopes'] ?? ''));
+        return in_array($scope, $scopes, true) ? null : $this->error("This API key lacks the '{$scope}' scope.", 403, 'insufficient_scope');
+    }
+
+    /**
+     * OpenAI content → the gateway's message shape: text parts joined, data: URL images as base64.
+     * Remote image URLs are refused (the gateway does not fetch URLs on a caller's behalf).
+     */
+    private function messages($raw): array
+    {
+        if (! is_array($raw) || ! $raw) throw new \InvalidArgumentException('messages must be a non-empty array.');
+        $out = [];
+        foreach ($raw as $i => $m) {
+            $role = (string) ($m['role'] ?? '');
+            if ($role === 'developer') $role = 'system';
+            if (! in_array($role, ['system', 'user', 'assistant'], true)) throw new \InvalidArgumentException("messages[{$i}].role '{$role}' is not supported.");
+            $content = $m['content'] ?? '';
+            $msg = ['role' => $role, 'content' => ''];
+            if (is_string($content)) {
+                $msg['content'] = $content;
+            } elseif (is_array($content)) {
+                $texts = [];
+                foreach ($content as $part) {
+                    $type = $part['type'] ?? '';
+                    if ($type === 'text') {
+                        $texts[] = (string) ($part['text'] ?? '');
+                    } elseif ($type === 'image_url') {
+                        $url = (string) ($part['image_url']['url'] ?? ($part['image_url'] ?? ''));
+                        if (! preg_match('#^data:image/[a-z0-9.+-]+;base64,(.+)$#is', $url, $mm)) {
+                            throw new \InvalidArgumentException('Images must be sent as base64 data: URLs.');
+                        }
+                        $msg['images'][] = $mm[1];
+                    } else {
+                        throw new \InvalidArgumentException("messages[{$i}] content part type '{$type}' is not supported.");
+                    }
+                }
+                $msg['content'] = implode("\n", $texts);
+            } elseif ($content !== null) {
+                throw new \InvalidArgumentException("messages[{$i}].content must be a string or an array of parts.");
+            }
+            $out[] = $msg;
+        }
+        return $out;
+    }
+
+    private function body(): ?array
+    {
+        $raw = (string) $this->request->getBody();
+        if (trim($raw) === '') return [];
+        $j = json_decode($raw, true);
+        return is_array($j) ? $j : null;
+    }
+
+    private function logCall(string $endpoint, string $model, ?int $serverId, int $status, ?int $pt, ?int $ct, ?string $error = null): void
+    {
+        $key = $this->key();
+        (new ApiGatewayService())->log([
+            'api_key_id' => $key['id'] ?? null, 'user_id' => $key['user_id'] ?? null, 'endpoint' => 'openai/' . $endpoint,
+            'model' => $model ?: null, 'server_id' => $serverId, 'prompt_tokens' => $pt, 'completion_tokens' => $ct,
+            'total_tokens' => ($pt === null && $ct === null) ? null : (int) $pt + (int) $ct,
+            'processing_ms' => $this->start ? (int) round((microtime(true) - $this->start) * 1000) : null,
+            'status' => $status, 'client_ip' => $this->request->getIPAddress(), 'error' => $error ? mb_substr($error, 0, 255) : null,
+        ]);
+    }
+
+    private function failLogged(string $endpoint, string $model, ?int $serverId, int $status, string $message, ?string $code = null)
+    {
+        $this->logCall($endpoint, $model, $serverId, $status, null, null, $message);
+        return $this->error($message, $status, $code);
+    }
+
+    private function openStream(): void
+    {
+        while (ob_get_level() > 0) ob_end_flush();
+        http_response_code(200);
+        header('Content-Type: text/event-stream; charset=utf-8');
+        header('Cache-Control: no-cache');
+        header('X-Accel-Buffering: no');
+        header('x-request-id: ' . $this->requestId);
+        foreach ($this->rateHeaders() as $k => $v) header("{$k}: {$v}");
+    }
+
+    private function rateHeaders(): array
+    {
+        $limit = (int) ($this->key()['rate_limit_per_min'] ?? 0);
+        return $limit > 0 ? ['x-ratelimit-limit-requests' => (string) $limit] : [];
+    }
+
+    private function json(array $body, int $status = 200)
+    {
+        $res = $this->response->setStatusCode($status)->setJSON($body);
+        if ($this->requestId) $res->setHeader('x-request-id', $this->requestId);
+        if ($this->start) $res->setHeader('openai-processing-ms', (string) (int) round((microtime(true) - $this->start) * 1000));
+        foreach ($this->rateHeaders() as $k => $v) $res->setHeader($k, $v);
+        return $res;
+    }
+
+    /** OpenAI error envelope. */
+    public static function errorBody(string $message, int $status, ?string $code = null, ?string $param = null): array
+    {
+        $type = match (true) {
+            $status === 401 => 'authentication_error',
+            $status === 403 => 'permission_error',
+            $status === 404 => 'not_found_error',
+            $status === 429 => $code === 'insufficient_quota' ? 'insufficient_quota' : 'rate_limit_error',
+            $status >= 500  => 'api_error',
+            default         => 'invalid_request_error',
+        };
+        return ['error' => ['message' => $message, 'type' => $type, 'param' => $param, 'code' => $code]];
+    }
+
+    private function error(string $message, int $status, ?string $code = null, ?string $param = null)
+    {
+        return $this->json(self::errorBody($message, $status, $code, $param), $status);
+    }
+}
