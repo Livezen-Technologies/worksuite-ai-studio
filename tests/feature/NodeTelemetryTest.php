@@ -20,7 +20,7 @@ final class NodeTelemetryTest extends CIUnitTestCase
         parent::setUp();
         $f = \Config\Database::forge($this->DBGroup);
         foreach (['servers', 'server_metrics'] as $t) $f->dropTable($t, true);
-        $null = static fn (string $type = 'VARCHAR') => ['type' => $type, 'null' => true];
+        $null = static fn (string $type = 'VARCHAR') => ['type' => $type, 'null' => true] + ($type === 'VARCHAR' ? ['constraint' => 191] : []);
         $cols = ['id' => ['type' => 'INTEGER', 'auto_increment' => true]];
         foreach (['name', 'gpu_model', 'accelerator', 'cuda_version', 'rocm_version', 'metrics_at'] as $c) $cols[$c] = $null();
         foreach (['gpu_util_pct', 'vram_used_gb', 'cpu_util_pct', 'ram_used_gb', 'disk_used_gb', 'gpu_temp_c', 'gpu_vram_gb', 'ram_gb', 'storage_gb', 'cpu_cores'] as $c) $cols[$c] = $null('REAL');

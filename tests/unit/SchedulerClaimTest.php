@@ -19,7 +19,7 @@ final class SchedulerClaimTest extends CIUnitTestCase
         parent::setUp();
         $f = \Config\Database::forge($this->DBGroup);
         $f->dropTable('cron_jobs', true);
-        $n = static fn (string $t = 'VARCHAR') => ['type' => $t, 'null' => true];
+        $n = static fn (string $t = 'VARCHAR') => ['type' => $t, 'null' => true] + ($t === 'VARCHAR' ? ['constraint' => 191] : []);
         $f->addField(['id' => ['type' => 'INTEGER', 'auto_increment' => true], 'key' => $n(), 'name' => $n(), 'description' => $n(), 'handler' => $n(), 'schedule' => $n(),
             'enabled' => ['type' => 'INTEGER', 'default' => 1], 'last_run_at' => $n('DATETIME'), 'last_status' => $n(), 'last_output' => $n(),
             'next_run_at' => $n('DATETIME'), 'created_at' => $n('DATETIME'), 'updated_at' => $n('DATETIME')])->addKey('id', true)->createTable('cron_jobs');

@@ -24,7 +24,7 @@ final class ApiTokenTest extends CIUnitTestCase
         $f = \Config\Database::forge($this->DBGroup);
         foreach (['users', 'api_keys', 'datasets', 'engine_packages'] as $t) $f->dropTable($t, true);
         $id = ['id' => ['type' => 'INTEGER', 'auto_increment' => true]];
-        $null = static fn (string $type = 'VARCHAR') => ['type' => $type, 'null' => true];
+        $null = static fn (string $type = 'VARCHAR') => ['type' => $type, 'null' => true] + ($type === 'VARCHAR' ? ['constraint' => 191] : []);
         $f->addField($id + ['name' => $null(), 'status' => $null(), 'role_id' => $null('INTEGER'), 'deleted_at' => $null('DATETIME')])->addKey('id', true)->createTable('users');
         $f->addField($id + ['name' => $null(), 'user_id' => $null('INTEGER'), 'api_key' => $null(), 'secret_hash' => $null(), 'scopes' => $null(),
             'allowed_ips' => $null('TEXT'), 'rate_limit_per_min' => ['type' => 'INTEGER', 'default' => 60], 'status' => $null(),

@@ -22,13 +22,13 @@ final class ModelRegistryTest extends CIUnitTestCase
         $f = \Config\Database::forge($this->DBGroup);
         foreach (['servers', 'models', 'model_registry', 'model_assignments', 'model_defaults', 'queues', 'users', 'roles', 'api_logs'] as $t) $f->dropTable($t, true);
         $id = ['id' => ['type' => 'INTEGER', 'auto_increment' => true]];
-        $null = static fn (string $type = 'VARCHAR') => ['type' => $type, 'null' => true];
+        $null = static fn (string $type = 'VARCHAR') => ['type' => $type, 'null' => true] + ($type === 'VARCHAR' ? ['constraint' => 191] : []);
         $f->addField($id + ['name' => $null(), 'kind' => $null(), 'api_url' => $null(), 'auth_token' => $null(), 'status' => $null(), 'gpu_vram_gb' => $null('REAL'),
             'vram_used_gb' => $null('REAL'), 'is_enabled' => ['type' => 'INTEGER', 'default' => 1], 'deleted_at' => $null('DATETIME'),
             'asr_enabled' => ['type' => 'INTEGER', 'default' => 1], 'asr_port' => $null('INTEGER'), 'asr_device' => $null(), 'asr_seen_at' => $null('DATETIME'),
             'gpu_model' => $null(), 'gpu_count' => $null('INTEGER')])->addKey('id', true)->createTable('servers');
         $f->addField($id + ['server_id' => $null('INTEGER'), 'name' => $null(), 'family' => $null(), 'parameter_size' => $null(), 'quantization' => $null(),
-            'context_length' => $null('INTEGER'), 'size_bytes' => $null('INTEGER'), 'status' => $null()])->addKey('id', true)->createTable('models');
+            'context_length' => $null('INTEGER'), 'size_bytes' => $null('BIGINT'), 'status' => $null()])->addKey('id', true)->createTable('models');
         $f->addField($id + ['name' => $null(), 'display_name' => $null(), 'type' => $null(), 'version' => $null(), 'family' => $null(), 'parameter_size' => $null(),
             'quantization' => $null(), 'vram_gb' => $null('REAL'), 'context_length' => $null('INTEGER'), 'capabilities' => $null('TEXT'), 'engine' => $null(),
             'source' => $null(), 'description' => $null(), 'access_roles' => $null('TEXT'), 'keep_loaded' => ['type' => 'INTEGER', 'default' => 0],
@@ -36,7 +36,7 @@ final class ModelRegistryTest extends CIUnitTestCase
             'created_at' => $null('DATETIME'), 'updated_at' => $null('DATETIME')])->addKey('id', true)->createTable('model_registry');
         $f->addField($id + ['registry_id' => $null('INTEGER'), 'server_id' => $null('INTEGER'), 'state' => $null(), 'job_id' => $null('INTEGER'), 'error' => $null(),
             'created_at' => $null('DATETIME'), 'updated_at' => $null('DATETIME')])->addKey('id', true)->createTable('model_assignments');
-        $f->addField($id + ['task' => $null(), 'application' => ['type' => 'VARCHAR', 'default' => ''], 'model_name' => $null(), 'updated_at' => $null('DATETIME')])
+        $f->addField($id + ['task' => $null(), 'application' => ['type' => 'VARCHAR', 'constraint' => 191, 'default' => ''], 'model_name' => $null(), 'updated_at' => $null('DATETIME')])
             ->addKey('id', true)->createTable('model_defaults');
         $f->addField($id + ['type' => $null(), 'payload' => $null('TEXT'), 'status' => $null(), 'priority' => $null('INTEGER'), 'max_attempts' => $null('INTEGER'),
             'attempts' => ['type' => 'INTEGER', 'default' => 0], 'available_at' => $null('DATETIME'), 'created_at' => $null('DATETIME'),

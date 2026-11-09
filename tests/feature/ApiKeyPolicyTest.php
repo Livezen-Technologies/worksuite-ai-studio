@@ -23,20 +23,20 @@ final class ApiKeyPolicyTest extends CIUnitTestCase
         $f = \Config\Database::forge($this->DBGroup);
         foreach (['roles', 'users', 'role_permissions', 'permissions', 'audit_logs', 'api_keys', 'api_logs', 'notifications'] as $t) $f->dropTable($t, true);
         $id = ['id' => ['type' => 'INTEGER', 'auto_increment' => true]];
-        $n = static fn (string $t = 'VARCHAR') => ['type' => $t, 'null' => true];
+        $n = static fn (string $t = 'VARCHAR') => ['type' => $t, 'null' => true] + ($t === 'VARCHAR' ? ['constraint' => 191] : []);
         $f->addField($id + ['name' => $n(), 'label' => $n(), 'description' => $n(), 'is_system' => ['type' => 'INTEGER', 'default' => 0], 'created_at' => $n('DATETIME'), 'updated_at' => $n('DATETIME')])->addKey('id', true)->createTable('roles');
         $f->addField($id + ['name' => $n(), 'label' => $n(), 'group' => $n()])->addKey('id', true)->createTable('permissions');
         $f->addField($id + ['role_id' => ['type' => 'INTEGER'], 'permission_id' => ['type' => 'INTEGER']])->addKey('id', true)->createTable('role_permissions');
-        $f->addField($id + ['name' => $n(), 'email' => $n(), 'password_hash' => $n(), 'role_id' => $n('INTEGER'), 'avatar' => $n(), 'status' => ['type' => 'VARCHAR', 'default' => 'active'],
+        $f->addField($id + ['name' => $n(), 'email' => $n(), 'password_hash' => $n(), 'role_id' => $n('INTEGER'), 'avatar' => $n(), 'status' => ['type' => 'VARCHAR', 'constraint' => 191, 'default' => 'active'],
             'last_login_at' => $n('DATETIME'), 'totp_secret' => $n('TEXT'), 'totp_enabled_at' => $n('DATETIME'), 'totp_last_step' => $n('INTEGER'),
             'two_factor_required' => ['type' => 'INTEGER', 'default' => 0], 'token_version' => ['type' => 'INTEGER', 'default' => 0],
             'created_at' => $n('DATETIME'), 'updated_at' => $n('DATETIME'), 'deleted_at' => $n('DATETIME')])->addKey('id', true)->createTable('users');
         $f->addField($id + ['user_id' => $n('INTEGER'), 'user_name' => $n(), 'action' => $n(), 'method' => $n(), 'path' => $n(), 'status' => $n('INTEGER'), 'ip' => $n(), 'meta' => $n('TEXT'), 'created_at' => $n('DATETIME')])->addKey('id', true)->createTable('audit_logs');
         $f->addField($id + ['name' => $n(), 'user_id' => $n('INTEGER'), 'api_key' => $n(), 'secret_hash' => $n(), 'secret_prefix' => $n(), 'scopes' => $n(), 'allowed_models' => $n('TEXT'),
             'allowed_ips' => $n('TEXT'), 'daily_token_limit' => $n('INTEGER'), 'monthly_token_limit' => $n('INTEGER'),
-            'rate_limit_per_min' => ['type' => 'INTEGER', 'default' => 60, 'null' => false], 'status' => ['type' => 'VARCHAR', 'default' => 'active'],
+            'rate_limit_per_min' => ['type' => 'INTEGER', 'default' => 60, 'null' => false], 'status' => ['type' => 'VARCHAR', 'constraint' => 191, 'default' => 'active'],
             'expires_at' => $n('DATETIME'), 'last_used_at' => $n('DATETIME'), 'created_at' => $n('DATETIME'), 'updated_at' => $n('DATETIME'),
-            'key_type' => ['type' => 'VARCHAR', 'default' => 'personal'], 'application' => $n(), 'organization' => $n(), 'description' => $n(), 'rotation_days' => $n('INTEGER'),
+            'key_type' => ['type' => 'VARCHAR', 'constraint' => 191, 'default' => 'personal'], 'application' => $n(), 'organization' => $n(), 'description' => $n(), 'rotation_days' => $n('INTEGER'),
             'rotated_at' => $n('DATETIME'), 'revoked_at' => $n('DATETIME'), 'token_version' => ['type' => 'INTEGER', 'default' => 0], 'admin_locked' => ['type' => 'INTEGER', 'default' => 0],
             'previous_secret_hash' => $n(), 'previous_secret_expires_at' => $n('DATETIME'), 'rotation_enforce' => ['type' => 'INTEGER', 'default' => 0], 'rotation_notified_at' => $n('DATETIME')])
             ->addKey('id', true)->createTable('api_keys');

@@ -1,7 +1,7 @@
 # Checks every pull request and every push to main: backend tests, frontend type-check, tests and
 # build (and that the committed public/app build matches the source), the MCP server build,
 # dependency audits (composer audit, npm audit for runtime deps), shellcheck on deploy/ and node scripts,
-# and every migration applied to a real MySQL 8.
+# and every migration plus the whole test suite run on a real MySQL 8.
 name: CI
 
 on:
@@ -133,3 +133,16 @@ jobs:
         run: php spark migrate --all
       - name: Model listing queries run under ONLY_FULL_GROUP_BY
         run: php spark gateway:selftest
+      # The whole test suite again, on MySQL 8 instead of SQLite (production's database).
+      - name: Test suite on MySQL
+        env:
+          CI_ENVIRONMENT: testing
+          database.tests.hostname: 127.0.0.1
+          database.tests.database: aistudio_test
+          database.tests.username: root
+          database.tests.password: root
+          database.tests.DBDriver: MySQLi
+          database.tests.port: '3306'
+        run: |
+          mysql -h127.0.0.1 -uroot -proot -e 'CREATE DATABASE IF NOT EXISTS aistudio_test'
+          vendor/bin/phpunit
