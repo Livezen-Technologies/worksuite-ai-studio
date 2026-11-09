@@ -1,10 +1,13 @@
 import { useState } from 'react';
+
+/** Worker status from /api/queue. */
+interface Health { worker_last_pass: string | null; worker_alive: boolean; stuck: number; failed_24h: number }
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowPathIcon, CheckCircleIcon, ClockIcon, PlayIcon, PlusIcon, QueueListIcon, XCircleIcon, NoSymbolIcon, BoltIcon,
 } from '@heroicons/react/24/outline';
 import {
-  Button, Card, CodeBlock, ConfirmDialog, DataTable, EmptyState, FormModal, IconButton, Input, Modal, PageHeader, Pagination,
+  Alert, Button, Card, CodeBlock, ConfirmDialog, DataTable, EmptyState, FormModal, IconButton, Input, Modal, PageHeader, Pagination,
   Select, StatCard, StatusBadge, Tabs, Textarea, Toggle, Toolbar, useToast, type Column,
 } from '../components/ui';
 import { ApiError, get, post, put, type Paged } from '../lib/api';
@@ -67,7 +70,7 @@ function Jobs() {
 
   const q = useQuery({
     queryKey: ['queue', status, type, page],
-    queryFn: () => get<Paged<Job> & { stats: Stats }>('/queue', { status, type, page }),
+    queryFn: () => get<Paged<Job> & { stats: Stats; health?: Health }>('/queue', { status, type, page }),
     refetchInterval: (query) => (busy(query.state.data?.stats) ? 5_000 : 60_000),
   });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['queue'] });
@@ -87,6 +90,12 @@ function Jobs() {
     onError: (e) => toast.error(e),
   });
   const s = q.data?.stats;
+  const h = q.data?.health;
+  const reap = useMutation({
+    mutationFn: () => post<{ reset: number }>('/queue/reap'),
+    onSuccess: (r) => { toast.success(r.reset ? `Reset ${r.reset} stuck job${r.reset > 1 ? 's' : ''}` : 'No job is stuck'); invalidate(); },
+    onError: (e) => toast.error(e),
+  });
   const filter = (st: string) => { setStatus(status === st ? '' : st); setPage(1); };
 
   const columns: Column<Job>[] = [
@@ -109,6 +118,20 @@ function Jobs() {
 
   return (
     <div className="space-y-6">
+      {h && !h.worker_alive && (
+        <Alert tone="warning" title="The queue worker is not running">
+          {h.worker_last_pass ? `Its last pass was ${ago(h.worker_last_pass)}.` : 'No pass has been recorded.'} Jobs wait until it runs: start it on the server with <code>sudo systemctl start ollamahub-queue</code>, or press Run worker to process them now.
+        </Alert>
+      )}
+      {h && (h.stuck > 0 || h.failed_24h > 0) && (
+        <Alert tone={h.stuck > 0 ? 'warning' : 'info'} title={h.stuck > 0 ? `${h.stuck} job${h.stuck > 1 ? 's' : ''} stuck in “running”` : `${h.failed_24h} job${h.failed_24h > 1 ? 's' : ''} failed in the last 24 hours`}>
+          <div className="flex flex-wrap items-center gap-3">
+            <span>{h.stuck > 0 ? 'Their worker stopped while running them. Reset puts them back in line, or fails them when they are out of attempts.' : 'Filter by Failed to see why, then retry.'}</span>
+            {manage && h.stuck > 0 && <Button size="sm" loading={reap.isPending} onClick={() => reap.mutate()}>Reset stuck jobs</Button>}
+            {h.failed_24h > 0 && <Button size="sm" variant="ghost" onClick={() => filter('failed')}>Show failed</Button>}
+          </div>
+        </Alert>
+      )}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         {([
           ['pending', 'Pending', ClockIcon], ['running', 'Running', BoltIcon], ['completed', 'Completed', CheckCircleIcon],

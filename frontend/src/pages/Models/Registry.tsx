@@ -284,7 +284,8 @@ export default function Registry() {
           <span key={d.server_id} className="inline-flex items-center gap-0.5">
             <Badge tone={DEP_TONE[d.status]}>{d.server} · {DEP_LABEL[d.status]}</Badge>
             {manage && d.kind !== 'speech' && (
-              <button type="button" aria-label={`Remove ${m.name} from ${d.server}`} title={`Remove from ${d.server}`}
+              <button type="button" aria-label={d.status === 'deploying' ? `Cancel downloading ${m.name} on ${d.server}` : `Remove ${m.name} from ${d.server}`}
+                title={d.status === 'deploying' ? `Cancel the download on ${d.server}` : `Remove from ${d.server}`}
                 className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline-2 focus-visible:outline-brand-600 dark:hover:bg-red-500/10 dark:hover:text-red-400"
                 onClick={() => setUndeploying({ m, d })}><XMarkIcon aria-hidden className="size-4" /></button>
             )}
@@ -336,7 +337,8 @@ export default function Registry() {
       <ConfirmDialog open={!!removing} onClose={() => setRemoving(null)} busy={remove.isPending} onConfirm={() => removing && remove.mutate(removing.id)}
         title="Remove from the registry?" message={`“${removing?.name}” leaves the registry with its settings and assignments. Copies on nodes are not deleted.`} confirmLabel="Remove" />
       <ConfirmDialog open={!!undeploying} onClose={() => setUndeploying(null)} busy={undeploy.isPending} onConfirm={() => undeploying && undeploy.mutate(undeploying)}
-        title={`Remove from ${undeploying?.d.server}?`} confirmLabel="Remove"
+        title={undeploying?.d.status === 'deploying' ? `Cancel the download on ${undeploying?.d.server}?` : `Remove from ${undeploying?.d.server}?`}
+        confirmLabel={undeploying?.d.status === 'deploying' ? 'Cancel download' : 'Remove'}
         message={undeploying?.d.kind === 'ollama' ? `“${undeploying?.m.name}” is deleted from ${undeploying?.d.server}.` : `The assignment is removed. ${undeploying?.d.server} keeps serving whatever its engine is configured with.`} />
     </div>
   );

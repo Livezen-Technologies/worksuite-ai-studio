@@ -23,5 +23,6 @@ class QueueWork extends BaseCommand
         $res = (new QueueService())->work($limit > 0 ? $limit : 25);
         CLI::write("Processed {$res['processed']} job(s), {$res['failed']} failed.", 'green');
         \App\Libraries\Heartbeat::beat('queue');
+        cache()->save('queue_last_pass', time(), 86400); // for the Queue page's worker status
     }
 }

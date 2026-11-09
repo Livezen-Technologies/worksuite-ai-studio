@@ -174,6 +174,7 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->get('queue', 'QueueController::index');
     $routes->post('queue', 'QueueController::create');
     $routes->post('queue/work', 'QueueController::work');
+    $routes->post('queue/reap', 'QueueController::reap');
     $routes->post('queue/(:num)/cancel', 'QueueController::cancel/$1');
     $routes->post('queue/(:num)/retry', 'QueueController::retry/$1');
 

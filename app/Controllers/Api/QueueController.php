@@ -12,6 +12,7 @@ use App\Services\QueueService;
  *   POST   /api/queue/{id}/cancel  cancel a pending job                 (queues.manage)
  *   POST   /api/queue/{id}/retry   requeue a failed/cancelled job       (queues.manage)
  *   POST   /api/queue/work         process pending jobs now             (queues.manage)
+ *   POST   /api/queue/reap         put stuck "running" jobs back in line  (queues.manage)
  */
 class QueueController extends BaseApiController
 {
@@ -29,6 +30,7 @@ class QueueController extends BaseApiController
         return $this->ok([
             'rows' => $rows, 'total' => $total, 'page' => $page, 'per_page' => $per,
             'stats' => (new QueueService())->stats(),
+            'health' => (new QueueService())->health(),
         ]);
     }
 
@@ -52,6 +54,13 @@ class QueueController extends BaseApiController
         }
         $this->table()->where('id', (int) $id)->update(['status' => 'cancelled', 'finished_at' => date('Y-m-d H:i:s')]);
         return $this->ok(null, 'Job cancelled.');
+    }
+
+    public function reap()
+    {
+        if ($r = $this->requirePermission('queues.manage')) return $r;
+        $n = (new QueueService())->reapStale(true);
+        return $this->ok(['reset' => $n], $n ? "Reset {$n} stuck job" . ($n > 1 ? 's' : '') . '.' : 'No job is stuck.');
     }
 
     public function retry($id = null)

@@ -198,4 +198,16 @@ final class ModelRegistryTest extends CIUnitTestCase
         $this->assertSame('failed', $status()['status']);
         $this->assertSame('The download job no longer exists.', $status()['error']);
     }
+
+    /** Gap 6: cancelling a deployment cancels its queued download. */
+    public function testCancelDeploymentCancelsTheJob(): void
+    {
+        $svc = new ModelRegistryService();
+        $this->db->table('model_registry')->insert(['name' => 'cancel-me', 'vram_gb' => 2, 'enabled' => 1]);
+        $m = $svc->findByName('cancel-me');
+        $svc->deploy($m, [1]);
+        $svc->undeploy($m, 1);
+        $this->assertSame('cancelled', $this->db->table('queues')->get()->getRow()->status);
+        $this->assertSame(0, $this->db->table('model_assignments')->where('registry_id', $m['id'])->countAllResults());
+    }
 }

@@ -386,6 +386,12 @@ class ModelRegistryService
     /** Remove a model from one node (deletes the copy on Ollama nodes) and drop the assignment. */
     public function undeploy(array $model, int $serverId): void
     {
+        // A download still queued or running is cancelled, so the node stops fetching a model nobody wants.
+        $a = $this->db->table('model_assignments')->where(['registry_id' => $model['id'], 'server_id' => $serverId])->get()->getRowArray();
+        if ($a && ! empty($a['job_id'])) {
+            $this->db->table('queues')->where('id', $a['job_id'])->whereIn('status', ['pending', 'running'])
+                ->update(['status' => 'cancelled', 'finished_at' => date('Y-m-d H:i:s'), 'error' => 'Deployment cancelled.']);
+        }
         $server = $this->db->table('servers')->where('id', $serverId)->get()->getRowArray();
         if ($server && ($server['kind'] ?? 'ollama') === 'ollama') {
             $installed = $this->db->table('models')->where(['server_id' => $serverId, 'name' => $model['name']])->countAllResults();

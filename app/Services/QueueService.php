@@ -35,11 +35,12 @@ class QueueService
      * Put jobs whose worker died back in line (or fail them when out of attempts), so nothing stays
      * "running" for ever. Returns how many were reset.
      */
-    public function reapStale(): int
+    public function reapStale(bool $now = false): int
     {
         $n = 0;
         foreach ($this->db->table('queues')->where('status', 'running')->get()->getResultArray() as $job) {
-            $limit = self::STALE_AFTER[$job['type']] ?? self::STALE_AFTER['default'];
+            // $now (an admin pressing "Reset stuck jobs"): anything running for over 10 minutes with no worker pass since
+            $limit = $now && ! $this->workerAlive() ? 600 : (self::STALE_AFTER[$job['type']] ?? self::STALE_AFTER['default']);
             if (! $job['started_at'] || strtotime($job['started_at']) > time() - $limit) continue;
             $final = (int) $job['attempts'] >= (int) $job['max_attempts'];
             $this->db->table('queues')->where('id', $job['id'])->where('status', 'running')->update([
@@ -50,6 +51,29 @@ class QueueService
             $n++;
         }
         return $n;
+    }
+
+    /** Worker health for the Queue page: when the worker last finished a pass, stuck and recent failed jobs. */
+    public function health(): array
+    {
+        $last = cache('queue_last_pass');
+        $stuck = 0;
+        foreach ($this->db->table('queues')->select('type, started_at')->where('status', 'running')->get()->getResultArray() as $j) {
+            if ($j['started_at'] && strtotime($j['started_at']) < time() - (self::STALE_AFTER[$j['type']] ?? self::STALE_AFTER['default'])) $stuck++;
+        }
+        return [
+            'worker_last_pass' => $last ? date('c', (int) $last) : null,
+            'worker_alive'     => $this->workerAlive(),
+            'stuck'            => $stuck,
+            'failed_24h'       => $this->db->table('queues')->where('status', 'failed')->where('finished_at >=', date('Y-m-d H:i:s', time() - 86400))->countAllResults(),
+        ];
+    }
+
+    /** The worker finishes a pass every few seconds; none in 2 minutes means it is not running. */
+    public function workerAlive(): bool
+    {
+        $last = cache('queue_last_pass');
+        return $last && (int) $last > time() - 120;
     }
 
     /** Atomically claim the next runnable job (or null). */
@@ -77,7 +101,8 @@ class QueueService
         $payload = $job['payload'] ? json_decode($job['payload'], true) : [];
         try {
             $result = $this->handle($job['type'], $payload);
-            $this->db->table('queues')->where('id', $job['id'])->update([
+            // where('status', 'running'): a job cancelled while it ran stays cancelled
+            $this->db->table('queues')->where('id', $job['id'])->where('status', 'running')->update([
                 'status' => 'completed', 'finished_at' => date('Y-m-d H:i:s'),
                 'result' => substr(json_encode($result), 0, 60000), 'error' => null,
             ]);
