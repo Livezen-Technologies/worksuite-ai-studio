@@ -22,12 +22,20 @@ class ProviderService
     /** Kinds that are external cloud APIs rather than Ollama nodes. */
     public const EXTERNAL = ['openai', 'anthropic', 'gemini'];
 
+    /** Self-hosted inference engines that speak the OpenAI API (base URL …/v1). */
+    public const OPENAI_ENGINES = ['vllm', 'llamacpp', 'openai_compatible'];
+
+    /** Every kind a server row may carry. */
+    public const KINDS = ['ollama', 'vllm', 'llamacpp', 'openai_compatible', 'openai', 'anthropic', 'gemini'];
+
     /** Default base URLs per external kind (used when api_url is blank). */
     private const DEFAULT_BASE = [
         'openai'    => 'https://api.openai.com/v1',
         'anthropic' => 'https://api.anthropic.com/v1',
         'gemini'    => 'https://generativelanguage.googleapis.com/v1beta',
     ];
+
+    public const LABELS = ['vllm' => 'vLLM', 'llamacpp' => 'llama.cpp', 'openai_compatible' => 'OpenAI-compatible'];
 
     /** Curated fallbacks shown when a provider's model list can't be fetched. */
     private const FALLBACK_MODELS = [
@@ -39,6 +47,12 @@ class ProviderService
     public function isExternal(string $kind): bool
     {
         return in_array($kind, self::EXTERNAL, true);
+    }
+
+    /** True for Ollama nodes (native /api/* protocol); false for anything spoken to over an OpenAI-style or vendor API. */
+    public function isOllama(string $kind): bool
+    {
+        return ! in_array($kind, self::EXTERNAL, true) && ! in_array($kind, self::OPENAI_ENGINES, true);
     }
 
     private function timeout(): int
@@ -53,7 +67,12 @@ class ProviderService
         if ($url === '') {
             $url = self::DEFAULT_BASE[$kind] ?? '';
         }
-        return rtrim($url, '/');
+        $url = rtrim($url, '/');
+        // vLLM / llama.cpp servers serve the OpenAI API under /v1; accept the bare host:port too.
+        if (in_array($kind, self::OPENAI_ENGINES, true) && ! preg_match('#/v\d+$#', $url)) {
+            $url .= '/v1';
+        }
+        return $url;
     }
 
     // ---- Chat --------------------------------------------------------------
@@ -69,15 +88,139 @@ class ProviderService
     {
         $kind  = $server['kind'] ?? 'ollama';
         $start = microtime(true);
+        // Provider-neutral generation parameters (OpenAI names): temperature, top_p, max_tokens, stop, seed,
+        // presence_penalty, frequency_penalty, json (bool). Each adapter maps them to its own wire format.
+        $this->params = self::cleanParams((array) ($extra['params'] ?? []));
+        // Tool calling (OpenAI format in, OpenAI format out): $extra['tools'], $extra['tool_choice'].
+        $this->tools      = self::normalizeTools((array) ($extra['tools'] ?? []));
+        $this->toolChoice = self::normalizeToolChoice($extra['tool_choice'] ?? null, $this->tools);
+        if ($this->toolChoice === 'none') $this->tools = [];
+        $this->toolCalls  = [];
+        $this->finish     = null;
+        unset($extra['params'], $extra['tools'], $extra['tool_choice']);
+        if ($this->params && $this->isOllama($kind)) {
+            $map = ['temperature' => 'temperature', 'top_p' => 'top_p', 'max_tokens' => 'num_predict', 'stop' => 'stop', 'seed' => 'seed',
+                    'presence_penalty' => 'presence_penalty', 'frequency_penalty' => 'frequency_penalty'];
+            foreach ($map as $from => $to) if (array_key_exists($from, $this->params)) $extra['options'][$to] = $this->params[$from];
+            if (! empty($this->params['json'])) $extra['format'] = 'json';
+        }
 
-        return match ($kind) {
-            'openai'    => $this->openaiChat($server, $model, $messages, $onDelta, $start),
+        $out = match ($kind) {
+            'openai', 'vllm', 'llamacpp', 'openai_compatible' => $this->openaiChat($server, $model, $messages, $onDelta, $start),
             'anthropic' => $this->anthropicChat($server, $model, $messages, $onDelta, $start),
             'gemini'    => $this->geminiChat($server, $model, $messages, $onDelta, $start),
             default     => $this->ollamaChat($server, $model, $messages, $extra, $onDelta, $start),
         };
+        $out['tool_calls'] = array_values($this->toolCalls);
+        $out['finish_reason'] = $this->finish; // stop | length | content_filter, or null when the provider didn't say
+        return $out;
     }
 
+    /** Generation parameters for the current chat() call (see chat()). */
+    private array $params = [];
+    /** Tools for the current call: [{name, description, parameters}]. */
+    private array $tools = [];
+    /** 'auto' | 'required' | 'none' | ['name' => string] */
+    private $toolChoice = 'auto';
+    /** Why generation stopped, normalised to OpenAI's names; null when the provider didn't say. */
+    private ?string $finish = null;
+
+    private function setFinish(?string $reason): void
+    {
+        $r = strtolower((string) $reason);
+        $this->finish = match (true) {
+            $r === '' => $this->finish,
+            in_array($r, ['length', 'max_tokens'], true) => 'length',
+            in_array($r, ['content_filter', 'safety', 'recitation', 'blocklist', 'prohibited_content', 'spii'], true) => 'content_filter',
+            in_array($r, ['tool_calls', 'tool_use', 'function_call'], true) => $this->finish, // tool calls are reported separately
+            default => 'stop',
+        };
+    }
+
+    /** Tool calls the model made in the current call: index => {id, name, arguments (JSON string)}. */
+    private array $toolCalls = [];
+
+    /**
+     * OpenAI tools ([{type: "function", function: {name, description, parameters}}]) → [{name, description, parameters}].
+     *
+     * @throws \InvalidArgumentException on a malformed tool
+     */
+    public static function normalizeTools(array $tools): array
+    {
+        $out = [];
+        foreach (array_values($tools) as $i => $t) {
+            $f = $t['function'] ?? null;
+            if (($t['type'] ?? 'function') !== 'function' || ! is_array($f)) throw new \InvalidArgumentException("tools[{$i}] must be {type: \"function\", function: {...}}.");
+            $name = (string) ($f['name'] ?? '');
+            if (! preg_match('/^[A-Za-z0-9_-]{1,64}$/', $name)) throw new \InvalidArgumentException("tools[{$i}].function.name must be 1-64 letters, digits, _ or -.");
+            $params = $f['parameters'] ?? ['type' => 'object', 'properties' => new \stdClass()];
+            if (! is_array($params) && ! is_object($params)) throw new \InvalidArgumentException("tools[{$i}].function.parameters must be a JSON schema object.");
+            $out[] = ['name' => $name, 'description' => (string) ($f['description'] ?? ''), 'parameters' => $params];
+        }
+        if (count($out) > 128) throw new \InvalidArgumentException('At most 128 tools per request.');
+        return $out;
+    }
+
+    /** 'auto' | 'none' | 'required' | {type: "function", function: {name}} → 'auto'|'none'|'required'|['name'=>…]. */
+    public static function normalizeToolChoice($choice, array $tools)
+    {
+        if ($choice === null || $choice === 'auto') return 'auto';
+        if ($choice === 'none' || $choice === 'required') return $choice;
+        $name = is_array($choice) ? (string) ($choice['function']['name'] ?? '') : '';
+        if ($name === '' || ! in_array($name, array_column($tools, 'name'), true)) {
+            throw new \InvalidArgumentException('tool_choice must be "auto", "none", "required" or name one of the tools.');
+        }
+        return ['name' => $name];
+    }
+
+    private static function callId(): string
+    {
+        return 'call_' . bin2hex(random_bytes(12));
+    }
+
+    /** Arguments as a JSON object string, whatever shape the provider used. */
+    private static function argsJson($args): string
+    {
+        if (is_string($args)) return $args === '' ? '{}' : $args;
+        return json_encode($args === null || $args === [] ? new \stdClass() : $args, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    /** Arguments as an array/object for providers that want structured input. */
+    private static function argsObject(string $json)
+    {
+        $v = json_decode($json === '' ? '{}' : $json, false);
+        return is_object($v) ? $v : new \stdClass();
+    }
+
+    /** Gemini accepts only a subset of JSON Schema; drop the keywords it rejects. */
+    private static function geminiSchema($schema)
+    {
+        if (is_object($schema)) $schema = (array) $schema;
+        if (! is_array($schema)) return $schema;
+        $out = [];
+        foreach ($schema as $k => $v) {
+            if (in_array($k, ['$schema', 'additionalProperties', '$id', '$defs', 'definitions', 'default', 'examples', 'title', 'strict'], true)) continue;
+            $out[$k] = is_array($v) || is_object($v) ? self::geminiSchema($v) : $v;
+        }
+        if (($out['type'] ?? null) === 'object' && empty($out['properties'])) unset($out['properties']);
+        return $out;
+    }
+
+    public static function cleanParams(array $p): array
+    {
+        $out = [];
+        foreach (['temperature' => [0, 2], 'top_p' => [0, 1], 'presence_penalty' => [-2, 2], 'frequency_penalty' => [-2, 2]] as $k => [$lo, $hi]) {
+            if (isset($p[$k]) && is_numeric($p[$k])) $out[$k] = max($lo, min($hi, (float) $p[$k]));
+        }
+        if (isset($p['max_tokens']) && (int) $p['max_tokens'] > 0) $out['max_tokens'] = min(1000000, (int) $p['max_tokens']);
+        if (isset($p['seed']) && is_numeric($p['seed'])) $out['seed'] = (int) $p['seed'];
+        if (isset($p['stop'])) {
+            $stop = array_values(array_filter(array_map('strval', (array) $p['stop']), static fn ($x) => $x !== ''));
+            if ($stop) $out['stop'] = array_slice($stop, 0, 4);
+        }
+        if (! empty($p['json'])) $out['json'] = true;
+        return $out;
+    }
     private function elapsed(float $start): int
     {
         return (int) round((microtime(true) - $start) * 1000);
@@ -85,13 +228,27 @@ class ProviderService
 
     private function ollamaChat(array $server, string $model, array $messages, array $extra, callable $onDelta, float $start): array
     {
+        if ($this->tools) {
+            $tools = $this->tools;
+            if (is_array($this->toolChoice)) $tools = array_values(array_filter($tools, fn ($t) => $t['name'] === $this->toolChoice['name']));
+            $extra['tools'] = array_map(static fn ($t) => ['type' => 'function', 'function' => $t], $tools);
+            if ($this->toolChoice !== 'auto') { // Ollama has no tool_choice: say it in a system message
+                array_unshift($messages, ['role' => 'system', 'content' => 'You must answer by calling ' . (is_array($this->toolChoice) ? "the tool {$this->toolChoice['name']}" : 'one of the tools') . '.']);
+            }
+        }
+        // A pinned ("keep loaded") model must stay in memory: Ollama otherwise drops it 5 minutes after this call.
+        if (! isset($extra['keep_alive']) && ModelRegistryService::isPinned($model)) $extra['keep_alive'] = -1;
         $client = new OllamaService($server['api_url'], $server['auth_token'] ?? null);
-        $final  = $client->chat($model, $messages, $extra, static function (array $line) use ($onDelta) {
+        $final  = $client->chat($model, array_map([$this, 'ollamaMessage'], $messages), $extra, function (array $line) use ($onDelta) {
             $d = $line['message']['content'] ?? '';
             if ($d !== '') {
                 $onDelta($d);
             }
+            foreach ($line['message']['tool_calls'] ?? [] as $tc) {
+                $this->toolCalls[] = ['id' => self::callId(), 'name' => (string) ($tc['function']['name'] ?? ''), 'arguments' => self::argsJson($tc['function']['arguments'] ?? null)];
+            }
         });
+        $this->setFinish($final['done_reason'] ?? null);
         return [
             'prompt_tokens'     => $final['prompt_eval_count'] ?? null,
             'completion_tokens' => $final['eval_count'] ?? null,
@@ -109,20 +266,48 @@ class ProviderService
             'stream'         => true,
             'stream_options' => ['include_usage' => true],
         ];
+        foreach (['temperature', 'top_p', 'max_tokens', 'stop', 'seed', 'presence_penalty', 'frequency_penalty'] as $k) {
+            if (array_key_exists($k, $this->params)) $body[$k] = $this->params[$k];
+        }
+        // OpenAI's current models (o-series, gpt-5) refuse max_tokens; max_completion_tokens works for all of them.
+        // Self-hosted engines (vLLM, llama.cpp) still expect max_tokens.
+        if (($server['kind'] ?? '') === 'openai' && isset($body['max_tokens'])) {
+            $body['max_completion_tokens'] = $body['max_tokens'];
+            unset($body['max_tokens']);
+        }
+        if (! empty($this->params['json'])) $body['response_format'] = ['type' => 'json_object'];
+        if ($this->tools) {
+            $body['tools'] = array_map(static fn ($t) => ['type' => 'function', 'function' => $t], $this->tools);
+            $body['tool_choice'] = is_array($this->toolChoice) ? ['type' => 'function', 'function' => ['name' => $this->toolChoice['name']]] : $this->toolChoice;
+        }
         $usage = ['p' => null, 'c' => null];
-        $this->sse($this->base($server) . '/chat/completions', [
-            'Content-Type: application/json',
-            'Authorization: Bearer ' . ($server['auth_token'] ?? ''),
-        ], $body, static function (array $j) use ($onDelta, &$usage) {
-            $d = $j['choices'][0]['delta']['content'] ?? '';
-            if ($d !== '') {
+        $headers = ['Content-Type: application/json'];
+        if (! empty($server['auth_token']) || ($server['kind'] ?? '') === 'openai') $headers[] = 'Authorization: Bearer ' . ($server['auth_token'] ?? '');
+        $this->sse($this->base($server) . '/chat/completions', $headers, $body, function (array $j) use ($onDelta, &$usage) {
+            $delta = $j['choices'][0]['delta'] ?? [];
+            if (! empty($j['choices'][0]['finish_reason'])) $this->setFinish($j['choices'][0]['finish_reason']);
+            $d = $delta['content'] ?? '';
+            if ($d !== '' && $d !== null) {
                 $onDelta($d);
+            }
+            foreach ($delta['tool_calls'] ?? [] as $tc) { // streamed in pieces, keyed by index
+                $i = (int) ($tc['index'] ?? 0);
+                $this->toolCalls[$i] ??= ['id' => '', 'name' => '', 'arguments' => ''];
+                if (! empty($tc['id'])) $this->toolCalls[$i]['id'] = $tc['id'];
+                if (! empty($tc['function']['name'])) $this->toolCalls[$i]['name'] .= $tc['function']['name'];
+                if (isset($tc['function']['arguments'])) $this->toolCalls[$i]['arguments'] .= $tc['function']['arguments'];
             }
             if (isset($j['usage'])) {
                 $usage['p'] = $j['usage']['prompt_tokens'] ?? $usage['p'];
                 $usage['c'] = $j['usage']['completion_tokens'] ?? $usage['c'];
             }
         });
+        ksort($this->toolCalls);
+        foreach ($this->toolCalls as &$tc) {
+            $tc['id'] = $tc['id'] ?: self::callId();
+            $tc['arguments'] = $tc['arguments'] === '' ? '{}' : $tc['arguments'];
+        }
+        unset($tc);
         return ['prompt_tokens' => $usage['p'], 'completion_tokens' => $usage['c'], 'total_ms' => $this->elapsed($start)];
     }
 
@@ -135,27 +320,52 @@ class ProviderService
                 $system .= ($system !== '' ? "\n\n" : '') . ($m['content'] ?? '');
                 continue;
             }
-            $msgs[] = $this->anthropicMessage($m);
+            $msg = $this->anthropicMessage($m);
+            // Anthropic wants strictly alternating roles: merge consecutive same-role turns (e.g. several tool results).
+            $last = count($msgs) - 1;
+            if ($last >= 0 && $msgs[$last]['role'] === $msg['role']) {
+                $toBlocks = static fn ($c) => is_array($c) ? $c : ($c === '' ? [] : [['type' => 'text', 'text' => $c]]);
+                $msgs[$last]['content'] = array_merge($toBlocks($msgs[$last]['content']), $toBlocks($msg['content']));
+            } else {
+                $msgs[] = $msg;
+            }
         }
-        $body = ['model' => $model, 'max_tokens' => 4096, 'messages' => $msgs, 'stream' => true];
+        $body = ['model' => $model, 'max_tokens' => $this->params['max_tokens'] ?? 4096, 'messages' => $msgs, 'stream' => true];
+        if (isset($this->params['temperature'])) $body['temperature'] = min(1.0, $this->params['temperature']);
+        if (isset($this->params['top_p'])) $body['top_p'] = $this->params['top_p'];
+        if (isset($this->params['stop'])) $body['stop_sequences'] = $this->params['stop'];
         if ($system !== '') {
             $body['system'] = $system;
         }
-        $usage = ['p' => null, 'c' => null];
+        if ($this->tools) {
+            $body['tools'] = array_map(static fn ($t) => ['name' => $t['name'], 'description' => $t['description'], 'input_schema' => $t['parameters']], $this->tools);
+            $body['tool_choice'] = is_array($this->toolChoice) ? ['type' => 'tool', 'name' => $this->toolChoice['name']]
+                : ['type' => $this->toolChoice === 'required' ? 'any' : 'auto'];
+        }
+        $usage  = ['p' => null, 'c' => null];
+        $blocks = []; // content block index → tool call index
         $this->sse($this->base($server) . '/messages', [
             'Content-Type: application/json',
             'x-api-key: ' . ($server['auth_token'] ?? ''),
             'anthropic-version: 2023-06-01',
-        ], $body, static function (array $j) use ($onDelta, &$usage) {
+        ], $body, function (array $j) use ($onDelta, &$usage, &$blocks) {
             $t = $j['type'] ?? '';
-            if ($t === 'content_block_delta' && (($j['delta']['type'] ?? '') === 'text_delta')) {
+            if ($t === 'content_block_start' && (($j['content_block']['type'] ?? '') === 'tool_use')) {
+                $blocks[(int) $j['index']] = count($this->toolCalls);
+                $this->toolCalls[] = ['id' => (string) ($j['content_block']['id'] ?? self::callId()), 'name' => (string) ($j['content_block']['name'] ?? ''), 'arguments' => ''];
+            } elseif ($t === 'content_block_delta' && (($j['delta']['type'] ?? '') === 'text_delta')) {
                 $onDelta($j['delta']['text'] ?? '');
+            } elseif ($t === 'content_block_delta' && (($j['delta']['type'] ?? '') === 'input_json_delta') && isset($blocks[(int) $j['index']])) {
+                $this->toolCalls[$blocks[(int) $j['index']]]['arguments'] .= (string) ($j['delta']['partial_json'] ?? '');
             } elseif ($t === 'message_start') {
                 $usage['p'] = $j['message']['usage']['input_tokens'] ?? $usage['p'];
             } elseif ($t === 'message_delta') {
                 $usage['c'] = $j['usage']['output_tokens'] ?? $usage['c'];
+                $this->setFinish($j['delta']['stop_reason'] ?? null);
             }
         });
+        foreach ($this->toolCalls as &$tc) $tc['arguments'] = $tc['arguments'] === '' ? '{}' : $tc['arguments'];
+        unset($tc);
         return ['prompt_tokens' => $usage['p'], 'completion_tokens' => $usage['c'], 'total_ms' => $this->elapsed($start)];
     }
 
@@ -168,19 +378,43 @@ class ProviderService
                 $sys .= ($sys !== '' ? "\n\n" : '') . ($m['content'] ?? '');
                 continue;
             }
-            $contents[] = $this->geminiContent($m);
+            $c = $this->geminiContent($m);
+            $last = count($contents) - 1;
+            if ($last >= 0 && $contents[$last]['role'] === $c['role'] && ($m['role'] ?? '') === 'tool') {
+                $contents[$last]['parts'] = array_merge($contents[$last]['parts'], $c['parts']); // parallel tool results in one turn
+            } else {
+                $contents[] = $c;
+            }
         }
         $body = ['contents' => $contents];
+        $gc = array_filter([
+            'temperature' => $this->params['temperature'] ?? null, 'topP' => $this->params['top_p'] ?? null,
+            'maxOutputTokens' => $this->params['max_tokens'] ?? null, 'stopSequences' => $this->params['stop'] ?? null,
+            'seed' => $this->params['seed'] ?? null, 'responseMimeType' => ! empty($this->params['json']) ? 'application/json' : null,
+        ], static fn ($v) => $v !== null);
+        if ($gc) $body['generationConfig'] = $gc;
         if ($sys !== '') {
             $body['systemInstruction'] = ['parts' => [['text' => $sys]]];
+        }
+        if ($this->tools) {
+            $body['tools'] = [['functionDeclarations' => array_map(static fn ($t) => array_filter([
+                'name' => $t['name'], 'description' => $t['description'] ?: null, 'parameters' => self::geminiSchema($t['parameters']) ?: null,
+            ]), $this->tools)]];
+            $fc = ['mode' => $this->toolChoice === 'auto' ? 'AUTO' : 'ANY'];
+            if (is_array($this->toolChoice)) $fc['allowedFunctionNames'] = [$this->toolChoice['name']];
+            $body['toolConfig'] = ['functionCallingConfig' => $fc];
         }
         $url = $this->base($server) . '/models/' . rawurlencode($model)
             . ':streamGenerateContent?alt=sse&key=' . urlencode((string) ($server['auth_token'] ?? ''));
         $usage = ['p' => null, 'c' => null];
-        $this->sse($url, ['Content-Type: application/json'], $body, static function (array $j) use ($onDelta, &$usage) {
+        $this->sse($url, ['Content-Type: application/json'], $body, function (array $j) use ($onDelta, &$usage) {
+            if (! empty($j['candidates'][0]['finishReason'])) $this->setFinish($j['candidates'][0]['finishReason']);
             foreach ($j['candidates'][0]['content']['parts'] ?? [] as $part) {
                 if (isset($part['text']) && $part['text'] !== '') {
                     $onDelta($part['text']);
+                }
+                if (isset($part['functionCall'])) {
+                    $this->toolCalls[] = ['id' => self::callId(), 'name' => (string) ($part['functionCall']['name'] ?? ''), 'arguments' => self::argsJson($part['functionCall']['args'] ?? null)];
                 }
             }
             if (isset($j['usageMetadata'])) {
@@ -191,11 +425,36 @@ class ProviderService
         return ['prompt_tokens' => $usage['p'], 'completion_tokens' => $usage['c'], 'total_ms' => $this->elapsed($start)];
     }
 
-    // ---- Message translation (Ollama shape → provider shape) ---------------
+    // ---- Message translation (gateway shape → provider shape) ---------------
+    //
+    // Gateway shape: {role: system|user|assistant|tool, content, images?: [b64],
+    //                 tool_calls?: [{id, name, arguments}] (assistant), tool_call_id?, name? (tool)}
+
+    private function ollamaMessage(array $m): array
+    {
+        $role = $m['role'] ?? 'user';
+        if ($role === 'tool') {
+            return ['role' => 'tool', 'content' => (string) ($m['content'] ?? ''), 'tool_name' => (string) ($m['name'] ?? '')];
+        }
+        $out = ['role' => $role, 'content' => (string) ($m['content'] ?? '')];
+        if (! empty($m['images'])) $out['images'] = $m['images'];
+        if (! empty($m['tool_calls'])) {
+            $out['tool_calls'] = array_map(static fn ($tc) => ['function' => ['name' => $tc['name'], 'arguments' => self::argsObject($tc['arguments'])]], $m['tool_calls']);
+        }
+        return $out;
+    }
 
     private function openaiMessage(array $m): array
     {
-        $role = ($m['role'] ?? 'user') === 'system' ? 'system' : (($m['role'] ?? '') === 'assistant' ? 'assistant' : 'user');
+        $r = $m['role'] ?? 'user';
+        if ($r === 'tool') {
+            return ['role' => 'tool', 'tool_call_id' => (string) ($m['tool_call_id'] ?? ''), 'content' => (string) ($m['content'] ?? '')];
+        }
+        $role = $r === 'system' ? 'system' : ($r === 'assistant' ? 'assistant' : 'user');
+        if ($role === 'assistant' && ! empty($m['tool_calls'])) {
+            return ['role' => 'assistant', 'content' => ($m['content'] ?? '') === '' ? null : (string) $m['content'],
+                'tool_calls' => array_map(static fn ($tc) => ['id' => $tc['id'], 'type' => 'function', 'function' => ['name' => $tc['name'], 'arguments' => $tc['arguments']]], $m['tool_calls'])];
+        }
         $imgs = $m['images'] ?? [];
         if (! $imgs) {
             return ['role' => $role, 'content' => (string) ($m['content'] ?? '')];
@@ -209,7 +468,16 @@ class ProviderService
 
     private function anthropicMessage(array $m): array
     {
-        $role = ($m['role'] ?? '') === 'assistant' ? 'assistant' : 'user';
+        $r = $m['role'] ?? 'user';
+        if ($r === 'tool') {
+            return ['role' => 'user', 'content' => [['type' => 'tool_result', 'tool_use_id' => (string) ($m['tool_call_id'] ?? ''), 'content' => (string) ($m['content'] ?? '')]]];
+        }
+        $role = $r === 'assistant' ? 'assistant' : 'user';
+        if ($role === 'assistant' && ! empty($m['tool_calls'])) {
+            $content = ($m['content'] ?? '') !== '' ? [['type' => 'text', 'text' => (string) $m['content']]] : [];
+            foreach ($m['tool_calls'] as $tc) $content[] = ['type' => 'tool_use', 'id' => $tc['id'], 'name' => $tc['name'], 'input' => self::argsObject($tc['arguments'])];
+            return ['role' => 'assistant', 'content' => $content];
+        }
         $imgs = $m['images'] ?? [];
         if (! $imgs) {
             return ['role' => $role, 'content' => (string) ($m['content'] ?? '')];
@@ -224,10 +492,20 @@ class ProviderService
 
     private function geminiContent(array $m): array
     {
-        $role  = ($m['role'] ?? '') === 'assistant' ? 'model' : 'user';
-        $parts = [['text' => (string) ($m['content'] ?? '')]];
+        $r = $m['role'] ?? 'user';
+        if ($r === 'tool') {
+            $res = json_decode((string) ($m['content'] ?? ''), true);
+            return ['role' => 'user', 'parts' => [['functionResponse' => [
+                'name' => (string) ($m['name'] ?? ''), 'response' => is_array($res) && ! array_is_list($res) ? $res : ['content' => $m['content'] ?? ''],
+            ]]]];
+        }
+        $role  = $r === 'assistant' ? 'model' : 'user';
+        $parts = ($m['content'] ?? '') !== '' || empty($m['tool_calls']) ? [['text' => (string) ($m['content'] ?? '')]] : [];
         foreach ($m['images'] ?? [] as $b64) {
             $parts[] = ['inlineData' => ['mimeType' => $this->mime($b64), 'data' => $b64]];
+        }
+        foreach ($m['tool_calls'] ?? [] as $tc) {
+            $parts[] = ['functionCall' => ['name' => $tc['name'], 'args' => self::argsObject($tc['arguments'])]];
         }
         return ['role' => $role, 'parts' => $parts];
     }
@@ -252,7 +530,7 @@ class ProviderService
         $kind   = $server['kind'] ?? 'ollama';
         $inputs = is_array($input) ? array_values($input) : [(string) $input];
 
-        if ($kind === 'openai') {
+        if ($kind === 'openai' || in_array($kind, self::OPENAI_ENGINES, true)) {
             $res  = $this->jsonPost($this->base($server) . '/embeddings', [
                 'Authorization: Bearer ' . ($server['auth_token'] ?? ''),
             ], ['model' => $model, 'input' => $inputs]);
@@ -286,7 +564,7 @@ class ProviderService
     public function probe(array $server): array
     {
         $kind = $server['kind'] ?? 'ollama';
-        if (! $this->isExternal($kind)) {
+        if ($this->isOllama($kind)) {
             return (new OllamaService($server['api_url'], $server['auth_token'] ?? null))->probe();
         }
         $start = microtime(true);
@@ -295,7 +573,7 @@ class ProviderService
             return [
                 'ok'             => true,
                 'latency_ms'     => $this->elapsed($start),
-                'version'        => ucfirst($kind),
+                'version'        => self::LABELS[$kind] ?? ucfirst($kind),
                 'models_total'   => count($models),
                 'models_running' => 0,
                 'error'          => null,
@@ -327,6 +605,7 @@ class ProviderService
                 'openai'    => $this->openaiModels($server),
                 'anthropic' => $this->anthropicModels($server),
                 'gemini'    => $this->geminiModels($server),
+                'vllm', 'llamacpp', 'openai_compatible' => $this->engineModels($server),
                 default     => [],
             };
         } catch (\Throwable $e) {
@@ -346,6 +625,16 @@ class ProviderService
         $ids = array_values(array_filter($ids, static fn ($id) => (bool) preg_match('/^(gpt|o[0-9]|chatgpt)/i', $id)));
         sort($ids);
         return $ids ?: self::FALLBACK_MODELS['openai'];
+    }
+
+    /** Every model a self-hosted OpenAI-compatible engine serves (no vendor filter, no fallback list). */
+    private function engineModels(array $server): array
+    {
+        $headers = ! empty($server['auth_token']) ? ['Authorization: Bearer ' . $server['auth_token']] : [];
+        $res = $this->jsonGet($this->base($server) . '/models', $headers);
+        $ids = array_values(array_filter(array_map(static fn ($m) => (string) ($m['id'] ?? ''), $res['data'] ?? [])));
+        sort($ids);
+        return $ids;
     }
 
     private function anthropicModels(array $server): array
@@ -386,6 +675,7 @@ class ProviderService
     private function sse(string $url, array $headers, array $body, callable $onJson): void
     {
         $ch     = curl_init($url);
+        curl_setopt_array($ch, UrlGuard::curlOpts($url));
         $buffer = '';
         $rawHead = '';
         curl_setopt_array($ch, [
@@ -450,6 +740,7 @@ class ProviderService
     private function httpJson(string $method, string $url, array $headers, ?array $body): array
     {
         $ch = curl_init($url);
+        curl_setopt_array($ch, UrlGuard::curlOpts($url));
         $headers[] = 'Accept: application/json';
         $opts = [
             CURLOPT_CUSTOMREQUEST   => $method,

@@ -32,7 +32,7 @@ class ApiGatewayService
         $statuses = ($cfg['include_degraded'] ?? '1') === '1' ? ['online', 'degraded'] : ['online'];
 
         $rows = $this->db->table('models m')
-            ->select('s.*')
+            ->select('s.*, m.status AS model_status')
             ->join('servers s', 's.id = m.server_id')
             ->where('m.name', $model)
             ->where('s.deleted_at', null)
@@ -51,6 +51,8 @@ class ApiGatewayService
             'least_busy' => $this->orderByLeastBusy($rows),
             default      => $this->rotate($rows, $model),
         };
+
+        $candidates = self::preferWarm($candidates);
 
         // When failover is off, the caller still receives the full list but the
         // gateway controller honours max_retries=1 effectively via the setting.
@@ -80,6 +82,24 @@ class ApiGatewayService
     }
 
     /** Least-busy: fewest gateway requests in the last 5 minutes first. */
+    /**
+     * Keep the strategy's order, but try nodes that already hold the model in memory and are not
+     * saturated first (no load delay), then idle ones, and saturated nodes last. In-memory state comes
+     * from each node's /api/ps (model load policy job); saturation from the node agent's report.
+     */
+    public static function preferWarm(array $rows): array
+    {
+        $rank = static function (array $s): int {
+            $busy = NodeTelemetryService::availability($s) === 'busy';
+            if ($busy) return 2;
+            return ($s['model_status'] ?? '') === 'running' ? 0 : 1;
+        };
+        $i = 0;
+        $keyed = array_map(static function ($s) use (&$i, $rank) { return [$rank($s), $i++, $s]; }, $rows);
+        usort($keyed, static fn ($a, $b) => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
+        return array_map(static fn ($k) => $k[2], $keyed);
+    }
+
     private function orderByLeastBusy(array $rows): array
     {
         $since = date('Y-m-d H:i:s', time() - 300);
@@ -97,6 +117,17 @@ class ApiGatewayService
     }
 
     /** Record one gateway request. Returns the inserted id. */
+    /**
+     * Rough token count (about 4 characters a token) for calls whose provider reports no usage, so
+     * they still count toward quotas instead of being free.
+     */
+    public static function estimateTokens($value): int
+    {
+        if ($value === null || $value === '' || $value === []) return 0;
+        $text = is_string($value) ? $value : (string) json_encode($value, JSON_UNESCAPED_UNICODE);
+        return max(1, (int) ceil(mb_strlen($text) / 4));
+    }
+
     public function log(array $data): int
     {
         $data['created_at'] = date('Y-m-d H:i:s');
@@ -107,8 +138,69 @@ class ApiGatewayService
      * Check daily/monthly token quotas for a key. Returns an error string when a
      * limit is already exceeded, or null when within quota.
      */
+    /**
+     * Token use against the key's quotas: ['daily' => [limit, used, resetSeconds] | null, 'monthly' => …].
+     */
+    public function quotaStatus(array $key): array
+    {
+        $logs = new ApiLogModel();
+        $out = ['daily' => null, 'monthly' => null];
+        if (! empty($key['daily_token_limit'])) {
+            $out['daily'] = [(int) $key['daily_token_limit'], $logs->tokensSince((int) $key['id'], date('Y-m-d 00:00:00')), strtotime('tomorrow') - time()];
+        }
+        if (! empty($key['monthly_token_limit'])) {
+            $out['monthly'] = [(int) $key['monthly_token_limit'], $logs->tokensSince((int) $key['id'], date('Y-m-01 00:00:00')), strtotime('first day of next month 00:00') - time()];
+        }
+        return $out;
+    }
+
+    /**
+     * Rate-limit and quota headers, OpenAI names where they exist: requests per minute, tokens left in the
+     * tightest quota (daily first), plus x-quota-monthly-* when a monthly quota is set.
+     */
+    public function quotaHeaders(array $key): array
+    {
+        $h = [];
+        if (! empty($key['id'])) {
+            $limit = max(1, (int) ($key['rate_limit_per_min'] ?? 60));
+            $left  = cache('throttler_gw_' . $key['id']);
+            $h['x-ratelimit-limit-requests']     = (string) $limit;
+            $h['x-ratelimit-remaining-requests'] = (string) max(0, is_numeric($left) ? (int) $left : $limit);
+            $h['x-ratelimit-reset-requests']     = '60s';
+        }
+        $q = $this->quotaStatus($key);
+        if ($t = $q['daily'] ?? $q['monthly']) {
+            $h['x-ratelimit-limit-tokens']     = (string) $t[0];
+            $h['x-ratelimit-remaining-tokens'] = (string) max(0, $t[0] - $t[1]);
+            $h['x-ratelimit-reset-tokens']     = $t[2] . 's';
+        }
+        if ($m = $q['monthly']) {
+            $h['x-quota-monthly-limit-tokens'] = (string) $m[0];
+            $h['x-quota-monthly-remaining-tokens'] = (string) max(0, $m[0] - $m[1]);
+        }
+        return $h;
+    }
+
+    /** At 80 % of a quota, tell the key's owner once per period. */
+    private function warnAtEightyPercent(array $key, array $q): void
+    {
+        foreach (['daily' => date('Ymd'), 'monthly' => date('Ym')] as $period => $stamp) {
+            if (! ($t = $q[$period]) || $t[1] < 0.8 * $t[0] || $t[1] >= $t[0]) continue;
+            $flag = "quota80_{$key['id']}_{$period}_{$stamp}";
+            if (cache($flag)) continue;
+            cache()->save($flag, 1, 40 * 86400);
+            (new NotificationService())->notify(! empty($key['user_id']) ? (int) $key['user_id'] : null,
+                "API key at 80% of its {$period} quota: {$key['name']}",
+                sprintf('%s of %s tokens used. Requests are refused once the quota is reached; it resets %s.', number_format($t[1]), number_format($t[0]), $period === 'daily' ? 'at midnight' : 'on the 1st'),
+                'warning', 'usage');
+        }
+    }
+
     public function quotaError(array $key): ?string
     {
+        if (! empty($key['id']) && (! empty($key['daily_token_limit']) || ! empty($key['monthly_token_limit']))) {
+            $this->warnAtEightyPercent($key, $this->quotaStatus($key));
+        }
         $logs = new ApiLogModel();
         if (! empty($key['daily_token_limit'])) {
             $used = $logs->tokensSince((int) $key['id'], date('Y-m-d 00:00:00'));
@@ -126,12 +218,22 @@ class ApiGatewayService
     }
 
     /** Models available through the gateway (installed on reachable nodes). */
-    public function availableModels(): array
+    /** $servable: only models on at least one enabled node that can take traffic (as candidates() would route). */
+    public function availableModels(bool $servable = false): array
     {
-        return $this->db->table('models m')
-            ->select('m.name, m.parameter_size, m.quantization, s.name AS server, s.status')
+        // Read the setting before building the query: another query mid-build clobbers the table alias.
+        $statuses = null;
+        if ($servable) {
+            $cfg = (new SettingsService())->group('gateway', false);
+            $statuses = ($cfg['include_degraded'] ?? '1') === '1' ? ['online', 'degraded'] : ['online'];
+        }
+        $b = $this->db->table('models m')
+            // Every selected column is aggregated, so this runs under MySQL's ONLY_FULL_GROUP_BY.
+            ->select('m.name, MAX(m.parameter_size) AS parameter_size, MAX(m.quantization) AS quantization, MIN(s.name) AS server, MIN(s.status) AS status')
             ->join('servers s', 's.id = m.server_id')
-            ->where('s.deleted_at', null)
+            ->where('s.deleted_at', null);
+        if ($statuses) $b->where('s.is_enabled', 1)->whereIn('s.status', $statuses);
+        return $b
             ->groupBy('m.name')
             ->orderBy('m.name', 'ASC')
             ->get()->getResultArray();

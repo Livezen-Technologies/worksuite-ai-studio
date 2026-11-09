@@ -16,12 +16,14 @@ class SchedulerService
         'health_check'   => ['Health check', 'Probe every Ollama node', 'health_check', 'every_5m'],
         'sync_models'    => ['Sync models', 'Reconcile installed models per node', 'sync_models', 'hourly'],
         'cleanup_logs'   => ['Cleanup logs', 'Prune API + audit logs older than 30 days', 'cleanup_logs', 'daily'],
-        'cleanup_cache'  => ['Clear cache', 'Flush the framework cache', 'cleanup_cache', 'daily'],
+        'cleanup_cache'  => ['Prune cache', 'Remove expired cache entries (rate-limit counters and routing state are kept)', 'cleanup_cache', 'daily'],
         'generate_report'=> ['Daily report', 'Roll up usage statistics', 'generate_report', 'daily'],
         'backup'         => ['Backup', 'Snapshot the database', 'backup', 'daily'],
         'training_pipelines' => ['Training pipelines', 'Start runs when data changes; retry or fail stalled jobs', 'training_pipelines', 'every_minute'],
         'storage_health' => ['Storage health', 'Check every storage node and evaluate alert rules', 'storage_health', 'every_5m'],
         'storage_backups' => ['Storage backups', 'Start due database backups and mark dead runs as failed', 'storage_backups', 'every_5m'],
+        'apikey_rotation' => ['API key rotation', 'Remind owners of keys due for rotation; turn off overdue keys whose policy says so', 'apikey_rotation', 'daily'],
+        'model_autoload' => ['Model load policy', 'Keep pinned models loaded and unload idle ones', 'model_autoload', 'every_5m'],
         'storage_sync'   => ['Storage sync', 'Replicate, move and delete file copies across storage nodes', 'storage_sync', 'every_minute'],
     ];
 
@@ -56,6 +58,14 @@ class SchedulerService
             ->get()->getResultArray();
         $out = [];
         foreach ($jobs as $job) {
+            // Claim the run first: move next_run_at on only if nobody else has. A job still running from
+            // the previous minute's cron (a long sync) is then not started a second time alongside it.
+            // Still running from an earlier tick (started under an hour ago)? Leave it alone.
+            if (($job['last_status'] ?? '') === 'running' && ! empty($job['updated_at']) && strtotime($job['updated_at']) > time() - 3600) continue;
+            $b = $this->db->table('cron_jobs')->where('id', $job['id']);
+            $job['next_run_at'] === null ? $b->where('next_run_at', null) : $b->where('next_run_at', $job['next_run_at']);
+            $b->update(['next_run_at' => $this->nextRun($job['schedule']), 'last_status' => 'running', 'updated_at' => date('Y-m-d H:i:s')]);
+            if ($this->db->affectedRows() === 0) continue;
             $out[$job['key']] = $this->run($job);
         }
         return $out;
@@ -88,18 +98,36 @@ class SchedulerService
     {
         $queue = new QueueService();
         return match ($handler) {
-            'health_check'    => ['queued' => $queue->enqueue('health_check')],
+            // Inline, not queued: node status must stay current even when the queue worker is down.
+            'health_check'    => (new QueueService())->handle('health_check', []),
             'sync_models'     => ['queued' => $queue->enqueue('sync_models')],
             'cleanup_logs'    => ['queued' => $queue->enqueue('cleanup_logs', ['days' => 30])],
             'generate_report' => (new AnalyticsService())->report(),
-            'cleanup_cache'   => ['flushed' => \Config\Services::cache()->clean()],
+            'cleanup_cache'   => $this->pruneCache(),
             'backup'          => $this->backup(),
             'training_pipelines' => (new TrainingPipelineService())->tick(),
             'storage_health' => (new StorageService())->checkAll(),
             'storage_sync'   => (new ObjectStoreService())->sync(),
             'storage_backups' => (new StorageBackupService())->tick(),
+            'model_autoload' => (new ModelRegistryService())->autoload(),
+            'apikey_rotation' => (new ApiKeyRotationService())->tick(),
             default           => throw new \RuntimeException("Unknown handler: {$handler}"),
         };
+    }
+
+    /**
+     * Remove only expired cache entries. A full flush would also reset the live rate-limit counters,
+     * failed-login throttles and gateway round-robin state, which are short-lived by design.
+     */
+    public function pruneCache(?\CodeIgniter\Cache\CacheInterface $cache = null): array
+    {
+        $cache ??= \Config\Services::cache();
+        $info  = $cache->getCacheInfo();
+        if (! is_array($info)) return ['pruned' => 0];
+        $before = count($info);
+        foreach (array_keys($info) as $key) $cache->get((string) $key); // reading an expired entry deletes it
+        $after = $cache->getCacheInfo();
+        return ['pruned' => $before - (is_array($after) ? count($after) : 0), 'kept' => is_array($after) ? count($after) : 0];
     }
 
     private function backup(): array

@@ -23,7 +23,7 @@ final class GatewaySecurityTest extends CIUnitTestCase
         $f = \Config\Database::forge($this->DBGroup);
         foreach (['users', 'api_keys', 'datasets', 'engine_packages', 'roles', 'permissions', 'role_permissions'] as $t) $f->dropTable($t, true);
         $id = ['id' => ['type' => 'INTEGER', 'auto_increment' => true]];
-        $null = static fn (string $type = 'VARCHAR') => ['type' => $type, 'null' => true];
+        $null = static fn (string $type = 'VARCHAR') => ['type' => $type, 'null' => true] + ($type === 'VARCHAR' ? ['constraint' => 191] : []);
         $f->addField($id + ['name' => $null(), 'status' => $null(), 'role_id' => $null('INTEGER'), 'deleted_at' => $null('DATETIME')])->addKey('id', true)->createTable('users');
         $f->addField($id + ['name' => $null()])->addKey('id', true)->createTable('roles');
         $f->addField($id + ['name' => $null()])->addKey('id', true)->createTable('permissions');

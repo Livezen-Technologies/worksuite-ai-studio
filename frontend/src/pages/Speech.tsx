@@ -9,6 +9,7 @@ import { ApiError, api, get } from '../lib/api';
 import { uploadWithProgress } from './SinLama/upload';
 import { LiveRecorder } from './Speech/LiveRecorder';
 import { CaptionEditor, CaptionPreview } from './Speech/CaptionTools';
+import TextToSpeech from './Speech/TextToSpeech';
 import { buildCues, clock, DEFAULT_RULES, toSrt, toVtt, type Cue, type CueRules, type Segment } from './Speech/cues';
 
 interface Status { available: boolean; model: string | null; busy: boolean; max_mb: number; languages: { value: string; label: string }[]; models?: { value: string; label: string; note: string; installed: boolean }[]; run_on?: { value: string; label: string; device: string | null; ready?: boolean }[] }
@@ -53,6 +54,7 @@ export default function Speech() {
   const navigate = useNavigate();
   const status = useQuery({ queryKey: ['speech', 'status'], queryFn: () => get<Status>('/speech/status'), refetchInterval: 30_000 });
   const [mode, setMode] = useState<'live' | 'upload'>('live');
+  const [section, setSection] = useState<'stt' | 'tts'>('stt');
   const [view, setView] = useState<'transcript' | 'captions'>('transcript');
   const [language, setLanguage] = useState('si');
   const [model, setModel] = useState('sinhala');
@@ -132,18 +134,23 @@ export default function Speech() {
   return (
     <>
       <PageHeader
-        title="Speech to Text"
-        description="Speak or upload Sinhala audio or video: get the transcript live, then captions and subtitles. Transcribed on your AI Studio server; nothing is stored."
-        meta={status.data?.model && (
+        title="Speech"
+        description={section === 'stt'
+          ? 'Speak or upload Sinhala audio or video: get the transcript live, then captions and subtitles. Transcribed on your AI Studio server; nothing is stored.'
+          : 'Turn Sinhala or English text into speech with the studio’s approved voices. Made on your AI Studio server; nothing is stored.'}
+        meta={section === 'stt' && status.data?.model && (
           <span className="inline-flex items-center gap-2">
             <Badge tone={status.data.available ? 'green' : 'red'} dot>{status.data.available ? (status.data.busy ? 'Busy' : 'Ready') : 'Offline'}</Badge>
             {status.data.model}
           </span>
         )}
       />
-      {down && <Alert tone="danger" className="mb-6" title="The speech service is offline">Ask an administrator to start the aistudio-asr service on the server.</Alert>}
+      <Tabs className="mb-6" value={section} onChange={(k) => !busy && setSection(k as 'stt' | 'tts')}
+        tabs={[{ key: 'stt', label: 'Speech to text' }, { key: 'tts', label: 'Text to speech' }]} />
+      {section === 'tts' && <TextToSpeech />}
+      {section === 'stt' && down && <Alert tone="danger" className="mb-6" title="The speech service is offline">Ask an administrator to start the aistudio-asr service on the server.</Alert>}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+      {section === 'stt' && <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <Card className="lg:col-span-2">
           <div className="border-b border-slate-200 px-4 pt-2 sm:px-6 dark:border-white/10">
             <Tabs value={mode} onChange={(k) => !busy && setMode(k as 'live' | 'upload')} tabs={[{ key: 'live', label: 'Live recording' }, { key: 'upload', label: 'Upload audio or video' }]} />
@@ -250,7 +257,7 @@ export default function Speech() {
             </div>
           )}
         </Card>
-      </div>
+      </div>}
     </>
   );
 }

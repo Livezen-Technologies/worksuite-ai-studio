@@ -1,7 +1,8 @@
 """AI Studio speech-to-text service: Whisper Sinhala (faster-whisper, CPU int8), kept loaded in memory.
 
 Internal only (127.0.0.1). AI Studio's PHP API forwards uploads here.
-  POST /transcribe?language=si|en|mix|auto&model=sinhala|tiny|base|small|medium|turbo&words=1&fast=1   body = the audio or video file's bytes
+  POST /transcribe?language=si|en|mix|auto&model=sinhala|tiny|base|small|medium|turbo&words=1&fast=1&task=transcribe|translate
+       body = the audio or video file's bytes; task=translate returns English text (multilingual models)
        model: Whisper Sinhala (default) or a multilingual Whisper size, loaded on first use (mix always uses Sinhala + Small).
        mix = Sinhala and English together: speech is cut at pauses, each phrase's language is identified by the
              multilingual model, Sinhala phrases go to Whisper Sinhala and English phrases to Whisper small.
@@ -211,6 +212,10 @@ class Handler(BaseHTTPRequestHandler):
         words = q.get('words', ['0'])[0] == '1'
         fast = q.get('fast', ['0'])[0] == '1'
         name = (q.get('model', ['sinhala'])[0] or 'sinhala').lower()
+        # task=translate: Whisper writes English whatever language is spoken (multilingual models only).
+        task = 'translate' if q.get('task', ['transcribe'])[0] == 'translate' else 'transcribe'
+        if task == 'translate' and lang == 'mix':
+            lang = 'auto'
         _refresh_catalog()
         if name not in CATALOG:
             return self._send(422, {'error': f'Unknown model {name}. Choose one of: ' + ', '.join(CATALOG)})
@@ -241,7 +246,7 @@ class Handler(BaseHTTPRequestHandler):
                     duration = pcm.size / RATE
                 else:
                     m = get_model(name)
-                    segs, info = m.transcribe(pcm, language=None if lang == 'auto' else lang, beam_size=1 if fast else 5,
+                    segs, info = m.transcribe(pcm, language=None if lang == 'auto' else lang, beam_size=1 if fast else 5, task=task,
                                                   vad_filter=True, word_timestamps=words)  # VAD also for live chunks: silence otherwise yields '.' lines
                     segments = _rows(segs, words)
                     detected, prob, duration = info.language, info.language_probability, info.duration

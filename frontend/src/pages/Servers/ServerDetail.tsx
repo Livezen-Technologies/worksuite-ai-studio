@@ -9,9 +9,12 @@ import { ServerLogs, ServerUsage } from './ServerUsage';
 import { get, post } from '../../lib/api';
 import { ago, bytes, dateTime, parseTs } from '../../lib/format';
 import { useAuth } from '../../lib/auth';
-import { HealthScore, KINDS, type ControlAction, type HealthRow, type Server } from './shared';
+import { ACCELERATORS, AVAILABILITY, DEPLOYMENTS, HealthScore, KINDS, Utilization, type ControlAction, type HealthRow, type MetricRow, type Server } from './shared';
 
 interface NodeModel { name: string; size?: number; details?: { parameter_size?: string; quantization_level?: string; family?: string } }
+
+/** Chart tooltip that follows the theme (Recharts draws a white box otherwise). */
+const TOOLTIP = { fontSize: 12, borderRadius: 6, background: 'var(--tooltip-bg, #fff)', color: 'var(--tooltip-fg, #0f172a)', border: '1px solid var(--tooltip-border, #e2e8f0)' };
 
 export default function ServerDetail({ id, onClose, onEdit, onControl }: {
   id: number; onClose: () => void; onEdit: (s: Server) => void; onControl: (s: Server, a: ControlAction) => void;
@@ -20,7 +23,8 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
   const toast = useToast();
   const manage = useAuth().can('servers.manage');
   const [tab, setTab] = useState<'overview' | 'usage' | 'logs'>('overview');
-  const q = useQuery({ queryKey: ['server', id], queryFn: () => get<Server & { health_history: HealthRow[] }>(`/servers/${id}`) });
+  const q = useQuery({ queryKey: ['server', id], queryFn: () => get<Server & { health_history: HealthRow[] }>(`/servers/${id}`),
+    refetchInterval: (query) => (query.state.data?.pending_control ? 5_000 : false) }); // watch a command until the agent reports
   const s = q.data;
   const models = useQuery({
     queryKey: ['server-models', id],
@@ -41,6 +45,16 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
 
   const kind = s?.kind ?? 'ollama';
   const ollama = kind === 'ollama';
+  const selfHosted = !KINDS[kind].cloud;
+  const metrics = useQuery({
+    queryKey: ['server-metrics', id], queryFn: () => get<MetricRow[]>(`/servers/${id}/metrics?hours=24`),
+    enabled: !!s && selfHosted, refetchInterval: 60_000,
+  });
+  const metricData = (metrics.data ?? []).map((m) => ({
+    t: parseTs(m.recorded_at)?.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) ?? '',
+    gpu: m.gpu_util_pct, cpu: m.cpu_util_pct,
+    vram: s?.gpu_vram_gb && m.vram_used_gb != null ? Math.round((m.vram_used_gb / Number(s.gpu_vram_gb)) * 100) : null,
+  }));
   const history = [...(s?.health_history ?? [])].reverse().map((h) => ({
     t: parseTs(h.checked_at)?.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) ?? '',
     score: Number(h.health_score),
@@ -53,7 +67,7 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
       open
       onClose={onClose}
       size="xl"
-      title={s ? <span className="flex flex-wrap items-center gap-2">{s.name} <StatusBadge status={s.status} />{s.is_enabled === false && <Badge tone="amber">Disabled</Badge>}{!ollama && <Badge tone={KINDS[kind].tone}>{KINDS[kind].label}</Badge>}</span> : 'Server'}
+      title={s ? <span className="flex flex-wrap items-center gap-2">{s.name} <StatusBadge status={s.status} />{s.availability && <Badge tone={AVAILABILITY[s.availability].tone}>{AVAILABILITY[s.availability].label}</Badge>}{!ollama && <Badge tone={KINDS[kind].tone}>{KINDS[kind].label}</Badge>}</span> : 'Server'}
       description={s?.api_url || (s && KINDS[kind].base)}
       footer={s && (
         <div className="flex w-full flex-wrap justify-end gap-2">
@@ -87,8 +101,15 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
                 { label: 'Health score', value: <><HealthScore score={s.health_score} /> <span className="text-slate-500 dark:text-slate-400">/ 100</span></> },
                 { label: 'Last heartbeat', value: s.last_heartbeat_at ? `${ago(s.last_heartbeat_at)} (${dateTime(s.last_heartbeat_at)})` : 'never' },
                 { label: 'Latency (last check)', value: last?.latency_ms != null ? `${last.latency_ms} ms` : '—' },
-                ...(ollama ? [
-                  { label: 'Ollama version', value: s.ollama_version ?? '—' },
+                ...(selfHosted ? [
+                  { label: ollama ? 'Ollama version' : 'Engine', value: s.ollama_version ?? KINDS[kind].label },
+                  { label: 'Deployment', value: [s.deployment ? DEPLOYMENTS[s.deployment] : '—', s.cloud_provider, s.region, s.container_image].filter(Boolean).join(' · ') },
+                  { label: 'Accelerator', value: s.accelerator ? `${ACCELERATORS[s.accelerator]}${s.accelerator === 'rocm' && s.rocm_version ? ` ${s.rocm_version}` : ''}` : 'Not reported' },
+                  ...(s.pending_control || s.control_result ? [{ label: 'Last command', value: s.pending_control
+                    ? `${s.pending_control} — waiting for the node agent`
+                    : <span className={s.control_result?.startsWith('ok') ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>{s.control_result}{s.control_result_at ? ` (${ago(s.control_result_at)})` : ''}</span> }] : []),
+                  { label: 'Agent report', value: s.metrics_at ? `${ago(s.metrics_at)}${s.metrics_fresh ? '' : ' (stale)'}` : 'No agent connected' },
+                  ...(s.max_concurrency ? [{ label: 'Max concurrent requests', value: String(s.max_concurrency) }] : []),
                   { label: 'Host', value: [s.hostname, s.ip_address].filter(Boolean).join(' · ') || '—' },
                   { label: 'OS', value: s.os ?? '—' },
                   { label: 'Local node', value: Number(s.is_local) === 1 ? 'Yes' : 'No' },
@@ -100,14 +121,17 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
             <Card>
               <CardHeader title="Hardware & health history" />
               <div className="space-y-4 p-4 sm:px-6">
-                {ollama && (
+                {selfHosted && (
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                     <Spec label="CPU" value={s.cpu_cores ? `${s.cpu_cores} cores` : '—'} />
                     <Spec label="RAM" value={s.ram_gb ? `${Number(s.ram_gb)} GB` : '—'} />
                     <Spec label="Storage" value={s.storage_gb ? `${Number(s.storage_gb)} GB` : '—'} />
                     <Spec label="GPU" value={s.gpu_model ? `${Number(s.gpu_count) > 1 ? `${s.gpu_count} × ` : ''}${s.gpu_model}` : 'CPU-only'} />
-                    <Spec label="CUDA cores" value={s.gpu_model ? (s.cuda_cores ? Number(s.cuda_cores).toLocaleString() : 'Unknown model') : '—'} />
-                    <Spec label="CUDA version" value={s.cuda_version || '—'} />
+                    <Spec label="VRAM" value={s.gpu_vram_gb ? `${Number(s.gpu_vram_gb)} GB` : '—'} />
+                    {s.accelerator === 'rocm'
+                      ? <Spec label="ROCm version" value={s.rocm_version || '—'} />
+                      : <><Spec label="CUDA cores" value={s.gpu_model ? (s.cuda_cores ? Number(s.cuda_cores).toLocaleString() : 'Unknown model') : '—'} />
+                        <Spec label="CUDA version" value={s.cuda_version || '—'} /></>}
                   </div>
                 )}
                 {history.length > 1 ? (
@@ -117,7 +141,7 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
                         <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.25} />
                         <XAxis dataKey="t" tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" />
                         <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" />
-                        <Tooltip contentStyle={{ fontSize: 12, borderRadius: 6 }} />
+                        <Tooltip contentStyle={TOOLTIP} labelStyle={{ color: 'inherit' }} />
                         <Line type="monotone" dataKey="score" name="Health" stroke="#4f46e5" strokeWidth={2} dot={false} isAnimationActive={false} />
                       </LineChart>
                     </ResponsiveContainer>
@@ -128,6 +152,29 @@ export default function ServerDetail({ id, onClose, onEdit, onControl }: {
               </div>
             </Card>
           </div>
+          {selfHosted && (
+            <Card>
+              <CardHeader title="Utilization" description={s.metrics_fresh ? `Reported by the node agent ${ago(s.metrics_at!)}` : 'Install the node agent (Servers → Connect a node) to report GPU, VRAM, CPU, RAM and disk use.'} />
+              <div className="space-y-4 p-4 sm:px-6">
+                <Utilization s={s} />
+                {metricData.length > 1 ? (
+                  <div className="h-44 text-slate-400 dark:text-slate-500">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={metricData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.25} />
+                        <XAxis dataKey="t" tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" minTickGap={30} />
+                        <YAxis domain={[0, 100]} unit="%" tick={{ fontSize: 10, fill: 'currentColor' }} stroke="currentColor" />
+                        <Tooltip contentStyle={TOOLTIP} labelStyle={{ color: 'inherit' }} />
+                        <Line type="monotone" dataKey="gpu" name="GPU %" stroke="#4f46e5" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
+                        <Line type="monotone" dataKey="vram" name="VRAM %" stroke="#d97706" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
+                        <Line type="monotone" dataKey="cpu" name="CPU %" stroke="#059669" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : s.metrics_fresh ? <p className="text-sm text-slate-500 dark:text-slate-400">The 24-hour chart fills in as the agent reports, one sample a minute.</p> : null}
+              </div>
+            </Card>
+          )}
           <Card>
             <CardHeader title={ollama ? 'Installed models' : 'Available models'} description={models.data ? `${models.data.length} on this ${ollama ? 'node' : 'provider'}` : undefined} />
             {s.status === 'offline' ? (

@@ -17,6 +17,9 @@ class ServerModel extends Model
         'ollama_version', 'is_local', 'status', 'health_score', 'last_heartbeat_at',
         'tunnel_port', 'ssh_public_key', 'ssh_fingerprint', 'enrolled_at',
         'is_enabled', 'disabled_at', 'disabled_reason',
+        'deployment', 'accelerator', 'rocm_version', 'cloud_provider', 'region', 'container_image', 'max_concurrency',
+        'pending_control', 'pending_control_at', 'control_result', 'control_result_at',
+        'gpu_util_pct', 'vram_used_gb', 'cpu_util_pct', 'ram_used_gb', 'disk_used_gb', 'gpu_temp_c', 'metrics_at', 'gpu_vram_gb',
     ];
 
     protected $validationRules = [
@@ -29,8 +32,11 @@ class ServerModel extends Model
     {
         $row['has_token']  = ! empty($row['auth_token'] ?? null);
         $row['cuda_cores'] = \App\Libraries\GpuSpecs::forServer($row); // derived from the GPU model; nvidia-smi does not report it
+        $row['availability']  = \App\Services\NodeTelemetryService::availability($row);
+        $row['metrics_fresh'] = ! empty($row['metrics_at']) && strtotime($row['metrics_at']) >= time() - \App\Services\NodeTelemetryService::STALE_SECONDS;
+        $row['self_hosted']   = ! (new \App\Services\ProviderService())->isExternal((string) ($row['kind'] ?? 'ollama'));
         $row['is_enabled'] = (int) ($row['is_enabled'] ?? 1) === 1;
-        unset($row['auth_token'], $row['deleted_at'], $row['ssh_public_key']);
+        unset($row['auth_token'], $row['deleted_at'], $row['ssh_public_key'], $row['agent_token_hash']);
         return $row;
     }
 }

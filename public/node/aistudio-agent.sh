@@ -9,7 +9,7 @@
 # it is alive, stops the run if the job is cancelled, and reports how the process ended. Get the token on the Servers
 # page: ⋯ → Install training agent. Run as your normal user (not root); it asks for sudo once to keep running after logout.
 set -euo pipefail
-VERSION="1.4.0"
+VERSION="1.7.0"
 DIR="${HOME}/.aistudio-agent"
 SERVER="" TOKEN="" UNINSTALL=0 FORCE_VENV=0
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -33,6 +33,12 @@ if [ "$UNINSTALL" = 1 ]; then
   rm -rf "$DIR"; say "Training agent removed."; exit 0
 fi
 [ -n "$SERVER" ] && [ -n "$TOKEN" ] || die "usage: --server URL --token aisa_..."
+# The agent runs code the Studio hands it, so the Studio must be reached over HTTPS (plain HTTP only
+# for a Studio on this machine).
+case "$SERVER" in
+  https://*|http://localhost|http://localhost:*|http://127.0.0.1|http://127.0.0.1:*) ;;
+  *) die "--server must be an https:// address (the agent token and training code must not travel in clear)" ;;
+esac
 [ "$(id -u)" != 0 ] || die "run this as your normal user, not root (training runs as that user)"
 command -v curl >/dev/null || die "curl is required"
 # Python environments: python3-venv, or conda / mamba (Anaconda, Miniconda, Miniforge). The service does not load
@@ -60,16 +66,51 @@ printf 'SERVER=%s\nTOKEN=%s\nAISTUDIO_PYENV=%s\nAISTUDIO_CONDA=%s\n' "$SERVER" "
 cat > "$DIR/agent-loop.sh" <<'LOOP'
 #!/usr/bin/env bash
 # AI Studio training agent loop (installed by aistudio-agent.sh).
-VERSION="1.4.0"
+VERSION="1.7.0"
 DIR="${HOME}/.aistudio-agent"
 . "$DIR/agent.env"
-JOB="" PID="" EXITED="" CODE="" TAIL="" ASR_STATE="" STORE_STATE="" ASR_DEVICE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"; ASR_DEVICE="${ASR_DEVICE:-$(nproc) CPU cores}"
+JOB="" PID="" EXITED="" CODE="" TAIL="" CONTROL_RESULT="" ASR_STATE="" STORE_STATE="" ASR_DEVICE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"; ASR_DEVICE="${ASR_DEVICE:-$(nproc) CPU cores}"
 log() { echo "$(date '+%F %T') $*" >> "$DIR/agent.log"; }
 log "agent ${VERSION} started"
 # Keep the speech helper current: fetched from the Studio each time the agent starts.
 curl -fsS -m 60 -o "$DIR/aistudio-asr-node.sh.new" "${SERVER}/node/aistudio-asr-node.sh" && mv "$DIR/aistudio-asr-node.sh.new" "$DIR/aistudio-asr-node.sh" && chmod 700 "$DIR/aistudio-asr-node.sh"
 curl -fsS -m 60 -o "$DIR/aistudio-store-node.sh.new" "${SERVER}/node/aistudio-store-node.sh" && mv "$DIR/aistudio-store-node.sh.new" "$DIR/aistudio-store-node.sh" && chmod 700 "$DIR/aistudio-store-node.sh"
 trap '[ -n "$PID" ] && kill -TERM -- "-$PID" 2>/dev/null; exit 0' TERM INT
+# Live utilization for the Studio's node dashboard: NVIDIA (nvidia-smi), AMD (rocm-smi) or CPU-only. Prints
+# curl --data-urlencode arguments, one per line; every value is optional and a missing tool just leaves it out.
+CPU_PREV=""
+metrics() {
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    echo "accelerator=cuda"
+    nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null \
+      | awk -F', *' '{u+=$1; m+=$2; t+=$3; if ($4>h) h=$4; n++} END {if (n) printf "gpu_util=%.1f\nvram_used_mb=%d\nvram_total_mb=%d\ngpu_temp=%d\n", u/n, m, t, h}'
+    nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | sed 's/^/gpu_name=/'
+    nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: *\([0-9.]*\).*/cuda_version=\1/p' | head -1
+  elif command -v rocm-smi >/dev/null 2>&1; then
+    echo "accelerator=rocm"
+    rocm-smi --showuse --showmeminfo vram --showtemp --csv 2>/dev/null | awk -F, '!hd && /GPU use/ {for (i=1;i<=NF;i++) c[$i]=i; hd=1; next} hd && $1 ~ /^card/ { u+=$c["GPU use (%)"]; m+=$c["VRAM Total Used Memory (B)"]; t+=$c["VRAM Total Memory (B)"]; x=$c["Temperature (Sensor edge) (C)"]; if (x>h) h=x; n++ }
+      END { if (n) printf "gpu_util=%.1f\nvram_used_mb=%d\nvram_total_mb=%d\ngpu_temp=%d\n", u/n, m/1048576, t/1048576, h }'
+    rocm-smi --showproductname 2>/dev/null | sed -n 's/.*Card [Ss]eries: *\(.*\)$/gpu_name=\1/p' | head -1
+    [ -r /opt/rocm/.info/version ] && sed 's/^/rocm_version=/' /opt/rocm/.info/version | head -1
+  else
+    echo "accelerator=cpu"
+  fi
+  # CPU busy % since the previous heartbeat, from /proc/stat.
+  if [ -r /proc/stat ]; then
+    CUR="$(awk '/^cpu /{print $2+$3+$4+$7+$8+$9, $5+$6}' /proc/stat)"
+    if [ -n "$CPU_PREV" ]; then
+      set -- $CPU_PREV $CUR
+      [ $(( ($3-$1)+($4-$2) )) -gt 0 ] && awk -v b=$(( $3-$1 )) -v i=$(( $4-$2 )) 'BEGIN {printf "cpu_util=%.1f\n", b*100/(b+i)}'
+    fi
+    CPU_PREV="$CUR"
+  fi
+  echo "cpu_cores=$(nproc 2>/dev/null || echo 0)"
+  [ -r /proc/meminfo ] && awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END {printf "ram_total_mb=%d\nram_used_mb=%d\n", t/1024, (t-a)/1024}' /proc/meminfo
+  df -Pk / 2>/dev/null | awk 'NR==2 {printf "disk_total_gb=%.1f\ndisk_used_gb=%.1f\n", $2/1048576, $3/1048576}'
+}
+# Runs in this shell (not a subshell) so CPU_PREV carries over to the next heartbeat.
+metric_args() { MARGS=(); metrics > "$DIR/metrics.txt" 2>/dev/null; while IFS= read -r kv; do [ -n "$kv" ] && MARGS+=(--data-urlencode "$kv"); done < "$DIR/metrics.txt"; }
+
 while true; do
   # Did the current run end?
   if [ -n "$PID" ] && ! kill -0 "$PID" 2>/dev/null; then
@@ -78,12 +119,13 @@ while true; do
     log "job $JOB ended with code $CODE"
     JOB="" PID=""
   fi
-  R="$(curl -s -m 30 -X POST -H "Authorization: Bearer ${TOKEN}" \
+  metric_args
+  R="$(curl -fs -m 30 -X POST -H "Authorization: Bearer ${TOKEN}" \
         --data-urlencode "version=${VERSION}" --data-urlencode "job_id=${JOB}" --data-urlencode "gpus=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU')" \
         --data-urlencode "exited_job_id=${EXITED}" --data-urlencode "exit_code=${CODE}" --data-urlencode "tail=${TAIL}" \
-        --data-urlencode "asr_state=${ASR_STATE}" --data-urlencode "asr_device=${ASR_DEVICE}" --data-urlencode "store_state=${STORE_STATE}" \
+        --data-urlencode "asr_state=${ASR_STATE}" --data-urlencode "asr_device=${ASR_DEVICE}" --data-urlencode "store_state=${STORE_STATE}" --data-urlencode "control_result=${CONTROL_RESULT}" "${MARGS[@]}" \
         "${SERVER}/api/agent/heartbeat?format=env" 2>>"$DIR/agent.log")" || { sleep 30; continue; }
-  EXITED="" CODE="" TAIL=""
+  EXITED="" CODE="" TAIL="" CONTROL_RESULT=""
   get() { printf '%s\n' "$R" | sed -n "s/^$1=//p" | head -1; }
   # GPU speech service (transcription for the Studio's Speech page) — set up once, then kept running.
   if [ -x "$DIR/aistudio-asr-node.sh" ]; then
@@ -95,11 +137,28 @@ while true; do
     if [ "$(get STORE_WANTED)" = 1 ]; then STORE_STATE="$(STORE_KEY="$(get STORE_KEY)" timeout 30 bash "$DIR/aistudio-store-node.sh" ensure "$(get STORE_PORT)" "$(get STORE_DIR)" 2>>"$DIR/agent.log")"
     elif [ -n "$STORE_STATE" ] && [ "$STORE_STATE" != off ]; then STORE_STATE="$(bash "$DIR/aistudio-store-node.sh" stop 2>>"$DIR/agent.log")"; fi
   fi
+  # Node controls from the Studio (Servers → Restart / Update Ollama / Shut down), through the root-owned helper.
+  CONTROL="$(get CONTROL)"
+  case "$CONTROL" in
+    restart|update|shutdown)
+      log "control: $CONTROL"
+      if [ ! -x /usr/local/sbin/aistudio-node-control ]; then
+        CONTROL_RESULT="Not set up on this node: install /usr/local/sbin/aistudio-node-control (see the agent installer's last lines)"
+      elif OUT="$(timeout 600 sudo -n /usr/local/sbin/aistudio-node-control "$CONTROL" 2>&1)"; then
+        CONTROL_RESULT="ok: $(printf '%s' "$OUT" | tail -1 | cut -c1-200)"
+      else
+        CONTROL_RESULT="failed: $(printf '%s' "$OUT" | tail -1 | cut -c1-200)"
+      fi ;;
+  esac
   case "$(get ACTION)" in
     run)
-      JOB="$(get JOB_ID)"; JD="$DIR/jobs/$JOB"; mkdir -p "$JD"
+      JOB="$(get JOB_ID)"; RUNNER="$(get RUNNER_URL)"
+      # Only a numeric job id (it names a folder) and a runner served by this Studio are accepted.
+      case "$JOB" in ''|*[!0-9]*) log "refused job id '$JOB'"; JOB=""; sleep 15; continue ;; esac
+      case "$RUNNER" in "${SERVER}/"*) ;; *) log "job $JOB: refused runner URL outside ${SERVER}"; EXITED="$JOB"; CODE=96; TAIL="runner URL not on this Studio"; JOB=""; sleep 15; continue ;; esac
+      JD="$DIR/jobs/$JOB"; mkdir -p "$JD"
       log "job $JOB: starting"
-      if curl -fsS -m 60 -o "$JD/runner.sh" "$(get RUNNER_URL)"; then
+      if curl -fsS -m 60 -o "$JD/runner.sh" "$RUNNER"; then
         AISTUDIO_JOB_URL="$(get JOB_URL)" AISTUDIO_JOB_TOKEN="$(get TOKEN)" AISTUDIO_JOB_DIR="$JD" \
           AISTUDIO_PYENV="${AISTUDIO_PYENV:-venv}" AISTUDIO_CONDA="${AISTUDIO_CONDA:-}" \
           setsid bash "$JD/runner.sh" > "$JD/runner.log" 2>&1 < /dev/null &
@@ -115,8 +174,8 @@ while true; do
 done
 LOOP
 chmod 700 "$DIR/agent-loop.sh"
-curl -fsS -m 60 -o "$DIR/aistudio-store-node.sh" "${SERVER}/node/aistudio-store-node.sh" && chmod 700 "$DIR/aistudio-store-node.sh"
-curl -fsS -m 60 -o "$DIR/aistudio-asr-node.sh" "${SERVER}/node/aistudio-asr-node.sh" && chmod 700 "$DIR/aistudio-asr-node.sh" \
+curl -fsS -m 60 -o "$DIR/aistudio-store-node.sh.new" "${SERVER}/node/aistudio-store-node.sh" && mv "$DIR/aistudio-store-node.sh.new" "$DIR/aistudio-store-node.sh" && chmod 700 "$DIR/aistudio-store-node.sh"
+curl -fsS -m 60 -o "$DIR/aistudio-asr-node.sh.new" "${SERVER}/node/aistudio-asr-node.sh" && mv "$DIR/aistudio-asr-node.sh.new" "$DIR/aistudio-asr-node.sh" && chmod 700 "$DIR/aistudio-asr-node.sh" \
   || say "Could not fetch the GPU speech helper; training still works."
 
 say "Installing the agent service"
@@ -149,6 +208,11 @@ sleep 3
 if systemctl --user is-active --quiet aistudio-agent.service; then
   say "Training agent running. It picks up queued jobs this node can run (log: ${DIR}/agent.log)."
   say "Training must also be allowed for this node on the Servers page."
+  if [ ! -x /usr/local/sbin/aistudio-node-control ]; then
+    say "Optional: to let the Studio restart, update or shut down Ollama on this node, run once (as an administrator):"
+    printf '    curl -fsSL %s/node/aistudio-node-control.sh | sudo install -m 755 /dev/stdin /usr/local/sbin/aistudio-node-control\n' "$SERVER"
+    printf '    echo "%s ALL=(root) NOPASSWD: /usr/local/sbin/aistudio-node-control" | sudo tee /etc/sudoers.d/aistudio-node-control\n' "$(id -un)"
+  fi
 else
   die "the agent service did not start: systemctl --user status aistudio-agent.service"
 fi

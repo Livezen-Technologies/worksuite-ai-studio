@@ -1,0 +1,35 @@
+# WorkSuite AI Studio text-to-speech (deploy/tts/tts_service.py) on 127.0.0.1:8098.
+#
+#   sudo apt install -y espeak-ng ffmpeg
+#   sudo install -d -o www-data -g www-data /srv/aistudio-models/tts
+#   sudo cp deploy/tts/aistudio-tts.service /etc/systemd/system/ && sudo systemctl enable --now aistudio-tts
+#
+# espeak-ng gives Sinhala and English voices out of the box. Approved VITS voices (trained on licensed
+# recordings) go in /srv/aistudio-models/tts/voices.json; they need transformers + torch, so point
+# ExecStart at a Python that has them (for example the /opt/aistudio-llm/venv used by aistudio-ml).
+[Unit]
+Description=WorkSuite AI Studio text-to-speech
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+Environment=TTS_VOICES=/srv/aistudio-models/tts/voices.json
+Environment=TTS_LEXICON=/srv/aistudio-models/tts/lexicon.json
+Environment=HF_HOME=/srv/aistudio-hf
+ExecStart=/usr/bin/python3 /var/www/ollamahub/deploy/tts/tts_service.py
+Restart=always
+RestartSec=5
+Nice=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

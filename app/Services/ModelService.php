@@ -35,7 +35,7 @@ class ModelService
 
         // External providers (OpenAI/Anthropic/Gemini) expose a flat model-id list;
         // self-hosted Ollama nodes report rich per-model metadata via /api/tags.
-        if ($provider->isExternal($server['kind'] ?? 'ollama')) {
+        if (! $provider->isOllama($server['kind'] ?? 'ollama')) {
             $kind = $server['kind'];
             foreach ($provider->listModels($server) as $name) {
                 if (! $name) {

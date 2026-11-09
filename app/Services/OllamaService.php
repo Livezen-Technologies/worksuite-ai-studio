@@ -96,6 +96,7 @@ class OllamaService
     public function blobExists(string $sha256): bool
     {
         $ch = curl_init($this->base . '/api/blobs/sha256:' . $sha256);
+        curl_setopt_array($ch, UrlGuard::curlOpts($this->base));
         curl_setopt_array($ch, [
             CURLOPT_NOBODY => true, CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CONNECTTIMEOUT => 5, CURLOPT_TIMEOUT => 15,
@@ -120,6 +121,7 @@ class OllamaService
             throw new \RuntimeException('Cannot open upload file.');
         }
         $ch = curl_init($this->base . '/api/blobs/sha256:' . $sha256);
+        curl_setopt_array($ch, UrlGuard::curlOpts($this->base));
         curl_setopt_array($ch, [
             CURLOPT_CUSTOMREQUEST  => 'POST',
             CURLOPT_UPLOAD         => true,
@@ -192,6 +194,7 @@ class OllamaService
     public function stream(string $path, array $body, callable $onLine): array
     {
         $ch = curl_init($this->base . $path);
+        curl_setopt_array($ch, UrlGuard::curlOpts($this->base));
         $headers = ['Content-Type: application/json', 'Accept: application/x-ndjson'];
         if ($this->token) {
             $headers[] = 'Authorization: Bearer ' . $this->token;
@@ -296,6 +299,9 @@ class OllamaService
             $opts['json'] = $body;
         }
 
+        if (($why = UrlGuard::reason($this->base)) !== null) { // re-checked per call: the host may resolve elsewhere now
+            throw new \RuntimeException($why);
+        }
         try {
             $res = $client->request(strtoupper($method), $this->base . $path, $opts);
         } catch (\Throwable $e) {

@@ -138,6 +138,8 @@ class DownloadsController extends BaseApiController
                 return $this->response->setStatusCode(416)->setHeader('Content-Range', "bytes */{$size}");
             }
         }
+        $k = $_SERVER['ohub_api_key'] ?? [];
+        if ($start === 0) \App\Filters\AuditFilter::record('download package file ' . basename($art['path']), $this->request->getUri()->getPath(), isset($k['user_id']) ? (int) $k['user_id'] : null, 'API key: ' . ($k['name'] ?? '?'));
         @set_time_limit(0);
         while (ob_get_level() > 0) { ob_end_clean(); }
         http_response_code($range !== '' ? 206 : 200);
@@ -175,6 +177,9 @@ class DownloadsController extends BaseApiController
         if ($splits && array_diff($splits, ['train', 'dev', 'test'])) return $this->failure('split must be train, dev or test.', 422);
 
         $slug = trim(preg_replace('/[^a-z0-9_-]+/i', '-', $ds['name']), '-') ?: 'dataset';
+        $k = $_SERVER['ohub_api_key'] ?? [];
+        \App\Filters\AuditFilter::record('download dataset ' . $ds['name'] . ($splits ? ' (' . implode(',', $splits) . ')' : ''), $this->request->getUri()->getPath(),
+            isset($k['user_id']) ? (int) $k['user_id'] : null, 'API key: ' . ($k['name'] ?? '?'));
         @set_time_limit(0);
         while (ob_get_level() > 0) { ob_end_clean(); }
         header('Content-Type: application/jsonl; charset=utf-8');

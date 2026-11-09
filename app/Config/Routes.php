@@ -66,6 +66,7 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->get('servers/summary', 'ServersController::summary');
     $routes->get('servers/(:num)', 'ServersController::show/$1');
     $routes->get('servers/(:num)/usage', 'ServersController::usage/$1');
+    $routes->get('servers/(:num)/metrics', 'ServersController::metrics/$1');
     $routes->put('servers/(:num)', 'ServersController::update/$1');
     $routes->delete('servers/(:num)', 'ServersController::delete/$1');
     $routes->post('servers/(:num)/health', 'ServersController::health/$1');
@@ -84,6 +85,22 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->post('models/(:num)/default', 'ModelsController::setDefault/$1');
     $routes->get('models/(:num)/config', 'ModelsController::getConfig/$1');
     $routes->put('models/(:num)/config', 'ModelsController::saveConfig/$1');
+    // AI Model Registry (v1.31)
+    $routes->get('registry', 'ModelRegistryController::index');
+    $routes->get('registry/meta', 'ModelRegistryController::meta');
+    $routes->get('registry/defaults', 'ModelRegistryController::defaults');
+    $routes->get('registry/catalogue', 'ModelRegistryController::catalogue');
+    $routes->post('registry/catalogue', 'ModelRegistryController::addFromCatalogue');
+    $routes->get('registry/hub', 'ModelRegistryController::hub');
+    $routes->post('registry/hub', 'ModelRegistryController::addFromHub');
+    $routes->put('registry/defaults', 'ModelRegistryController::saveDefaults');
+    $routes->post('registry', 'ModelRegistryController::create');
+    $routes->post('registry/discover', 'ModelRegistryController::discover');
+    $routes->put('registry/(:num)', 'ModelRegistryController::update/$1');
+    $routes->delete('registry/(:num)', 'ModelRegistryController::delete/$1');
+    $routes->post('registry/(:num)/deploy', 'ModelRegistryController::deploy/$1');
+    $routes->delete('registry/(:num)/deploy/(:num)', 'ModelRegistryController::undeploy/$1/$2');
+    $routes->post('registry/(:num)/update', 'ModelRegistryController::refresh/$1');
 
     // --- Chat Playground (Phase 4) ---
     $routes->get('chat/sessions', 'ChatController::sessions_list');
@@ -108,6 +125,9 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->put('apikeys/(:num)', 'ApiKeysController::update/$1');
     $routes->post('apikeys/(:num)/rotate', 'ApiKeysController::rotate/$1');
     $routes->delete('apikeys/(:num)', 'ApiKeysController::delete/$1');
+    $routes->post('apikeys/(:num)/revoke', 'ApiKeysController::revoke/$1');
+    $routes->post('apikeys/(:num)/tokens', 'ApiKeysController::tokens/$1');
+    $routes->get('apikeys/(:num)/usage', 'ApiKeysController::usage/$1');
     $routes->get('apilogs', 'ApiLogsController::index');
 
     // --- Users / Roles / Audit / Notifications / Settings (Phase 7) ---
@@ -156,6 +176,7 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     $routes->get('queue', 'QueueController::index');
     $routes->post('queue', 'QueueController::create');
     $routes->post('queue/work', 'QueueController::work');
+    $routes->post('queue/reap', 'QueueController::reap');
     $routes->post('queue/(:num)/cancel', 'QueueController::cancel/$1');
     $routes->post('queue/(:num)/retry', 'QueueController::retry/$1');
 
@@ -262,6 +283,9 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
     // --- Speech to text (Whisper Sinhala via the local aistudio-asr service) ---
     $routes->get('speech/status', 'SpeechController::status');
     $routes->post('speech/transcribe', 'SpeechController::transcribe');
+    $routes->get('speech/voices', 'SpeechController::voices');
+    $routes->post('speech/tts', 'SpeechController::tts');
+    $routes->post('speech/tts/preview', 'SpeechController::ttsPreview');
 
     // --- WorkSuite Sinhala AI Engine: build & release zone (v1.5, docs/sinhala-ai-engine) ---
     $routes->get('engine/overview', 'EngineController::overview');
@@ -288,11 +312,29 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api', 'filter' => 'jwt'],
 });
 
 /*
+ * Unified OpenAI-compatible gateway: point any OpenAI SDK at {host}/api/openai/v1 (v1.32).
+ */
+$routes->group('api/openai/v1', ['namespace' => 'App\Controllers\Api\Gateway', 'filter' => 'apikey'], static function ($routes) {
+    $routes->get('models', 'OpenAIController::models');
+    $routes->get('models/(:any)', 'OpenAIController::model/$1');
+    $routes->post('chat/completions', 'OpenAIController::chatCompletions');
+    $routes->post('completions', 'OpenAIController::completions');
+    $routes->post('embeddings', 'OpenAIController::embeddings');
+    $routes->post('audio/transcriptions', 'OpenAIController::transcriptions');
+    $routes->post('audio/translations', 'OpenAIController::translations');
+    $routes->post('audio/speech', 'OpenAIController::speech');
+});
+
+// OAuth 2.0 client_credentials: exchange a key + secret for a short-lived JWT access token.
+$routes->post('api/v1/oauth/token', 'Api\Gateway\OAuthController::token');
+
+/*
  * External API gateway (key/secret auth) — Phase 6.
  */
 $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\Gateway', 'filter' => 'apikey'], static function ($routes) {
     $routes->get('models', 'GatewayController::models');
     $routes->post('chat', 'GatewayController::chat');
+    $routes->post('chat/completions', 'OpenAIController::chatCompletions'); // OpenAI-compatible (same as /api/openai/v1)
     $routes->post('generate', 'GatewayController::generate');
     $routes->post('embeddings', 'GatewayController::embeddings');
     $routes->post('translate', 'GatewayController::translate');   // SinLama (v1.3)

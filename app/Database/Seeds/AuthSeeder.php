@@ -18,7 +18,7 @@ class AuthSeeder extends Seeder
         'servers'       => [['servers.view', 'View servers'], ['servers.manage', 'Manage servers']],
         'models'        => [['models.view', 'View models'], ['models.manage', 'Manage models']],
         'chat'          => [['chat.use', 'Use chat playground']],
-        'apikeys'       => [['apikeys.view', 'View API keys'], ['apikeys.manage', 'Manage API keys']],
+        'apikeys'       => [['apikeys.view', 'View API keys'], ['apikeys.manage', 'Manage own API keys'], ['apikeys.tokens', 'Issue API access tokens'], ['apikeys.admin', 'Manage all API keys (organization / service accounts)']],
         'monitoring'    => [['monitoring.view', 'View monitoring']],
         'logs'          => [['logs.view', 'View logs']],
         'analytics'     => [['analytics.view', 'View analytics']],
@@ -40,7 +40,7 @@ class AuthSeeder extends Seeder
         'admin'       => ['Admin', 'Administrative access to all modules', '*'],
         'developer'   => ['Developer', 'Build with servers, models, chat and the API', [
             'dashboard.view', 'servers.view', 'servers.manage', 'models.view', 'models.manage',
-            'chat.use', 'apikeys.view', 'apikeys.manage', 'monitoring.view', 'logs.view',
+            'chat.use', 'apikeys.view', 'apikeys.manage', 'apikeys.tokens', 'monitoring.view', 'logs.view',
             'analytics.view', 'prompts.view', 'prompts.manage', 'knowledge.view', 'knowledge.manage',
             'agents.view', 'agents.manage', 'queues.view', 'portal.use',
         ]],
@@ -48,7 +48,7 @@ class AuthSeeder extends Seeder
             'dashboard.view', 'chat.use', 'logs.view', 'monitoring.view', 'notifications.view',
         ]],
         'customer'    => ['Customer', 'Consume chat + API gateway', [
-            'chat.use', 'apikeys.view', 'portal.use',
+            'chat.use', 'apikeys.view', 'apikeys.manage', 'apikeys.tokens', 'portal.use',
         ]],
         'viewer'      => ['Viewer', 'Read-only dashboards and reports', [
             'dashboard.view', 'servers.view', 'models.view', 'monitoring.view', 'analytics.view', 'logs.view',

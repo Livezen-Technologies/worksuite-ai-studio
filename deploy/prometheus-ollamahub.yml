@@ -34,6 +34,26 @@ scrape_configs:
       - target_label: __address__
         replacement: '127.0.0.1:9115'
 
+  # The speech (aistudio-asr) and ML (aistudio-ml) services answer /health on localhost.
+  - job_name: blackbox-services
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ['http://127.0.0.1:8096/health']
+        labels: { service: speech }
+      - targets: ['http://127.0.0.1:8097/health']
+        labels: { service: ml }
+      - targets: ['http://127.0.0.1:8098/health']
+        labels: { service: text-to-speech }
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: '127.0.0.1:9115'
+
   # Example for a future GPU node (uncomment + set its IP):
   # - job_name: node-gpu1
   #   static_configs:

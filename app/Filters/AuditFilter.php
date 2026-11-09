@@ -60,6 +60,23 @@ class AuditFilter implements FilterInterface
         }
     }
 
+    /**
+     * Write an audit row directly. For handlers that stream a file and exit, where after-filters
+     * never run (gateway model and dataset downloads).
+     */
+    public static function record(string $action, string $path, ?int $userId, ?string $who, int $status = 200): void
+    {
+        try {
+            \Config\Database::connect()->table('audit_logs')->insert([
+                'user_id' => $userId, 'user_name' => $who !== null ? mb_substr($who, 0, 120) : null, 'action' => mb_substr($action, 0, 120),
+                'method' => 'GET', 'path' => '/' . ltrim($path, '/'), 'status' => $status,
+                'ip' => service('request')->getIPAddress(), 'created_at' => date('Y-m-d H:i:s'),
+            ]);
+        } catch (\Throwable $e) {
+            log_message('error', 'Audit log write failed for {path}: {msg}', ['path' => $path, 'msg' => $e->getMessage()]);
+        }
+    }
+
     private function attemptedEmail(RequestInterface $request): ?string
     {
         $body = json_decode((string) $request->getBody(), true);

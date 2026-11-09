@@ -36,7 +36,7 @@ class ServerService
     public function check(array $server): array
     {
         $provider = new ProviderService();
-        $probe    = $provider->isExternal($server['kind'] ?? 'ollama')
+        $probe    = ! $provider->isOllama($server['kind'] ?? 'ollama')
             ? $provider->probe($server)
             : $this->clientFor($server)->probe();
         $score = $this->score($probe, ! empty($server['tunnel_port']));

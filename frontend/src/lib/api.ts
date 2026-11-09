@@ -122,7 +122,8 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
   if (!res.ok || body?.status === 'error') {
     throw new ApiError(body?.message || `Request failed (${res.status})`, res.status, body?.data);
   }
-  return body?.data as T;
+  // null, never undefined: React Query treats an undefined result as an error ("data is undefined").
+  return (body?.data ?? null) as T;
 }
 
 export const get = <T>(path: string, query?: Query) => api<T>(path, { query });

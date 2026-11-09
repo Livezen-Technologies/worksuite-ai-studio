@@ -21,6 +21,8 @@ class ScheduleRun extends BaseCommand
         $svc = new SchedulerService();
         $svc->seedDefaults();
         $out = $svc->runDue();
+        \App\Libraries\Heartbeat::beat('scheduler');
+        if (($out['model_autoload']['ok'] ?? null) === true) \App\Libraries\Heartbeat::beat('model_autoload');
         if (! $out) {
             CLI::write('No jobs due.', 'yellow');
             return;

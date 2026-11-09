@@ -13,6 +13,7 @@ use App\Services\ProviderService;
  *   POST /api/v1/generate    { model, prompt }
  *   POST /api/v1/embeddings  { model, input }
  *   GET  /api/v1/models      models available through the gateway
+ *   POST /api/v1/chat/completions  OpenAI-compatible chat (served by OpenAIController; see /api/openai/v1)
  *
  * Routes traffic to an online node hosting the model (round-robin + failover),
  * enforces key scopes / allowed-models / token quota, and logs every call.
@@ -20,6 +21,13 @@ use App\Services\ProviderService;
 class GatewayController extends BaseApiController
 {
     private function key(): array { return $_SERVER['ohub_api_key'] ?? []; }
+
+    /** Generation limits from the key: its max_output_tokens ceiling. */
+    private function limits(): array
+    {
+        $cap = (int) ($this->key()['max_output_tokens'] ?? 0);
+        return $cap > 0 ? ['params' => ['max_tokens' => $cap]] : [];
+    }
 
     public function models()
     {
@@ -29,20 +37,25 @@ class GatewayController extends BaseApiController
 
     public function chat()
     {
-        return $this->proxy('chat', function (array $server, string $model, array $in) {
+        return $this->proxy('chat', $this->chatCall());
+    }
+
+    private function chatCall(): callable
+    {
+        return function (array $server, string $model, array $in) {
             $messages = $in['messages'] ?? [];
             if (! is_array($messages) || ! $messages) {
                 throw new \InvalidArgumentException('messages[] is required.');
             }
             $content = '';
-            $final = (new ProviderService())->chat($server, $model, $messages, [], function (string $d) use (&$content) {
+            $final = (new ProviderService())->chat($server, $model, $messages, $this->limits(), function (string $d) use (&$content) {
                 $content .= $d;
             });
             return [
                 'output' => ['role' => 'assistant', 'content' => $content],
                 'usage'  => $final,
             ];
-        });
+        };
     }
 
     public function generate()
@@ -54,7 +67,7 @@ class GatewayController extends BaseApiController
             }
             // Uniform across kinds: a one-shot prompt is a single-turn chat.
             $text  = '';
-            $final = (new ProviderService())->chat($server, $model, [['role' => 'user', 'content' => $prompt]], [],
+            $final = (new ProviderService())->chat($server, $model, [['role' => 'user', 'content' => $prompt]], $this->limits(),
                 function (string $d) use (&$text) { $text .= $d; });
             return ['output' => ['response' => $text], 'usage' => $final];
         });
@@ -85,9 +98,9 @@ class GatewayController extends BaseApiController
             $final = (new ProviderService())->chat($server, $model, [
                 ['role' => 'system', 'content' => $system],
                 ['role' => 'user', 'content' => $text],
-            ], [], function (string $d) use (&$out) { $out .= $d; });
+            ], $this->limits(), function (string $d) use (&$out) { $out .= $d; });
             return ['output' => ['translation' => trim($out)], 'usage' => $final];
-        });
+        }, 'translate');
     }
 
     /**
@@ -110,9 +123,9 @@ class GatewayController extends BaseApiController
             $final = (new ProviderService())->chat($server, $model, [
                 ['role' => 'system', 'content' => $system],
                 ['role' => 'user', 'content' => $text],
-            ], [], function (string $d) use (&$out) { $out .= $d; });
+            ], $this->limits(), function (string $d) use (&$out) { $out .= $d; });
             return ['output' => ['summary' => trim($out)], 'usage' => $final];
-        });
+        }, 'summarize');
     }
 
     public function embeddings()
@@ -131,14 +144,27 @@ class GatewayController extends BaseApiController
      * Shared proxy pipeline: scope/model/quota checks → node selection with
      * failover → run $call → token-accounting + logging.
      */
-    private function proxy(string $endpoint, callable $call)
+    /**
+     * $scope is the key scope the call needs; $task (translate, summarize…) names the endpoint for
+     * the default model and the log, when it differs from the scope.
+     */
+    private function proxy(string $scope, callable $call, ?string $task = null)
     {
-        if ($r = $this->scope($endpoint)) return $r;
+        if ($r = $this->scope($scope)) return $r;
+        $endpoint = $task ?? $scope;
         $key   = $this->key();
         $in    = $this->input();
         $model = trim((string) ($in['model'] ?? ''));
+        $registry = new \App\Services\ModelRegistryService();
+        if ($model === '') { // fall back to the default model for this task (the key's application first)
+            $model = (string) ($registry->defaultFor($endpoint, $key['application'] ?? null) ?? ($task ? $registry->defaultFor($scope, $key['application'] ?? null) : null));
+            $in['model'] = $model;
+        }
         if ($model === '') {
-            return $this->logged($endpoint, $model, null, 422, 'model is required.');
+            return $this->logged($endpoint, $model, null, 422, 'model is required (no default model is set for this task).');
+        }
+        if (! $registry->roleAllowed($model, $registry->roleOf(isset($key['user_id']) ? (int) $key['user_id'] : null))) {
+            return $this->logged($endpoint, $model, null, 403, "Model '{$model}' is not available to this key's owner.");
         }
         if ($err = $this->modelAllowed($model)) return $err;
 
@@ -158,8 +184,9 @@ class GatewayController extends BaseApiController
             try {
                 $result = $call($server, $model, $in);
                 $usage  = $result['usage'] ?? [];
-                $pt = $usage['prompt_tokens'] ?? null;
-                $ct = $usage['completion_tokens'] ?? null;
+                // No usage from the provider (or embeddings, which report none): estimate, so the call still counts.
+                $pt = $usage['prompt_tokens'] ?? ApiGatewayService::estimateTokens($in['messages'] ?? $in['prompt'] ?? $in['text'] ?? $in['input'] ?? null);
+                $ct = $usage['completion_tokens'] ?? ($endpoint === 'embeddings' ? 0 : ApiGatewayService::estimateTokens($result['output'] ?? null));
                 $gw->log([
                     'api_key_id' => $key['id'], 'user_id' => $key['user_id'] ?? null,
                     'endpoint' => $endpoint, 'model' => $model, 'server_id' => $server['id'],
@@ -178,6 +205,9 @@ class GatewayController extends BaseApiController
                 return $this->logged($endpoint, $model, $server['id'], 422, $e->getMessage());
             } catch (\Throwable $e) {
                 $lastErr = $this->publicError($e, 'The model node failed.'); // try the next node (failover)
+                // record the failed attempt against its node, so per-node error rates are real
+                $gw->log(['api_key_id' => $key['id'] ?? null, 'user_id' => $key['user_id'] ?? null, 'endpoint' => $endpoint, 'model' => $model,
+                    'server_id' => $server['id'], 'status' => 502, 'client_ip' => $this->request->getIPAddress(), 'error' => mb_substr('failover: ' . $lastErr, 0, 255)]);
             }
         }
         return $this->logged($endpoint, $model, null, 502, $lastErr);
