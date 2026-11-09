@@ -16,7 +16,7 @@ class ApiKeyModel extends Model
         'rate_limit_per_min', 'status', 'expires_at', 'last_used_at',
         'key_type', 'application', 'organization', 'description', 'rotation_days', 'rotated_at',
         'revoked_at', 'token_version', 'admin_locked',
-        'previous_secret_hash', 'previous_secret_expires_at', 'rotation_enforce', 'rotation_notified_at',
+        'previous_secret_hash', 'previous_secret_expires_at', 'rotation_enforce', 'rotation_notified_at', 'max_output_tokens',
     ];
 
     /** Generate a fresh key id + secret. Returns [key, secret, secret_hash, prefix]. */

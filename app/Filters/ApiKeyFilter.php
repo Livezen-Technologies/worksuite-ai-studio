@@ -93,8 +93,13 @@ class ApiKeyFilter implements FilterInterface
         $_SERVER['ohub_api_key'] = $row;
     }
 
+    /** Every gateway answer says how much of the key's rate limit and quotas is left. */
     public function after(RequestInterface $request, ResponseInterface $response, $arguments = null)
     {
+        $key = $_SERVER['ohub_api_key'] ?? null;
+        if (! $key) return;
+        foreach ((new \App\Services\ApiGatewayService())->quotaHeaders($key) as $k => $v) $response->setHeader($k, $v);
+        return $response;
     }
 
     /** A Bearer value that looks like a JWT (three dot-separated parts, no key:secret colon). */

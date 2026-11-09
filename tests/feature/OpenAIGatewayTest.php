@@ -46,7 +46,7 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         unset($_SERVER['ohub_api_key']);
         putenv('ASR_SERVICE_URL=http://127.0.0.1:' . self::$port); $_ENV['ASR_SERVICE_URL'] = $_SERVER['ASR_SERVICE_URL'] = 'http://127.0.0.1:' . self::$port;
         $f = \Config\Database::forge($this->DBGroup);
-        foreach (['users', 'roles', 'api_keys', 'api_logs', 'servers', 'models', 'model_registry', 'model_assignments', 'model_defaults', 'settings', 'queues'] as $t) $f->dropTable($t, true);
+        foreach (['users', 'roles', 'api_keys', 'api_logs', 'servers', 'models', 'model_registry', 'model_assignments', 'model_defaults', 'settings', 'queues', 'notifications'] as $t) $f->dropTable($t, true);
         $id = ['id' => ['type' => 'INTEGER', 'auto_increment' => true]];
         $null = static fn (string $type = 'VARCHAR') => ['type' => $type, 'null' => true];
         $f->addField($id + ['name' => $null(), 'status' => $null(), 'role_id' => $null('INTEGER'), 'deleted_at' => $null('DATETIME')])->addKey('id', true)->createTable('users');
@@ -54,7 +54,8 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $f->addField($id + ['name' => $null(), 'user_id' => $null('INTEGER'), 'api_key' => $null(), 'secret_hash' => $null(), 'scopes' => $null(), 'allowed_models' => $null('TEXT'),
             'allowed_ips' => $null('TEXT'), 'rate_limit_per_min' => ['type' => 'INTEGER', 'default' => 60], 'status' => $null(), 'daily_token_limit' => $null('INTEGER'),
             'monthly_token_limit' => $null('INTEGER'), 'expires_at' => $null('DATETIME'), 'last_used_at' => $null('DATETIME'), 'created_at' => $null('DATETIME'),
-            'updated_at' => $null('DATETIME'), 'revoked_at' => $null('DATETIME'), 'token_version' => ['type' => 'INTEGER', 'default' => 0], 'application' => $null()])
+            'updated_at' => $null('DATETIME'), 'revoked_at' => $null('DATETIME'), 'token_version' => ['type' => 'INTEGER', 'default' => 0], 'application' => $null(),
+            'previous_secret_hash' => $null(), 'previous_secret_expires_at' => $null('DATETIME'), 'max_output_tokens' => $null('INTEGER')])
             ->addKey('id', true)->createTable('api_keys');
         $f->addField($id + ['api_key_id' => $null('INTEGER'), 'user_id' => $null('INTEGER'), 'endpoint' => $null(), 'model' => $null(), 'server_id' => $null('INTEGER'),
             'method' => $null(), 'prompt_tokens' => $null('INTEGER'), 'completion_tokens' => $null('INTEGER'), 'total_tokens' => $null('INTEGER'),
@@ -76,6 +77,7 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $f->addField($id + ['group' => $null(), 'key' => $null(), 'value' => $null('TEXT'), 'is_secret' => ['type' => 'INTEGER', 'default' => 0], 'updated_at' => $null('DATETIME')])->addKey('id', true)->createTable('settings');
 
         $f->addField($id + ['type' => $null(), 'status' => $null(), 'error' => $null()])->addKey('id', true)->createTable('queues');
+        $f->addField($id + ['user_id' => $null('INTEGER'), 'type' => $null(), 'title' => $null(), 'body' => $null('TEXT'), 'level' => $null(), 'read_at' => $null('DATETIME'), 'created_at' => $null('DATETIME')])->addKey('id', true)->createTable('notifications');
         $this->db->table('roles')->insertBatch([['name' => 'customer'], ['name' => 'developer']]);
         $this->db->table('users')->insert(['name' => 'Ann', 'status' => 'active', 'role_id' => 1]);
         $this->db->table('api_keys')->insert(['name' => 'k', 'user_id' => 1, 'api_key' => 'ohub_k1', 'secret_hash' => password_hash('sk_s', PASSWORD_DEFAULT),
@@ -414,5 +416,27 @@ final class OpenAIGatewayTest extends CIUnitTestCase
         $this->assertEqualsWithDelta(1.0, sqrt($v[0] ** 2 + $v[1] ** 2), 1e-9, 'shortened and re-normalised');
         $err = $this->body($this->api('post', 'embeddings', ['model' => 'fake-embed', 'input' => [[101, 202]]]))['error'];
         $this->assertSame('unsupported_value', $err['code']);
+    }
+
+    /** Gap 3: quota headers, the per-key reply cap, and a heads-up at 80 %. */
+    public function testQuotaHeadersCapAndWarning(): void
+    {
+        $this->db->table('api_keys')->update(['daily_token_limit' => 100, 'max_output_tokens' => 64]);
+        $this->db->table('api_logs')->insert(['api_key_id' => 1, 'endpoint' => 'chat', 'total_tokens' => 85, 'status' => 200, 'created_at' => date('Y-m-d H:i:s')]);
+
+        $res = $this->api('post', 'chat/completions', ['model' => 'fake-chat', 'max_tokens' => 500, 'messages' => [['role' => 'user', 'content' => 'x']]]);
+        $echo = json_decode(substr($this->body($res)['choices'][0]['message']['content'], 6), true);
+        $this->assertSame(64, $echo['max'], 'the key caps reply length');
+        $r = $res->response();
+        $this->assertSame('100', $r->getHeaderLine('x-ratelimit-limit-tokens'));
+        $this->assertSame('3', $r->getHeaderLine('x-ratelimit-remaining-tokens'), 'what is left after this call (85 + 12 of 100)');
+        $this->assertSame('60', $r->getHeaderLine('x-ratelimit-limit-requests'));
+        $this->assertStringEndsWith('s', $r->getHeaderLine('x-ratelimit-reset-tokens'));
+
+        $n = $this->db->table('notifications')->get()->getResultArray();
+        $this->assertCount(1, $n, 'one heads-up at 80 % of the daily quota');
+        $this->assertStringContainsString('80%', $n[0]['title']);
+        $this->api('post', 'chat/completions', ['model' => 'fake-chat', 'messages' => [['role' => 'user', 'content' => 'x']]]);
+        $this->assertSame(1, $this->db->table('notifications')->countAllResults(), 'not repeated in the same day');
     }
 }

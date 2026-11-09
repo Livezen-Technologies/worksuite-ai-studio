@@ -138,8 +138,69 @@ class ApiGatewayService
      * Check daily/monthly token quotas for a key. Returns an error string when a
      * limit is already exceeded, or null when within quota.
      */
+    /**
+     * Token use against the key's quotas: ['daily' => [limit, used, resetSeconds] | null, 'monthly' => …].
+     */
+    public function quotaStatus(array $key): array
+    {
+        $logs = new ApiLogModel();
+        $out = ['daily' => null, 'monthly' => null];
+        if (! empty($key['daily_token_limit'])) {
+            $out['daily'] = [(int) $key['daily_token_limit'], $logs->tokensSince((int) $key['id'], date('Y-m-d 00:00:00')), strtotime('tomorrow') - time()];
+        }
+        if (! empty($key['monthly_token_limit'])) {
+            $out['monthly'] = [(int) $key['monthly_token_limit'], $logs->tokensSince((int) $key['id'], date('Y-m-01 00:00:00')), strtotime('first day of next month 00:00') - time()];
+        }
+        return $out;
+    }
+
+    /**
+     * Rate-limit and quota headers, OpenAI names where they exist: requests per minute, tokens left in the
+     * tightest quota (daily first), plus x-quota-monthly-* when a monthly quota is set.
+     */
+    public function quotaHeaders(array $key): array
+    {
+        $h = [];
+        if (! empty($key['id'])) {
+            $limit = max(1, (int) ($key['rate_limit_per_min'] ?? 60));
+            $left  = cache('throttler_gw_' . $key['id']);
+            $h['x-ratelimit-limit-requests']     = (string) $limit;
+            $h['x-ratelimit-remaining-requests'] = (string) max(0, is_numeric($left) ? (int) $left : $limit);
+            $h['x-ratelimit-reset-requests']     = '60s';
+        }
+        $q = $this->quotaStatus($key);
+        if ($t = $q['daily'] ?? $q['monthly']) {
+            $h['x-ratelimit-limit-tokens']     = (string) $t[0];
+            $h['x-ratelimit-remaining-tokens'] = (string) max(0, $t[0] - $t[1]);
+            $h['x-ratelimit-reset-tokens']     = $t[2] . 's';
+        }
+        if ($m = $q['monthly']) {
+            $h['x-quota-monthly-limit-tokens'] = (string) $m[0];
+            $h['x-quota-monthly-remaining-tokens'] = (string) max(0, $m[0] - $m[1]);
+        }
+        return $h;
+    }
+
+    /** At 80 % of a quota, tell the key's owner once per period. */
+    private function warnAtEightyPercent(array $key, array $q): void
+    {
+        foreach (['daily' => date('Ymd'), 'monthly' => date('Ym')] as $period => $stamp) {
+            if (! ($t = $q[$period]) || $t[1] < 0.8 * $t[0] || $t[1] >= $t[0]) continue;
+            $flag = "quota80_{$key['id']}_{$period}_{$stamp}";
+            if (cache($flag)) continue;
+            cache()->save($flag, 1, 40 * 86400);
+            (new NotificationService())->notify(! empty($key['user_id']) ? (int) $key['user_id'] : null,
+                "API key at 80% of its {$period} quota: {$key['name']}",
+                sprintf('%s of %s tokens used. Requests are refused once the quota is reached; it resets %s.', number_format($t[1]), number_format($t[0]), $period === 'daily' ? 'at midnight' : 'on the 1st'),
+                'warning', 'usage');
+        }
+    }
+
     public function quotaError(array $key): ?string
     {
+        if (! empty($key['id']) && (! empty($key['daily_token_limit']) || ! empty($key['monthly_token_limit']))) {
+            $this->warnAtEightyPercent($key, $this->quotaStatus($key));
+        }
         $logs = new ApiLogModel();
         if (! empty($key['daily_token_limit'])) {
             $used = $logs->tokensSince((int) $key['id'], date('Y-m-d 00:00:00'));

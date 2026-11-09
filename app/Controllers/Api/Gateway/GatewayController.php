@@ -22,6 +22,13 @@ class GatewayController extends BaseApiController
 {
     private function key(): array { return $_SERVER['ohub_api_key'] ?? []; }
 
+    /** Generation limits from the key: its max_output_tokens ceiling. */
+    private function limits(): array
+    {
+        $cap = (int) ($this->key()['max_output_tokens'] ?? 0);
+        return $cap > 0 ? ['params' => ['max_tokens' => $cap]] : [];
+    }
+
     public function models()
     {
         if ($r = $this->scope('models')) return $r;
@@ -41,7 +48,7 @@ class GatewayController extends BaseApiController
                 throw new \InvalidArgumentException('messages[] is required.');
             }
             $content = '';
-            $final = (new ProviderService())->chat($server, $model, $messages, [], function (string $d) use (&$content) {
+            $final = (new ProviderService())->chat($server, $model, $messages, $this->limits(), function (string $d) use (&$content) {
                 $content .= $d;
             });
             return [
@@ -60,7 +67,7 @@ class GatewayController extends BaseApiController
             }
             // Uniform across kinds: a one-shot prompt is a single-turn chat.
             $text  = '';
-            $final = (new ProviderService())->chat($server, $model, [['role' => 'user', 'content' => $prompt]], [],
+            $final = (new ProviderService())->chat($server, $model, [['role' => 'user', 'content' => $prompt]], $this->limits(),
                 function (string $d) use (&$text) { $text .= $d; });
             return ['output' => ['response' => $text], 'usage' => $final];
         });
@@ -91,7 +98,7 @@ class GatewayController extends BaseApiController
             $final = (new ProviderService())->chat($server, $model, [
                 ['role' => 'system', 'content' => $system],
                 ['role' => 'user', 'content' => $text],
-            ], [], function (string $d) use (&$out) { $out .= $d; });
+            ], $this->limits(), function (string $d) use (&$out) { $out .= $d; });
             return ['output' => ['translation' => trim($out)], 'usage' => $final];
         }, 'translate');
     }
@@ -116,7 +123,7 @@ class GatewayController extends BaseApiController
             $final = (new ProviderService())->chat($server, $model, [
                 ['role' => 'system', 'content' => $system],
                 ['role' => 'user', 'content' => $text],
-            ], [], function (string $d) use (&$out) { $out .= $d; });
+            ], $this->limits(), function (string $d) use (&$out) { $out .= $d; });
             return ['output' => ['summary' => trim($out)], 'usage' => $final];
         }, 'summarize');
     }

@@ -221,7 +221,7 @@ class OpenAIController extends BaseApiController
 
         $params = ProviderService::cleanParams([
             'temperature' => $in['temperature'] ?? null, 'top_p' => $in['top_p'] ?? null,
-            'max_tokens' => $in['max_completion_tokens'] ?? ($in['max_tokens'] ?? null), 'stop' => $in['stop'] ?? null,
+            'max_tokens' => $this->capTokens($in['max_completion_tokens'] ?? ($in['max_tokens'] ?? null)), 'stop' => $in['stop'] ?? null,
             'seed' => $in['seed'] ?? null, 'presence_penalty' => $in['presence_penalty'] ?? null, 'frequency_penalty' => $in['frequency_penalty'] ?? null,
             'json' => in_array($in['response_format']['type'] ?? '', ['json_object', 'json_schema'], true),
         ]);
@@ -352,6 +352,14 @@ class OpenAIController extends BaseApiController
     }
 
     // ---- Pipeline helpers --------------------------------------------------------------------
+
+    /** The key's max_output_tokens ceiling applies whatever the request asks for. */
+    private function capTokens($asked): ?int
+    {
+        $cap = (int) ($this->key()['max_output_tokens'] ?? 0);
+        $asked = is_numeric($asked) && (int) $asked > 0 ? (int) $asked : null;
+        return $cap > 0 ? min($cap, $asked ?? $cap) : $asked;
+    }
 
     private function begin(): void
     {
@@ -485,10 +493,10 @@ class OpenAIController extends BaseApiController
         foreach ($this->rateHeaders() as $k => $v) header("{$k}: {$v}");
     }
 
+    /** For streams, which exit before after-filters run (ApiKeyFilter::after adds them to other answers). */
     private function rateHeaders(): array
     {
-        $limit = (int) ($this->key()['rate_limit_per_min'] ?? 0);
-        return $limit > 0 ? ['x-ratelimit-limit-requests' => (string) $limit] : [];
+        return $this->key() ? (new ApiGatewayService())->quotaHeaders($this->key()) : [];
     }
 
     private function json(array $body, int $status = 200)
@@ -496,7 +504,6 @@ class OpenAIController extends BaseApiController
         $res = $this->response->setStatusCode($status)->setJSON($body);
         if ($this->requestId) $res->setHeader('x-request-id', $this->requestId);
         if ($this->start) $res->setHeader('openai-processing-ms', (string) (int) round((microtime(true) - $this->start) * 1000));
-        foreach ($this->rateHeaders() as $k => $v) $res->setHeader($k, $v);
         return $res;
     }
 

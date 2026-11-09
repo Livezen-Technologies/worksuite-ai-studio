@@ -14,7 +14,7 @@ interface ApiKey {
   allowed_models: string[] | null; allowed_ips: string[] | null; daily_token_limit: number | null; monthly_token_limit: number | null;
   rate_limit_per_min: number | null; status: 'active' | 'disabled' | 'revoked'; state?: 'active' | 'disabled' | 'revoked' | 'expired';
   key_type?: KeyType; application?: string | null; organization?: string | null; description?: string | null;
-  rotation_days?: number | null; rotated_at?: string | null; revoked_at?: string | null; rotation_due?: boolean; requests_30d?: number; admin_locked?: number | boolean; rotation_enforce?: number | boolean; previous_secret_valid_until?: string | null; expires_at?: string | null; last_used_at?: string | null;
+  rotation_days?: number | null; rotated_at?: string | null; revoked_at?: string | null; rotation_due?: boolean; requests_30d?: number; admin_locked?: number | boolean; rotation_enforce?: number | boolean; previous_secret_valid_until?: string | null; max_output_tokens?: number | null; expires_at?: string | null; last_used_at?: string | null;
   created_at?: string | null; tokens_30d?: number; secret?: string;
 }
 
@@ -100,15 +100,15 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
 interface FormState {
   name: string; scopes: string[]; rate_limit_per_min: string; daily_token_limit: string; monthly_token_limit: string;
   allowed_models: string[]; allowed_ips: string; status: 'active' | 'disabled'; expires_at: string;
-  key_type: KeyType; application: string; organization: string; description: string; rotation_days: string; rotation_enforce: boolean;
+  key_type: KeyType; application: string; organization: string; description: string; rotation_days: string; rotation_enforce: boolean; max_output_tokens: string;
 }
-const blank: FormState = { name: '', scopes: ['chat', 'generate', 'embeddings', 'models'], rate_limit_per_min: '60', daily_token_limit: '', monthly_token_limit: '', allowed_models: [], allowed_ips: '', status: 'active', expires_at: '', key_type: 'personal', application: '', organization: '', description: '', rotation_days: '', rotation_enforce: false };
+const blank: FormState = { name: '', scopes: ['chat', 'generate', 'embeddings', 'models'], rate_limit_per_min: '60', daily_token_limit: '', monthly_token_limit: '', allowed_models: [], allowed_ips: '', status: 'active', expires_at: '', key_type: 'personal', application: '', organization: '', description: '', rotation_days: '', rotation_enforce: false, max_output_tokens: '' };
 const toForm = (k: ApiKey): FormState => ({
   name: k.name, scopes: k.scopes ?? [], rate_limit_per_min: k.rate_limit_per_min?.toString() ?? '', daily_token_limit: k.daily_token_limit?.toString() ?? '',
   monthly_token_limit: k.monthly_token_limit?.toString() ?? '', allowed_models: k.allowed_models ?? [], allowed_ips: (k.allowed_ips ?? []).join('\n'),
   status: k.status === 'disabled' ? 'disabled' : 'active', expires_at: k.expires_at ? k.expires_at.slice(0, 10) : '',
   key_type: k.key_type ?? 'personal', application: k.application ?? '', organization: k.organization ?? '', description: k.description ?? '',
-  rotation_days: k.rotation_days?.toString() ?? '', rotation_enforce: Number(k.rotation_enforce ?? 0) === 1,
+  rotation_days: k.rotation_days?.toString() ?? '', rotation_enforce: Number(k.rotation_enforce ?? 0) === 1, max_output_tokens: k.max_output_tokens?.toString() ?? '',
 });
 
 function KeyForm({ open, onClose, editing, onCreated }: { open: boolean; onClose: () => void; editing: ApiKey | null; onCreated: (k: ApiKey) => void }) {
@@ -133,7 +133,7 @@ function KeyForm({ open, onClose, editing, onCreated }: { open: boolean; onClose
         monthly_token_limit: f.monthly_token_limit, allowed_models: f.allowed_models,
         allowed_ips: f.allowed_ips.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
         expires_at: f.expires_at ? `${f.expires_at} 23:59:59` : '',
-        application: f.application.trim(), organization: f.organization.trim(), description: f.description.trim(), rotation_days: f.rotation_days, ...(keyAdmin ? { rotation_enforce: f.rotation_enforce } : {}),
+        application: f.application.trim(), organization: f.organization.trim(), description: f.description.trim(), rotation_days: f.rotation_days, max_output_tokens: f.max_output_tokens, ...(keyAdmin ? { rotation_enforce: f.rotation_enforce } : {}),
         ...(editing ? { status: f.status } : { key_type: f.key_type }),
       };
       return editing ? put<ApiKey>(`/apikeys/${editing.id}`, body) : post<ApiKey>('/apikeys', body);
@@ -178,6 +178,8 @@ function KeyForm({ open, onClose, editing, onCreated }: { open: boolean; onClose
             <Input label="Daily tokens" type="number" min={0} placeholder="Unlimited" value={f.daily_token_limit} onChange={(e) => set('daily_token_limit', e.target.value)} error={errors.daily_token_limit} />
             <Input label="Monthly tokens" type="number" min={0} placeholder="Unlimited" value={f.monthly_token_limit} onChange={(e) => set('monthly_token_limit', e.target.value)} error={errors.monthly_token_limit} />
           </div>
+          <Input label="Max reply tokens" type="number" min={1} placeholder="No cap" disabled={locked} value={f.max_output_tokens}
+            onChange={(e) => set('max_output_tokens', e.target.value)} hint="Each reply is cut at this length, whatever max_tokens the request asks for." />
         </FormSection>
         <FormSection title="Restrictions" description="Nothing selected means every model and every IP address is allowed.">
           <div className="space-y-4">

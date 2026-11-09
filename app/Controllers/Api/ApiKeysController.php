@@ -257,11 +257,12 @@ class ApiKeysController extends BaseApiController
     {
         $out = $base;
         foreach (['name', 'scopes', 'rate_limit_per_min', 'daily_token_limit', 'monthly_token_limit', 'status', 'expires_at',
-                  'application', 'organization', 'description', 'rotation_days', 'rotation_enforce'] as $f) {
+                  'application', 'organization', 'description', 'rotation_days', 'rotation_enforce', 'max_output_tokens'] as $f) {
             if (array_key_exists($f, $in) && ! array_key_exists($f, $base)) {
                 $out[$f] = $in[$f] === '' ? null : $in[$f];
             }
         }
+        if (array_key_exists('max_output_tokens', $out)) $out['max_output_tokens'] = $out['max_output_tokens'] === null ? null : max(1, min(1000000, (int) $out['max_output_tokens']));
         if (array_key_exists('rotation_enforce', $out)) $out['rotation_enforce'] = ! empty($out['rotation_enforce']) && $out['rotation_enforce'] !== 'false' ? 1 : 0;
         if (array_key_exists('rate_limit_per_min', $out)) { // empty → the default; never 0 (that would mean 1 request a minute)
             $out['rate_limit_per_min'] = $out['rate_limit_per_min'] === null ? self::DEFAULT_RATE : max(1, min(100000, (int) $out['rate_limit_per_min']));
