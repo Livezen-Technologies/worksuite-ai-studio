@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { markSignedOut } from './wscAuto';
 import { api, refreshAccess, setSessionExpiredHandler, tokens } from './api';
 import { getPasskey, type RequestOptionsJSON } from './webauthn';
 
@@ -43,6 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(Boolean(tokens.access || tokens.hasSession));
 
   const signOut = useCallback(() => {
+    markSignedOut(); // an explicit sign-out: don't auto sign in with WorkSuite Cloud again until a manual sign-in
     if (tokens.access) api('/auth/logout', { method: 'POST' }).catch(() => {});
     tokens.clear();
     setUser(null);

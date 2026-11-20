@@ -3,6 +3,17 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.39.0] — 2026-11-20 — Admin accounts managed in WorkSuite Cloud
+- **Who can use AI Studio is now decided in Cloud Admin.** "Sign in with WorkSuite Cloud" needs an AI Studio grant there, with one of the staff roles Super Admin, Admin, Developer, Support or Viewer (`super_admin`, `admin`, `developer`, `support`, `viewer`). Customer accounts are never handed out this way.
+  - An existing AI Studio user is linked by email (any letter case). Someone without an account here gets one on their first sign-in, with no password of its own.
+  - The role comes from WorkSuite Cloud each time. Without a grant you see "You don't have access to AI Studio. Ask a WorkSuite Cloud administrator."
+- **Account sync**: WorkSuite Cloud tells AI Studio when a grant is added, changed or removed, or an admin is suspended, renamed or re-activated (`POST /api/auth/wsc/provision`, a signed `application/jwt` event checked against WorkSuite Cloud's keys; replayed or expired events are refused).
+  - A removed grant suspends the account and signs it out everywhere; its data stays. A new grant re-activates it.
+- **Users page**: the role and email of a WorkSuite Cloud account are read-only ("Managed in WorkSuite Cloud"). An AI Studio admin can still suspend it, and WorkSuite Cloud won't undo that.
+- **Automatic sign-in**: when you're already signed in to Cloud Admin, opening AI Studio signs you straight in, with no click. It tries once per browser tab, not after you sign out of AI Studio (until you next sign in by hand), and never with `?local=1`. The page you were opening is kept.
+- Local-only accounts and password, passkey and two-factor sign-in are unchanged.
+- Database: migration `2026-11-20-000039_AddWscAccountSync` (users `wsc_sub`, `managed_by_wsc`, `wsc_disabled`; table `wsc_seen_jti`).
+
 ## [1.38.0] — 2026-11-20 — Sign in with WorkSuite Cloud
 - **Sign in with WorkSuite Cloud** on the sign-in page, for AI Studio admins. It signs you in to your existing AI Studio admin account when your verified WorkSuite Cloud staff email matches it (any letter case).
   - Accounts are never created this way. Without a matching admin you see "No AI Studio admin account for <email>".

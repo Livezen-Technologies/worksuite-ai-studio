@@ -40,7 +40,7 @@ final class AccessControlTest extends CIUnitTestCase
             'avatar' => ['type' => 'VARCHAR', 'constraint' => 255, 'null' => true], 'status' => ['type' => 'VARCHAR', 'constraint' => 20, 'default' => 'active'],
             'last_login_at' => ['type' => 'DATETIME', 'null' => true], 'totp_secret' => ['type' => 'TEXT', 'null' => true],
             'totp_enabled_at' => ['type' => 'DATETIME', 'null' => true], 'totp_last_step' => ['type' => 'INTEGER', 'null' => true],
-            'two_factor_required' => ['type' => 'INTEGER', 'default' => 0], 'token_version' => ['type' => 'INTEGER', 'default' => 0],
+            'two_factor_required' => ['type' => 'INTEGER', 'default' => 0], 'token_version' => ['type' => 'INTEGER', 'default' => 0], 'managed_by_wsc' => ['type' => 'INTEGER', 'default' => 0],
             'created_at' => ['type' => 'DATETIME', 'null' => true], 'updated_at' => ['type' => 'DATETIME', 'null' => true], 'deleted_at' => ['type' => 'DATETIME', 'null' => true],
         ])->addKey('id', true)->createTable('users');
         $f->addField($id + ['user_id' => ['type' => 'INTEGER', 'null' => true], 'user_name' => ['type' => 'VARCHAR', 'constraint' => 120, 'null' => true],

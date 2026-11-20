@@ -87,9 +87,12 @@ class WscOidcService
         return $this->verifyIdToken((string) $json['id_token'], $nonce);
     }
 
-    public function verifyIdToken(string $jwt, string $nonce): array
+    public function clientId(): string { return (string) $this->config['client_id']; }
+
+    /** Claims of a compact RS256 JWS whose signature checks out against the issuer's JWKS. Nothing else is checked. */
+    public function verifySignature(string $jwt): array
     {
-        $parts = explode('.', $jwt);
+        $parts = explode('.', trim($jwt));
         if (count($parts) !== 3) throw new RuntimeException('The sign-in token is malformed.');
         $header = json_decode(self::b64uDecode($parts[0]), true);
         $claims = json_decode(self::b64uDecode($parts[1]), true);
@@ -100,7 +103,31 @@ class WscOidcService
         $key = $this->jwk((string) ($header['kid'] ?? ''));
         $ok  = $key && openssl_verify("{$parts[0]}.{$parts[1]}", self::b64uDecode($parts[2]), $key, OPENSSL_ALGO_SHA256) === 1;
         if (! $ok) throw new RuntimeException('The sign-in token signature is not valid.');
+        return $claims;
+    }
 
+    /**
+     * A provisioning event (staff SSO part 2): signature, iss, aud = our client id, exp (at most 5 min
+     * ahead of iat) and a jti. Replay is checked by the caller, which owns the seen-jti store.
+     */
+    public function verifyProvisionToken(string $jwt): array
+    {
+        $c   = $this->verifySignature($jwt);
+        $now = time();
+        if (($c['iss'] ?? '') !== $this->issuer()) throw new RuntimeException('Wrong issuer.');
+        if (! in_array($this->clientId(), (array) ($c['aud'] ?? []), true)) throw new RuntimeException('Wrong audience.');
+        $exp = (int) ($c['exp'] ?? 0);
+        if ($exp < $now - 30) throw new RuntimeException('Expired.');
+        if ($exp > $now + 600 || (int) ($c['iat'] ?? 0) > $now + 60) throw new RuntimeException('Not valid yet.');
+        if (trim((string) ($c['jti'] ?? '')) === '' || strlen((string) $c['jti']) > 191) throw new RuntimeException('Missing jti.');
+        if (! in_array($c['event'] ?? '', ['upsert', 'disable'], true)) throw new RuntimeException('Unknown event.');
+        if (! str_starts_with((string) ($c['sub'] ?? ''), 'staff:')) throw new RuntimeException('Not a staff subject.');
+        return $c;
+    }
+
+    public function verifyIdToken(string $jwt, string $nonce): array
+    {
+        $claims = $this->verifySignature($jwt);
         $now = time();
         $aud = (array) ($claims['aud'] ?? []);
         if (($claims['iss'] ?? '') !== $this->issuer()) throw new RuntimeException('The sign-in token has the wrong issuer.');
