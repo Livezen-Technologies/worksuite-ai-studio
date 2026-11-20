@@ -34,6 +34,10 @@ $routes->group('api/auth', ['namespace' => 'App\Controllers\Api'], static functi
     $routes->post('mfa/setup/confirm', 'AuthController::mfaSetupConfirm');
     $routes->post('passkey/options', 'AuthController::passkeyOptions');
     $routes->post('passkey', 'AuthController::passkey');
+    // Sign in with WorkSuite Cloud (staff SSO; off unless WSC_OIDC_* are set).
+    $routes->get('wsc/config', 'WscAuthController::config');
+    $routes->get('wsc/start', 'WscAuthController::start');
+    $routes->get('wsc/callback', 'WscAuthController::callback');
 });
 
 /*
