@@ -67,3 +67,12 @@
 #--------------------------------------------------------------------
 
 # logger.threshold = 4
+
+#--------------------------------------------------------------------
+# SIGN IN WITH WORKSUITE CLOUD (staff SSO; button hidden unless all four are set)
+#--------------------------------------------------------------------
+
+# WSC_OIDC_ISSUER = https://account.worksuitecloud.com
+# WSC_OIDC_CLIENT_ID =
+# WSC_OIDC_CLIENT_SECRET =
+# WSC_OIDC_REDIRECT_URI = https://aistudio.worksuitecloud.com/api/auth/wsc/callback

@@ -16,6 +16,7 @@ import { ago } from '../lib/format';
 import { cx } from '../components/ui';
 import { NAV, ALL_ITEMS, findItem } from './nav';
 import { Logo } from './Logo';
+import { CURRENT_APP, FALLBACK_APPS, fetchLauncherApps, isStaff } from './launcher';
 
 function useActiveSection() {
   const { pathname } = useLocation();
@@ -206,6 +207,43 @@ function NotificationsBell() {
   );
 }
 
+
+/** WorkSuite Cloud 9-dot launcher: the staff apps, for AI Studio admins. Headless UI's Popover closes on Esc and returns focus. */
+function AppLauncher() {
+  const { data: apps = FALLBACK_APPS } = useQuery({ queryKey: ['wsc-launcher'], queryFn: () => fetchLauncherApps(), staleTime: 5 * 60_000 });
+  return (
+    <Popover className="relative">
+      <PopoverButton aria-label="Apps" className="-m-2.5 rounded-md p-2.5 text-slate-300 hover:text-white focus-visible:outline-2 focus-visible:outline-brand-500">
+        <svg aria-hidden viewBox="0 0 24 24" className="size-6" fill="currentColor">
+          {[5, 12, 19].flatMap((y) => [5, 12, 19].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r="2" />))}
+        </svg>
+      </PopoverButton>
+      <PopoverPanel transition anchor="bottom end" className="z-50 mt-2.5 w-72 rounded-md bg-white p-2 shadow-lg ring-1 ring-slate-900/5 transition data-closed:scale-95 data-closed:opacity-0 data-enter:duration-100 dark:bg-slate-800 dark:ring-white/10">
+        <p className="px-2 pt-1 pb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">WorkSuite Cloud</p>
+        <ul role="list" className="grid grid-cols-3 gap-1">
+          {apps.map((app) => {
+            const current = app.id === CURRENT_APP;
+            return (
+              <li key={app.id}>
+                <a
+                  href={app.url}
+                  aria-current={current ? 'page' : undefined}
+                  className={cx('flex flex-col items-center gap-1.5 rounded-md px-1 py-2.5 text-center text-xs focus-visible:outline-2 focus-visible:outline-brand-500', current ? 'bg-brand-50 font-semibold text-brand-700 dark:bg-white/10 dark:text-blue-300' : 'text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-white/5')}
+                >
+                  {app.icon
+                    ? <img src={app.icon} alt="" className="size-8" />
+                    : <span aria-hidden className="flex size-8 items-center justify-center rounded-md bg-brand-600 text-sm font-semibold text-white">{app.name.slice(0, 1)}</span>}
+                  <span className="line-clamp-2">{app.name}</span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </PopoverPanel>
+    </Popover>
+  );
+}
+
 const themes: { value: Theme; label: string; icon: typeof SunIcon }[] = [
   { value: 'light', label: 'Light', icon: SunIcon },
   { value: 'dark', label: 'Dark', icon: MoonIcon },
@@ -295,6 +333,7 @@ function Breadcrumbs() {
 }
 
 export function AppShell() {
+  const { user } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const { pathname } = useLocation();
@@ -354,6 +393,7 @@ export function AppShell() {
         <div className="flex items-center gap-x-4 lg:gap-x-6">
           <ThemeMenu />
           <NotificationsBell />
+          {isStaff(user?.role) && <AppLauncher />}
           <div aria-hidden className="hidden h-6 w-px bg-white/10 lg:block" />
           <UserMenu />
         </div>

@@ -3,6 +3,15 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.38.0] — 2026-11-20 — Sign in with WorkSuite Cloud
+- **Sign in with WorkSuite Cloud** on the sign-in page, for AI Studio admins. It signs you in to your existing AI Studio admin account when your verified WorkSuite Cloud staff email matches it (any letter case).
+  - Accounts are never created this way. Without a matching admin you see "No AI Studio admin account for <email>".
+  - Password, passkey and two-factor sign-in work as before.
+  - The sign-in is checked end to end: state, nonce and PKCE (S256), and the id_token's signature against WorkSuite Cloud's published keys, its issuer, audience and expiry.
+  - Opening AI Studio with `?sso=1` tries a silent sign-in first and falls back to the sign-in page.
+  - Set up through the environment only (`WSC_OIDC_ISSUER`, `WSC_OIDC_CLIENT_ID`, `WSC_OIDC_CLIENT_SECRET`, `WSC_OIDC_REDIRECT_URI`). The button stays hidden until all four are set.
+- **Apps launcher**: a 9-dot button in the header, for admins, opens the WorkSuite Cloud staff apps (Cloud Admin, CloudPanel, IoT, Desk, AI Studio, Update Center). The list comes from WorkSuite Cloud, with a built-in copy when it can't be reached.
+
 ## [1.37.0] — 2026-11-09 — Text to speech
 - **Text to speech** on the Speech page and in the gateway (`POST /api/openai/v1/audio/speech`, OpenAI-compatible). Pick a voice, preview how the text will be read, play, stop, and download WAV or MP3.
 - **Approved voices only**, as the Sinhala engine spec requires:

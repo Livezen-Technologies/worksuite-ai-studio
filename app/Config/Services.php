@@ -29,4 +29,13 @@ class Services extends BaseService
      *     return new \CodeIgniter\Example();
      * }
      */
+
+    /** WorkSuite Cloud staff sign-in (OIDC). Tests swap it with Services::injectMock('wscOidc', ...). */
+    public static function wscOidc(bool $getShared = true): \App\Services\WscOidcService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('wscOidc');
+        }
+        return new \App\Services\WscOidcService();
+    }
 }

@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import { Link as RouterLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link as RouterLink, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { GradientBackground } from '../site/ui';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/20/solid';
 import { FingerPrintIcon } from '@heroicons/react/24/outline';
 import { useAuth, type Session } from '../lib/auth';
-import { ApiError, post } from '../lib/api';
+import { ApiError, get, post } from '../lib/api';
 import { passkeysSupported } from '../lib/webauthn';
 import { Alert, Button, Input } from '../components/ui';
 import { RecoveryCodes, TotpEnrol } from '../components/security';
@@ -17,10 +17,22 @@ type Step =
   | { kind: 'setup'; mfaToken: string; secret: string; uri: string; setupToken: string }
   | { kind: 'codes'; session: Session };
 
-type Busy = 'password' | 'passkey' | 'code' | null;
+type Busy = 'password' | 'passkey' | 'code' | 'wsc' | null;
+
+/** Where "Sign in with WorkSuite Cloud" starts (a full-page redirect through the API). */
+export function wscStartUrl(from: string, silent = false): string {
+  const q = new URLSearchParams();
+  if (from && from !== '/') q.set('from', from);
+  if (silent) q.set('silent', '1');
+  const s = q.toString();
+  return `/api/auth/wsc/start${s ? `?${s}` : ''}`;
+}
 
 export default function Login() {
-  const { user, signIn, signInWithPasskey, completeSession } = useAuth();
+  const { user, signIn, signInWithPasskey, completeSession, restoreSession } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const [wscEnabled, setWscEnabled] = useState(false);
+  const wscHandled = useRef(false);
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState('');
@@ -31,7 +43,29 @@ export default function Login() {
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string>>({});
-  const from = (location.state as { from?: string } | null)?.from ?? '/';
+  const from = (location.state as { from?: string } | null)?.from ?? params.get('from') ?? '/';
+
+  // WorkSuite Cloud staff sign-in: show the button only when the server has it configured,
+  // finish a sign-in that came back (?wsc=ok), show its error (?wsc_error=), or try silently (?sso=1).
+  useEffect(() => {
+    if (wscHandled.current) return;
+    wscHandled.current = true;
+    const err = params.get('wsc_error');
+    if (err) { setError(err); setParams({}, { replace: true }); }
+    if (params.get('wsc') === 'ok') {
+      setBusy('wsc');
+      restoreSession()
+        .then(() => navigate(from.startsWith('/') && !from.startsWith('//') ? from : '/', { replace: true }))
+        .catch((e) => { setError(e instanceof Error ? e.message : 'Sign-in failed.'); setParams({}, { replace: true }); })
+        .finally(() => setBusy(null));
+    }
+    get<{ enabled: boolean }>('/auth/wsc/config')
+      .then((d) => {
+        setWscEnabled(Boolean(d.enabled));
+        if (d.enabled && params.get('sso') === '1' && !user) window.location.assign(wscStartUrl(from, true));
+      })
+      .catch(() => setWscEnabled(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (user) return <Navigate to={from} replace />;
 
@@ -125,11 +159,21 @@ export default function Login() {
                 />
                 <Button type="submit" variant="primary" size="lg" loading={busy === 'password'} disabled={busy !== null} className="w-full">Sign in</Button>
               </form>
-              {passkeysSupported() && (
+              {wscEnabled && (
                 <>
                   <div className="my-6 flex items-center gap-3 text-xs text-slate-400">
                     <span className="h-px flex-1 bg-slate-200 dark:bg-white/10" /> or <span className="h-px flex-1 bg-slate-200 dark:bg-white/10" />
                   </div>
+                  <Button size="lg" loading={busy === 'wsc'} disabled={busy !== null} onClick={() => { setBusy('wsc'); window.location.assign(wscStartUrl(from)); }} className="w-full">Sign in with WorkSuite Cloud</Button>
+                </>
+              )}
+              {passkeysSupported() && (
+                <>
+                  {wscEnabled ? <div className="h-3" /> : (
+                    <div className="my-6 flex items-center gap-3 text-xs text-slate-400">
+                      <span className="h-px flex-1 bg-slate-200 dark:bg-white/10" /> or <span className="h-px flex-1 bg-slate-200 dark:bg-white/10" />
+                    </div>
+                  )}
                   <Button size="lg" icon={FingerPrintIcon} loading={busy === 'passkey'} disabled={busy !== null} onClick={passkey} className="w-full">Sign in with a passkey</Button>
                 </>
               )}

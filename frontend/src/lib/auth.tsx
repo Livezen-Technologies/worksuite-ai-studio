@@ -30,6 +30,8 @@ interface AuthState {
   /** Store a session returned by a later sign-in step (2FA code, enforced setup). */
   completeSession: (s: Session) => void;
   signOut: () => void;
+  /** After "Sign in with WorkSuite Cloud": the server set the refresh cookie; turn it into a session. */
+  restoreSession: () => Promise<void>;
   can: (permission: string) => boolean;
   refreshProfile: () => Promise<void>;
 }
@@ -79,6 +81,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { step: 'done' };
   }, [completeSession]);
 
+  const restoreSession = useCallback(async () => {
+    tokens.set(null);
+    if (!(await refreshAccess())) throw new Error('WorkSuite Cloud sign-in could not be completed. Please try again.');
+    await refreshProfile();
+  }, [refreshProfile]);
+
   const signInWithPasskey = useCallback(async () => {
     const { options, challenge_token } = await api<{ options: RequestOptionsJSON; challenge_token: string }>('/auth/passkey/options', { method: 'POST', body: {} });
     const credential = await getPasskey(options);
@@ -100,8 +108,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ user, loading, signIn, signInWithPasskey, completeSession, signOut, can, refreshProfile }),
-    [user, loading, signIn, signInWithPasskey, completeSession, signOut, can, refreshProfile],
+    () => ({ user, loading, signIn, signInWithPasskey, completeSession, signOut, restoreSession, can, refreshProfile }),
+    [user, loading, signIn, signInWithPasskey, completeSession, signOut, restoreSession, can, refreshProfile],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
