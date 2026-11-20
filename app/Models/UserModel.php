@@ -14,6 +14,7 @@ class UserModel extends Model
     protected $allowedFields    = [
         'name', 'email', 'password_hash', 'role_id', 'avatar', 'status', 'last_login_at',
         'totp_secret', 'totp_enabled_at', 'totp_last_step', 'two_factor_required', 'token_version',
+        'wsc_sub', 'managed_by_wsc', 'wsc_disabled',
     ];
 
     protected $validationRules = [

@@ -21,11 +21,14 @@ interface UserRow {
   created_at?: string | null;
   two_factor_required?: number | string | boolean | null;
   totp_enabled_at?: string | null;
+  managed_by_wsc?: number | string | boolean | null;
 }
 interface Role { id: number; name: string; label: string }
 
 interface FormState { name: string; email: string; password: string; role_id: string; status: string; require2fa: boolean }
 const blank: FormState = { name: '', email: '', password: '', role_id: '', status: 'active', require2fa: false };
+/** WorkSuite Cloud owns this account's role and email (staff SSO account sync). */
+export const wscManaged = (u: { managed_by_wsc?: unknown } | null | undefined) => Boolean(u && Number(u.managed_by_wsc));
 const STATUS_OPTIONS = [{ value: 'active', label: 'Active' }, { value: 'suspended', label: 'Suspended' }];
 
 export default function Users() {
@@ -257,7 +260,8 @@ export default function Users() {
         submitting={save.isPending}
       >
         <Input label="Name" required value={form.name} onChange={(e) => set('name')(e.target.value)} error={errors.name} autoFocus />
-        <Input label="Email" type="email" required value={form.email} onChange={(e) => set('email')(e.target.value)} error={errors.email} autoComplete="off" />
+        <Input label="Email" type="email" required value={form.email} onChange={(e) => set('email')(e.target.value)} error={errors.email} autoComplete="off"
+          disabled={wscManaged(editing)} hint={wscManaged(editing) ? 'Managed in WorkSuite Cloud' : undefined} />
         <Input
           label={editing ? 'New password' : 'Password'}
           type="password"
@@ -269,7 +273,8 @@ export default function Users() {
           autoComplete="new-password"
         />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Select label="Role" required value={form.role_id} onChange={(e) => set('role_id')(e.target.value)} options={roleOptions} placeholder="Choose a role" error={errors.role_id} />
+          <Select label="Role" required value={form.role_id} onChange={(e) => set('role_id')(e.target.value)} options={roleOptions} placeholder="Choose a role" error={errors.role_id}
+            disabled={wscManaged(editing)} hint={wscManaged(editing) ? 'Managed in WorkSuite Cloud' : undefined} />
           <Select
             label="Status"
             value={form.status}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { clearSignedOut, shouldAutoSignIn } from '../lib/wscAuto';
 import { Link as RouterLink, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { GradientBackground } from '../site/ui';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/20/solid';
@@ -46,7 +47,8 @@ export default function Login() {
   const from = (location.state as { from?: string } | null)?.from ?? params.get('from') ?? '/';
 
   // WorkSuite Cloud staff sign-in: show the button only when the server has it configured,
-  // finish a sign-in that came back (?wsc=ok), show its error (?wsc_error=), or try silently (?sso=1).
+  // finish a sign-in that came back (?wsc=ok), show its error (?wsc_error=), or try silently on load
+  // (once per tab; not after an explicit sign-out or with ?local=1). ?sso=1 from the launcher is harmless.
   useEffect(() => {
     if (wscHandled.current) return;
     wscHandled.current = true;
@@ -62,7 +64,10 @@ export default function Login() {
     get<{ enabled: boolean }>('/auth/wsc/config')
       .then((d) => {
         setWscEnabled(Boolean(d.enabled));
-        if (d.enabled && params.get('sso') === '1' && !user) window.location.assign(wscStartUrl(from, true));
+        if (shouldAutoSignIn({ enabled: Boolean(d.enabled), signedIn: Boolean(user), params })) {
+          setBusy('wsc');
+          window.location.assign(wscStartUrl(from, true));
+        }
       })
       .catch(() => setWscEnabled(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -89,6 +94,7 @@ export default function Login() {
     e.preventDefault();
     run('password', async () => {
       const r = await signIn(email.trim(), password);
+      clearSignedOut();
       setCode('');
       if (r.step === 'done') navigate(from, { replace: true });
       else if (r.step === 'mfa') setStep({ kind: 'mfa', mfaToken: r.mfaToken, recovery: false });
@@ -111,7 +117,7 @@ export default function Login() {
     });
   };
 
-  const passkey = () => run('passkey', async () => { await signInWithPasskey(); navigate(from, { replace: true }); });
+  const passkey = () => run('passkey', async () => { await signInWithPasskey(); clearSignedOut(); navigate(from, { replace: true }); });
   const back = () => { setStep({ kind: 'password' }); setCode(''); setError(null); setFields({}); };
 
   const heading = {
@@ -164,7 +170,7 @@ export default function Login() {
                   <div className="my-6 flex items-center gap-3 text-xs text-slate-400">
                     <span className="h-px flex-1 bg-slate-200 dark:bg-white/10" /> or <span className="h-px flex-1 bg-slate-200 dark:bg-white/10" />
                   </div>
-                  <Button size="lg" loading={busy === 'wsc'} disabled={busy !== null} onClick={() => { setBusy('wsc'); window.location.assign(wscStartUrl(from)); }} className="w-full">Sign in with WorkSuite Cloud</Button>
+                  <Button size="lg" loading={busy === 'wsc'} disabled={busy !== null} onClick={() => { setBusy('wsc'); clearSignedOut(); window.location.assign(wscStartUrl(from)); }} className="w-full">Sign in with WorkSuite Cloud</Button>
                 </>
               )}
               {passkeysSupported() && (

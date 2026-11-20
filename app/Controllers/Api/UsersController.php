@@ -47,7 +47,7 @@ class UsersController extends BaseApiController
     {
         if ($r = $this->requirePermission('users.view')) return $r;
         $rows = $this->users()->builder()
-            ->select('users.id, users.name, users.email, users.status, users.role_id, users.avatar, users.last_login_at, users.created_at, users.two_factor_required, users.totp_enabled_at, roles.name AS role, roles.label AS role_label')
+            ->select('users.id, users.name, users.email, users.status, users.role_id, users.avatar, users.last_login_at, users.created_at, users.two_factor_required, users.totp_enabled_at, users.managed_by_wsc, roles.name AS role, roles.label AS role_label')
             ->join('roles', 'roles.id = users.role_id', 'left')
             ->where('users.deleted_at', null)
             ->orderBy('users.id', 'ASC')->get()->getResultArray();
@@ -99,6 +99,17 @@ class UsersController extends BaseApiController
         $data = [];
         foreach (['name', 'role_id', 'status'] as $f) {
             if (isset($in[$f])) $data[$f] = $in[$f];
+        }
+        // WorkSuite Cloud owns the role (and email) of a managed account; a local admin may still suspend it.
+        if (! empty($row['managed_by_wsc'])) {
+            if (isset($data['role_id']) && (int) $data['role_id'] !== (int) $row['role_id']) {
+                return $this->failure('Managed in WorkSuite Cloud: change this role in Cloud Admin.', 422, ['role_id' => 'Managed in WorkSuite Cloud.']);
+            }
+            if (! empty($in['email']) && strtolower(trim($in['email'])) !== $row['email']) {
+                return $this->failure('Managed in WorkSuite Cloud: change this email in Cloud Admin.', 422, ['email' => 'Managed in WorkSuite Cloud.']);
+            }
+            // A local suspension or reactivation is the local admin's call, not WorkSuite Cloud's.
+            if (isset($data['status']) && $data['status'] !== $row['status']) $data['wsc_disabled'] = 0;
         }
         if (isset($data['role_id']) && (int) $data['role_id'] !== (int) $row['role_id']
             && ($why = $this->roleProblem((int) $data['role_id']))) {
@@ -167,7 +178,7 @@ class UsersController extends BaseApiController
     private function one(int $id): array
     {
         return $this->users()->builder()
-            ->select('users.id, users.name, users.email, users.status, users.role_id, users.last_login_at, users.two_factor_required, users.totp_enabled_at, roles.name AS role, roles.label AS role_label')
+            ->select('users.id, users.name, users.email, users.status, users.role_id, users.last_login_at, users.two_factor_required, users.totp_enabled_at, users.managed_by_wsc, roles.name AS role, roles.label AS role_label')
             ->join('roles', 'roles.id = users.role_id', 'left')
             ->where('users.id', $id)->get()->getRowArray() ?? [];
     }

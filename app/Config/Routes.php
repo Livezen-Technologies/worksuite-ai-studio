@@ -38,6 +38,7 @@ $routes->group('api/auth', ['namespace' => 'App\Controllers\Api'], static functi
     $routes->get('wsc/config', 'WscAuthController::config');
     $routes->get('wsc/start', 'WscAuthController::start');
     $routes->get('wsc/callback', 'WscAuthController::callback');
+    $routes->post('wsc/provision', 'WscAuthController::provision');
 });
 
 /*
