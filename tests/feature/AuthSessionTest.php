@@ -38,7 +38,7 @@ final class AuthSessionTest extends CIUnitTestCase
             'status' => ['type' => 'VARCHAR', 'constraint' => 20, 'default' => 'active'],
             'last_login_at' => ['type' => 'DATETIME', 'null' => true], 'totp_secret' => ['type' => 'TEXT', 'null' => true],
             'totp_enabled_at' => ['type' => 'DATETIME', 'null' => true], 'totp_last_step' => ['type' => 'INTEGER', 'null' => true],
-            'two_factor_required' => ['type' => 'INTEGER', 'default' => 0], 'token_version' => ['type' => 'INTEGER', 'default' => 0],
+            'two_factor_required' => ['type' => 'INTEGER', 'default' => 0], 'token_version' => ['type' => 'INTEGER', 'default' => 0], 'managed_by_wsc' => ['type' => 'INTEGER', 'default' => 0],
             'created_at' => ['type' => 'DATETIME', 'null' => true], 'updated_at' => ['type' => 'DATETIME', 'null' => true], 'deleted_at' => ['type' => 'DATETIME', 'null' => true],
         ])->addKey('id', true)->createTable('users');
         $forge->addField([

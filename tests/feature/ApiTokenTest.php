@@ -29,7 +29,7 @@ final class ApiTokenTest extends CIUnitTestCase
         $f->addField($id + ['name' => $null(), 'user_id' => $null('INTEGER'), 'api_key' => $null(), 'secret_hash' => $null(), 'scopes' => $null(),
             'allowed_ips' => $null('TEXT'), 'rate_limit_per_min' => ['type' => 'INTEGER', 'default' => 60], 'status' => $null(),
             'expires_at' => $null('DATETIME'), 'last_used_at' => $null('DATETIME'), 'created_at' => $null('DATETIME'), 'updated_at' => $null('DATETIME'),
-            'revoked_at' => $null('DATETIME'), 'token_version' => ['type' => 'INTEGER', 'default' => 0], 'key_type' => $null()])
+            'revoked_at' => $null('DATETIME'), 'token_version' => ['type' => 'INTEGER', 'default' => 0], 'managed_by_wsc' => ['type' => 'INTEGER', 'default' => 0], 'key_type' => $null()])
             ->addKey('id', true)->createTable('api_keys');
         $f->addField($id + ['name' => $null(), 'rights_status' => $null(), 'item_count' => ['type' => 'INTEGER', 'default' => 0], 'visibility' => $null(),
             'created_by' => $null('INTEGER'), 'manifest_hash' => $null(), 'category' => $null(), 'language' => $null(), 'token_estimate' => $null('INTEGER'),
