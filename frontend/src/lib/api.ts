@@ -85,7 +85,7 @@ export interface RequestOptions {
 }
 
 export function url(path: string, query?: Query): string {
-  const p = path.startsWith('/api') ? path : `/api${path.startsWith('/') ? '' : '/'}${path}`;
+  const p = path === '/api' || path.startsWith('/api/') ? path : `/api${path.startsWith('/') ? '' : '/'}${path}`;
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query ?? {})) if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
   const s = qs.toString();

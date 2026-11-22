@@ -33,7 +33,7 @@ export function DataTable<T>({ columns, rows, rowKey, loading, error, onRetry, e
 }) {
   if (error) return <ErrorState error={error} onRetry={onRetry} />;
   if (loading && !rows) return <SkeletonRows cols={Math.min(columns.length, 5)} />;
-  if (!rows?.length) return <>{empty ?? <EmptyState title="Nothing here yet" />}</>;
+  if (!rows?.length) return <>{typeof empty === 'string' || empty == null ? <EmptyState title={empty ?? 'Nothing here yet'} /> : empty}</>;
   return (
     <>
       <div className="overflow-x-auto">

@@ -3,6 +3,10 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.39.1] — 2026-11-23 — API Keys and API Logs load again
+- **Fixed: API Keys, API Logs and the dashboard's recent requests failed with "Request failed (404)".** The request helper treated any path starting with `/api` as already prefixed, so `/apikeys` and `/apilogs` went to the site root instead of `/api/apikeys` and `/api/apilogs`. Only `/api` and `/api/…` count as prefixed now.
+- **Fixed: a table's empty message** ("No training jobs yet." and others) sat flush against the card edge as bare text; a text message now shows as the standard empty state.
+
 ## [1.39.0] — 2026-11-20 — Admin accounts managed in WorkSuite Cloud
 - **Who can use AI Studio is now decided in Cloud Admin.** "Sign in with WorkSuite Cloud" needs an AI Studio grant there, with one of the staff roles Super Admin, Admin, Developer, Support or Viewer (`super_admin`, `admin`, `developer`, `support`, `viewer`). Customer accounts are never handed out this way.
   - An existing AI Studio user is linked by email (any letter case). Someone without an account here gets one on their first sign-in, with no password of its own.
