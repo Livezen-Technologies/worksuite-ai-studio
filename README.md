@@ -1,5 +1,7 @@
 # WorkSuite AI Studio
 
+**Website:** [WorkSuite AI Studio on worksuitecloud.com](https://worksuitecloud.com/products/aistudio/)
+
 Self-hosted AI control plane, live at https://aistudio.livezentech.com (`/var/www/ollamahub`).
 
 - **Backend:** CodeIgniter 4 (`app/`, `spark`). `composer install`, then `vendor/bin/phpunit` for the tests.
