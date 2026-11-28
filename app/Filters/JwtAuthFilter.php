@@ -7,6 +7,7 @@ use CodeIgniter\HTTP\RequestInterface;
 use CodeIgniter\HTTP\ResponseInterface;
 use App\Models\UserModel;
 use App\Services\JwtService;
+use App\Services\WscAccountSync;
 
 /**
  * JwtAuthFilter — validates a Bearer access token on protected admin/dashboard
@@ -37,6 +38,10 @@ class JwtAuthFilter implements FilterInterface
         $state = (new UserModel())->authState((int) ($payload['sub'] ?? 0));
         if (! $state || ($state['status'] ?? '') !== 'active'
             || (int) ($state['token_version'] ?? 0) !== (int) ($payload['tv'] ?? 0)) {
+            return $this->deny($response, 'Unauthorized: session revoked', 401);
+        }
+        // A WorkSuite Cloud session signed out there (back-channel logout); only `wsc` tokens are checked.
+        if (! empty($payload['wsc']) && (new WscAccountSync())->sessionEnded($payload)) {
             return $this->deny($response, 'Unauthorized: session revoked', 401);
         }
         $payload['role'] = $state['role'] ?? 'viewer';

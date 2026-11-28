@@ -3,6 +3,15 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.40.0] — 2026-11-28 — WorkSuite Cloud sign-in ready to move to auth.worksuitecloud.com
+Nothing changes when this release is deployed: every new setting defaults to today's behaviour.
+- **The sign-in issuer is one switch** (`WSC_OIDC_ISSUER`): every endpoint comes from that issuer's discovery document, and the keys are fetched per issuer. A sign-in remembers the issuer it started under and the id_token must name that issuer, so changing the setting mid-sign-in fails (or finishes) that one sign-in cleanly.
+- **Both WorkSuite issuers are accepted** on account sync events and logout tokens (`WSC_OIDC_ACCEPTED_ISSUERS`, default `https://account.worksuitecloud.com/oauth` and `https://auth.worksuitecloud.com`). Account sync events keep coming from the account issuer after the move.
+- **Signing out of WorkSuite Cloud signs you out of AI Studio** (back-channel logout, `POST /api/auth/wsc/backchannel-logout`). It ends the AI Studio sessions made by that WorkSuite Cloud sign-in, or with no session id every WorkSuite Cloud session of that admin. Password and passkey sessions are never touched. Inert until the address is registered in WorkSuite Cloud.
+- **Sign-in policy** (`WSC_SSO_POLICY`): `local` (no WorkSuite Cloud sign-in), `oneauth_optional` (default, today), `oneauth_preferred` (the WorkSuite Cloud button leads, the password form sits behind "Use a password instead"; `?local=1` shows it), `oneauth_required` (the server refuses password and passkey sign-in for accounts linked to WorkSuite Cloud, except those in `WSC_SSO_BREAKGLASS` and accounts never linked).
+- The audit log records each WorkSuite Cloud sign-in with its issuer and, when sent, how the admin signed in there (`acr`, `amr`).
+- Database: migration `2026-11-28-000040_AddWscEndedSessions` (table `wsc_ended_sessions`).
+
 ## [1.39.1] — 2026-11-23 — API Keys and API Logs load again
 - **Fixed: API Keys, API Logs and the dashboard's recent requests failed with "Request failed (404)".** The request helper treated any path starting with `/api` as already prefixed, so `/apikeys` and `/apilogs` went to the site root instead of `/api/apikeys` and `/api/apilogs`. Only `/api` and `/api/…` count as prefixed now.
 - **Fixed: a table's empty message** ("No training jobs yet." and others) sat flush against the card edge as bare text; a text message now shows as the standard empty state.

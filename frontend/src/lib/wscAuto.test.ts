@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SIGNED_OUT_KEY, TRIED_KEY, clearSignedOut, markSignedOut, shouldAutoSignIn } from './wscAuto';
+import { SIGNED_OUT_KEY, TRIED_KEY, clearSignedOut, leadsWithWsc, markSignedOut, shouldAutoSignIn } from './wscAuto';
 
 function store(): Storage {
   const m = new Map<string, string>();
@@ -35,5 +35,16 @@ describe('WorkSuite Cloud auto sign-in', () => {
 
   it('does nothing when storage is unavailable', () => {
     expect(shouldAutoSignIn({ enabled: true, signedIn: false, params: p() }, null, null)).toBe(false);
+  });
+});
+
+describe('WSC_SSO_POLICY on the sign-in page', () => {
+  it('leads with WorkSuite Cloud only under preferred and required, and not with ?local=1', () => {
+    expect(leadsWithWsc({ enabled: true, policy: 'oneauth_optional', params: p() })).toBe(false);
+    expect(leadsWithWsc({ enabled: true, policy: 'oneauth_preferred', params: p() })).toBe(true);
+    expect(leadsWithWsc({ enabled: true, policy: 'oneauth_required', params: p() })).toBe(true);
+    expect(leadsWithWsc({ enabled: true, policy: 'oneauth_required', params: p('local=1') })).toBe(false);
+    expect(leadsWithWsc({ enabled: false, policy: 'local', params: p() })).toBe(false);
+    expect(leadsWithWsc({ enabled: true, params: p() })).toBe(false);
   });
 });

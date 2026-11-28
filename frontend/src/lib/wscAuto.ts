@@ -36,3 +36,16 @@ export function markSignedOut(device: Store | null = safe(() => window.localStor
 export function clearSignedOut(device: Store | null = safe(() => window.localStorage, null)): void {
   safe(() => device?.removeItem(SIGNED_OUT_KEY), undefined);
 }
+
+/** WSC_SSO_POLICY as the server reports it (GET /api/auth/wsc/config). */
+export type SsoPolicy = 'local' | 'oneauth_optional' | 'oneauth_preferred' | 'oneauth_required';
+
+/**
+ * Whether the sign-in page leads with "Sign in with WorkSuite Cloud" and keeps the password form behind
+ * "Use a password instead" (oneauth_preferred / oneauth_required). ?local=1 shows the form straight away.
+ */
+export function leadsWithWsc(opts: { enabled: boolean; policy?: string; params: URLSearchParams }): boolean {
+  const { enabled, policy, params } = opts;
+  if (!enabled || params.get('local') === '1') return false;
+  return policy === 'oneauth_preferred' || policy === 'oneauth_required';
+}

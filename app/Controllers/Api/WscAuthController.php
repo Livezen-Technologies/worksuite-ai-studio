@@ -2,6 +2,7 @@
 
 namespace App\Controllers\Api;
 
+use App\Filters\AuditFilter;
 use App\Models\UserModel;
 use App\Services\JwtService;
 use App\Services\WscAccountSync;
@@ -15,6 +16,11 @@ use RuntimeException;
  *   GET /api/auth/wsc/start?from=&silent=1 -> 302 to OneAuth, flow state in a short-lived signed cookie
  *   GET /api/auth/wsc/callback?code&state -> 302 to /login?wsc=ok (refresh cookie set) or /login?wsc_error=…
  *   POST /api/auth/wsc/provision           -> 204; a signed provisioning event (application/jwt) from WorkSuite Cloud
+ *   POST /api/auth/wsc/backchannel-logout  -> 200; logout_token (OIDC Back-Channel Logout 1.0) from WorkSuite Cloud
+ *
+ * SSO Phase B: the flow remembers the issuer it started under and the id_token must carry it, so flipping
+ * WSC_OIDC_ISSUER mid-sign-in fails that one sign-in cleanly. WSC_SSO_POLICY=local turns the start and
+ * callback routes off (provisioning and back-channel logout keep working).
  *
  * Part 2 (admin account sync): access to AI Studio is granted in Cloud Admin. The id_token must carry
  * `wsc_app_role` (an AI Studio staff role code). The user is found by `wsc_sub`, else by email (any
@@ -30,13 +36,15 @@ class WscAuthController extends BaseApiController
 
     public function config()
     {
-        return $this->ok(['enabled' => $this->oidc()->enabled()]);
+        $oidc = $this->oidc();
+        return $this->ok(['enabled' => $oidc->signInOffered(), 'policy' => $oidc->policy()]);
     }
 
     public function start()
     {
         $oidc = $this->oidc();
         if (! $oidc->enabled()) return $this->toLogin(['wsc_error' => 'WorkSuite Cloud sign-in is not set up.']);
+        if (! $oidc->signInOffered()) return $this->toLogin(['wsc_error' => 'WorkSuite Cloud sign-in is turned off for AI Studio.']);
         if (! service('throttler')->check('auth-wsc-' . md5($this->request->getIPAddress()), 30, MINUTE)) {
             return $this->toLogin(['wsc_error' => 'Too many attempts. Wait a minute and try again.']);
         }
@@ -46,13 +54,14 @@ class WscAuthController extends BaseApiController
         [$verifier, $challenge] = WscOidcService::pkce();
         $state = WscOidcService::random();
         $nonce = WscOidcService::random();
+        $iss   = $oidc->issuer();
 
         try {
-            $url = $oidc->authorizeUrl($state, $nonce, $challenge, $silent);
+            $url = $oidc->authorizeUrl($state, $nonce, $challenge, $silent, $iss);
         } catch (RuntimeException $e) {
             return $this->toLogin(['wsc_error' => $e->getMessage()]);
         }
-        $flow = (new JwtService())->generateStepToken('wsc', compact('state', 'nonce', 'verifier', 'from', 'silent'), 600);
+        $flow = (new JwtService())->generateStepToken('wsc', compact('state', 'nonce', 'verifier', 'from', 'silent', 'iss'), 600);
         $this->flowCookie($flow, 600);
         return $this->response->redirect($url);
     }
@@ -78,9 +87,17 @@ class WscAuthController extends BaseApiController
         }
         $code = (string) $this->request->getGet('code');
         if ($code === '') return $this->toLogin(['wsc_error' => 'WorkSuite Cloud could not sign you in.']);
+        $oidc = $this->oidc();
+        if (! $oidc->signInOffered()) return $this->toLogin(['wsc_error' => 'WorkSuite Cloud sign-in is turned off for AI Studio.']);
 
+        // The issuer this flow started under (flows started before Phase B carry none: the configured one).
+        // It must still be one we accept, so a flow from a dropped issuer can't finish after a change.
+        $iss = rtrim((string) ($flow['iss'] ?? $oidc->issuer()), '/');
+        if ($iss !== $oidc->issuer() && ! in_array($iss, $oidc->acceptedIssuers(), true)) {
+            return $this->toLogin(['wsc_error' => 'WorkSuite Cloud sign-in changed while you were signing in. Please try again.']);
+        }
         try {
-            $claims = $this->oidc()->exchange($code, (string) $flow['verifier'], (string) $flow['nonce']);
+            $claims = $oidc->exchange($code, (string) $flow['verifier'], (string) $flow['nonce'], $iss);
         } catch (RuntimeException $e) {
             return $this->toLogin(['wsc_error' => $e->getMessage()]);
         }
@@ -111,7 +128,10 @@ class WscAuthController extends BaseApiController
 
         $users->update($id, ['last_login_at' => date('Y-m-d H:i:s')]);
         $jwt = new JwtService();
-        $this->refreshCookie($jwt->generateRefreshToken($id, (int) ($row['token_version'] ?? 0)), $jwt->refreshTtl());
+        // The id_token's sid goes on the session, so a back-channel logout of that sid ends it.
+        $session = ['wsc' => 1, 'wsc_sid' => (string) ($claims['sid'] ?? '')];
+        $this->refreshCookie($jwt->generateRefreshToken($id, (int) ($row['token_version'] ?? 0), $session), $jwt->refreshTtl());
+        AuditFilter::record(self::signInAudit($claims, $iss), '/api/auth/wsc/callback', $id, $email);
         return $this->toLogin(['wsc' => 'ok', 'from' => $from]);
     }
 
@@ -149,6 +169,43 @@ class WscAuthController extends BaseApiController
             return $this->failure($e->getMessage(), 400);
         }
         return $this->response->setStatusCode(204);
+    }
+
+    /**
+     * Back-channel logout (OIDC Back-Channel Logout 1.0). Form field logout_token; no cookies, no CSRF.
+     * Ends the sessions made by its sid, or with no sid every OneAuth-made session of the user linked to
+     * sub. 200 (no-store) for a good token even when nothing matched; 400 invalid_request otherwise.
+     * Inert until OneAuth has this URI registered for the client.
+     */
+    public function backchannelLogout()
+    {
+        $oidc = $this->oidc();
+        if (! $oidc->enabled()) return $this->response->setStatusCode(404);
+        $bad = fn () => $this->response->setStatusCode(400)->setHeader('Cache-Control', 'no-store')->setJSON(['error' => 'invalid_request']);
+        $jwt = trim((string) ($this->request->getPost('logout_token') ?? ''));
+        if ($jwt === '' || strlen($jwt) > 16384 || substr_count($jwt, '.') !== 2) return $bad();
+
+        try {
+            $c = $oidc->verifyLogoutToken($jwt);
+        } catch (RuntimeException $e) {
+            log_message('notice', 'Back-channel logout refused: {msg}', ['msg' => $e->getMessage()]);
+            return $bad();
+        }
+        $sync = new WscAccountSync();
+        $keep = max((int) ($c['exp'] ?? 0), time() + 600); // 10 minutes, or until exp
+        if (! $sync->claimJti('bcl:' . $c['jti'], $keep)) return $bad();
+
+        $sync->endSessions(trim((string) ($c['sid'] ?? '')), trim((string) ($c['sub'] ?? '')), (new JwtService())->refreshTtl());
+        return $this->response->setStatusCode(200)->setHeader('Cache-Control', 'no-store')->setBody('');
+    }
+
+    /** Audit line for a WorkSuite Cloud sign-in: the issuer and, when sent, acr / amr. */
+    public static function signInAudit(array $claims, string $iss): string
+    {
+        $acr = (string) ($claims['acr'] ?? '');
+        $amr = implode(' ', array_map('strval', (array) ($claims['amr'] ?? [])));
+        $parts = array_filter([parse_url($iss, PHP_URL_HOST) ?: $iss, $acr !== '' ? 'acr ' . preg_replace('#^urn:worksuite:acr:#', '', $acr) : '', $amr !== '' ? 'amr ' . $amr : '']);
+        return mb_substr('wsc sign-in (' . implode(', ', $parts) . ')', 0, 120);
     }
 
     private function toLogin(array $q)
