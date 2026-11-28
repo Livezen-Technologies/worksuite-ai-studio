@@ -27,6 +27,11 @@ class AuditFilter implements FilterInterface
     {
         $method = strtoupper($request->getMethod());
         $path = $request->getUri()->getPath();
+        // Every call that came through the WorkSuite API Gateway is recorded, reads included, with who it was.
+        if (\App\Libraries\Gateway\GatewayReceiver::caller() !== null) {
+            self::recordGateway($method, '/' . ltrim($path, '/'), $response->getStatusCode());
+            return;
+        }
         $download = $method === 'GET' && preg_match(self::DOWNLOAD, $path);
         if (! in_array($method, self::MUTATING, true) && ! $download) {
             return;
@@ -74,6 +79,33 @@ class AuditFilter implements FilterInterface
             ]);
         } catch (\Throwable $e) {
             log_message('error', 'Audit log write failed for {path}: {msg}', ['path' => $path, 'msg' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Audit row for a call through the WorkSuite API Gateway: the key's owner, the gateway subject as the name, and
+     * the assertion's jti (request id), sub, sub_type, cred, client_id, project, env and node in `meta`.
+     */
+    public static function recordGateway(string $method, string $path, int $status): void
+    {
+        $c = \App\Libraries\Gateway\GatewayReceiver::caller();
+        if ($c === null || ! empty($_SERVER['ohub_gateway_audited'])) return;
+        $_SERVER['ohub_gateway_audited'] = true;
+        $key = $_SERVER['ohub_api_key'] ?? [];
+        try {
+            \Config\Database::connect()->table('audit_logs')->insert([
+                'user_id'    => isset($key['user_id']) ? (int) $key['user_id'] : null,
+                'user_name'  => mb_substr('gateway ' . $c['sub'], 0, 120),
+                'action'     => mb_substr('gateway ' . strtolower($method) . ' ' . preg_replace('#^/?api/#', '', $path), 0, 120),
+                'method'     => strtoupper($method),
+                'path'       => mb_substr('/' . ltrim($path, '/'), 0, 191),
+                'status'     => $status,
+                'ip'         => service('request')->getIPAddress(),
+                'meta'       => \App\Libraries\Gateway\GatewayReceiver::auditMeta(),
+                'created_at' => date('Y-m-d H:i:s'),
+            ]);
+        } catch (\Throwable $e) {
+            log_message('error', 'Audit log write failed for gateway {method} {path}: {msg}', ['method' => $method, 'path' => $path, 'msg' => $e->getMessage()]);
         }
     }
 

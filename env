@@ -63,6 +63,22 @@
 # session.savePath = null
 
 #--------------------------------------------------------------------
+# WORKSUITE API GATEWAY (api.worksuitecloud.com; docs/api-gateway.md)
+#--------------------------------------------------------------------
+# Off by default: a request with "Authorization: WS-API-Gateway ..." gets 401 GATEWAY_DISABLED and
+# nothing else changes. On, those requests are verified; key/secret and access tokens keep working.
+# APIM_GATEWAY_ENABLED = false
+# APIM_GATEWAY_JWKS_URL = https://api.worksuitecloud.com/.well-known/apim-gateway-jwks.json
+# APIM_GATEWAY_ISSUER = https://api.worksuitecloud.com
+# APIM_GATEWAY_AUDIENCE = ai-studio
+# The gateway node's egress IP(s), comma separated. Empty trusts nothing.
+# APIM_GATEWAY_TRUSTED_CIDRS =
+# API console organization ids whose credentials may call (Livezen Technologies). Empty: none.
+# APIM_GATEWAY_ORGS =
+# Behind the local nginx, trust it so the gateway's address is read from the last X-Forwarded-For hop:
+# app.proxyIPs = "127.0.0.1=X-Forwarded-For"
+
+#--------------------------------------------------------------------
 # LOGGER
 #--------------------------------------------------------------------
 
