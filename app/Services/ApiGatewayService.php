@@ -131,6 +131,9 @@ class ApiGatewayService
     public function log(array $data): int
     {
         $data['created_at'] = date('Y-m-d H:i:s');
+        if ((int) ($data['status'] ?? 0) === 200) { // token use reported back to the API gateway (gateway callers only)
+            \App\Libraries\Gateway\GatewayReceiver::meter($data['model'] ?? null, $data['prompt_tokens'] ?? null, $data['completion_tokens'] ?? null);
+        }
         return (int) (new ApiLogModel())->insert($data, true);
     }
 

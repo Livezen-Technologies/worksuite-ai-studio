@@ -1,0 +1,237 @@
+{
+  "_comment": [
+    "Cross-language test vectors for the gateway identity assertion (data-plane contract section 8).",
+    "Run every vector in order against ONE verifier configured with: the jwks below, issuer, audience, a clock fixed at now (unix seconds), 30 s leeway, 60 s maximum lifetime and a replay cache shared by all vectors.",
+    "Each vector is a request with that method and path carrying the token; expect is accept or reject, and reason is the rejection code (see assertion.Reason).",
+    "Regenerate with: go test ./internal/assertion -run TestVectors -update"
+  ],
+  "algorithm": "ES256",
+  "issuer": "https://api.worksuitecloud.com",
+  "audience": "worksuite-cloud",
+  "now": 1795000010,
+  "leeway_s": 30,
+  "max_lifetime_s": 60,
+  "replay_window_s": 120,
+  "test_only_key": {
+    "warning": "TEST-ONLY KEY, published on purpose. Never configure it on a gateway or trust it in a receiver outside tests.",
+    "kid": "test-vector-1",
+    "derivation": "d = SHA-256(\"worksuite apim assertion test vector key v1\") as a big-endian P-256 scalar",
+    "d": "0O3L6ZBDrti2P9VCOKbHSFIIFw8AS90-vG4nRYKqpzw",
+    "x": "pKf9dJXDXCQiMNuJZaEbCqGJJqmZe2CVbWTvRoOqek8",
+    "y": "LFZaxVL2fejS3uDaMxHsgMAQtSWRuOj2E7TtLyYLhNg",
+    "private_key_pem": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg0O3L6ZBDrti2P9VC\nOKbHSFIIFw8AS90+vG4nRYKqpzyhRANCAASkp/10lcNcJCIw24lloRsKoYkmqZl7\nYJVtZO9Gg6p6TyxWWsVS9n3o0t7g2jMR7IDAELUlkbjo9hO07S8mC4TY\n-----END PRIVATE KEY-----\n",
+    "public_key_pem": "-----BEGIN PUBLIC KEY-----\nKey-Id: test-vector-1\n\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpKf9dJXDXCQiMNuJZaEbCqGJJqmZ\ne2CVbWTvRoOqek8sVlrFUvZ96NLe4NozEeyAwBC1JZG46PYTtO0vJguE2A==\n-----END PUBLIC KEY-----\n"
+  },
+  "jwks": {
+    "keys": [
+      {
+        "kty": "EC",
+        "crv": "P-256",
+        "kid": "test-vector-1",
+        "use": "sig",
+        "alg": "ES256",
+        "x": "pKf9dJXDXCQiMNuJZaEbCqGJJqmZe2CVbWTvRoOqek8",
+        "y": "LFZaxVL2fejS3uDaMxHsgMAQtSWRuOj2E7TtLyYLhNg"
+      }
+    ]
+  },
+  "vectors": [
+    {
+      "name": "valid",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDAzMCwianRpIjoicmVxX3ZlY3RvcjoxIiwiaHRtIjoiR0VUIiwiaHRwIjoiL3YxL2NybS9jb250YWN0cyIsInN1YiI6ImRldnxoYXNhcmluZGEiLCJzdWJfdHlwZSI6InVzZXIiLCJvcmciOiJvcmctMSIsInByb2plY3QiOiJwcm9qLTEiLCJlbnYiOiJwcm9kdWN0aW9uIiwiY3JlZCI6ImNyZWQtMSIsImNyZWRfdHlwZSI6Im9hdXRoX2FwcCIsImNsaWVudF9pZCI6IndzY19wb3NfZGVza3RvcF83MWMyIiwic2NvcGVzIjpbImNybS5jb250YWN0cy5yZWFkIl0sImFwaSI6ImNybS52MSIsInJvdXRlIjoicm91dGUtMSIsInJlZ2lvbiI6InNpbmdhcG9yZSIsIm5vZGUiOiJzZy1ndy0wMyJ9.72shKzXfkOvbEm4Yr4PW9l52X9ImxrMEBQaNZYHgptsQrM2spvVo54tMgU7Vc08_3RYzH2Y4t7JB2gZ2HHnhqQ",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "accept",
+      "claims": {
+        "iss": "https://api.worksuitecloud.com",
+        "aud": "worksuite-cloud",
+        "iat": 1795000000,
+        "exp": 1795000030,
+        "jti": "req_vector:1",
+        "htm": "GET",
+        "htp": "/v1/crm/contacts",
+        "sub": "dev|hasarinda",
+        "sub_type": "user",
+        "org": "org-1",
+        "project": "proj-1",
+        "env": "production",
+        "cred": "cred-1",
+        "cred_type": "oauth_app",
+        "client_id": "wsc_pos_desktop_71c2",
+        "scopes": [
+          "crm.contacts.read"
+        ],
+        "api": "crm.v1",
+        "route": "route-1",
+        "region": "singapore",
+        "node": "sg-gw-03"
+      }
+    },
+    {
+      "name": "replayed jti (the valid token again)",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDAzMCwianRpIjoicmVxX3ZlY3RvcjoxIiwiaHRtIjoiR0VUIiwiaHRwIjoiL3YxL2NybS9jb250YWN0cyIsInN1YiI6ImRldnxoYXNhcmluZGEiLCJzdWJfdHlwZSI6InVzZXIiLCJvcmciOiJvcmctMSIsInByb2plY3QiOiJwcm9qLTEiLCJlbnYiOiJwcm9kdWN0aW9uIiwiY3JlZCI6ImNyZWQtMSIsImNyZWRfdHlwZSI6Im9hdXRoX2FwcCIsImNsaWVudF9pZCI6IndzY19wb3NfZGVza3RvcF83MWMyIiwic2NvcGVzIjpbImNybS5jb250YWN0cy5yZWFkIl0sImFwaSI6ImNybS52MSIsInJvdXRlIjoicm91dGUtMSIsInJlZ2lvbiI6InNpbmdhcG9yZSIsIm5vZGUiOiJzZy1ndy0wMyJ9.72shKzXfkOvbEm4Yr4PW9l52X9ImxrMEBQaNZYHgptsQrM2spvVo54tMgU7Vc08_3RYzH2Y4t7JB2gZ2HHnhqQ",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "replay"
+    },
+    {
+      "name": "wrong alg (RS256 header)",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDAzMCwianRpIjoicmVxX3ZlY3RvcjphbGciLCJodG0iOiJHRVQiLCJodHAiOiIvdjEvY3JtL2NvbnRhY3RzIiwic3ViIjoiZGV2fGhhc2FyaW5kYSIsInN1Yl90eXBlIjoidXNlciIsIm9yZyI6Im9yZy0xIiwicHJvamVjdCI6InByb2otMSIsImVudiI6InByb2R1Y3Rpb24iLCJjcmVkIjoiY3JlZC0xIiwiY3JlZF90eXBlIjoib2F1dGhfYXBwIiwiY2xpZW50X2lkIjoid3NjX3Bvc19kZXNrdG9wXzcxYzIiLCJzY29wZXMiOlsiY3JtLmNvbnRhY3RzLnJlYWQiXSwiYXBpIjoiY3JtLnYxIiwicm91dGUiOiJyb3V0ZS0xIiwicmVnaW9uIjoic2luZ2Fwb3JlIiwibm9kZSI6InNnLWd3LTAzIn0.yuDbWXCpXsqClCi6PiBDgfX10X1_S78bL49EJFX3TS9Bu-674Rw4puQtcNnG-gtdsRLxEUULztvkLSREDh7P-w",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "alg"
+    },
+    {
+      "name": "alg none, no signature",
+      "token": "eyJhbGciOiJub25lIiwidHlwIjoid3NhcGktZ2F0ZXdheStqd3QiLCJraWQiOiJ0ZXN0LXZlY3Rvci0xIn0.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDAzMCwianRpIjoicmVxX3ZlY3Rvcjpub25lIiwiaHRtIjoiR0VUIiwiaHRwIjoiL3YxL2NybS9jb250YWN0cyIsInN1YiI6ImRldnxoYXNhcmluZGEiLCJzdWJfdHlwZSI6InVzZXIiLCJvcmciOiJvcmctMSIsInByb2plY3QiOiJwcm9qLTEiLCJlbnYiOiJwcm9kdWN0aW9uIiwiY3JlZCI6ImNyZWQtMSIsImNyZWRfdHlwZSI6Im9hdXRoX2FwcCIsImNsaWVudF9pZCI6IndzY19wb3NfZGVza3RvcF83MWMyIiwic2NvcGVzIjpbImNybS5jb250YWN0cy5yZWFkIl0sImFwaSI6ImNybS52MSIsInJvdXRlIjoicm91dGUtMSIsInJlZ2lvbiI6InNpbmdhcG9yZSIsIm5vZGUiOiJzZy1ndy0wMyJ9.",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "alg"
+    },
+    {
+      "name": "wrong typ",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InRlc3QtdmVjdG9yLTEifQ.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDAzMCwianRpIjoicmVxX3ZlY3Rvcjp0eXAiLCJodG0iOiJHRVQiLCJodHAiOiIvdjEvY3JtL2NvbnRhY3RzIiwic3ViIjoiZGV2fGhhc2FyaW5kYSIsInN1Yl90eXBlIjoidXNlciIsIm9yZyI6Im9yZy0xIiwicHJvamVjdCI6InByb2otMSIsImVudiI6InByb2R1Y3Rpb24iLCJjcmVkIjoiY3JlZC0xIiwiY3JlZF90eXBlIjoib2F1dGhfYXBwIiwiY2xpZW50X2lkIjoid3NjX3Bvc19kZXNrdG9wXzcxYzIiLCJzY29wZXMiOlsiY3JtLmNvbnRhY3RzLnJlYWQiXSwiYXBpIjoiY3JtLnYxIiwicm91dGUiOiJyb3V0ZS0xIiwicmVnaW9uIjoic2luZ2Fwb3JlIiwibm9kZSI6InNnLWd3LTAzIn0.HjHzC2NKmYsHR8gAIF4BbD9MNB2Ra9e-N4k1jDZlUvphxDjED_Ig1J3xuzjtTWAmP5mSP0-2ut82p6YY2lbQmA",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "typ"
+    },
+    {
+      "name": "unknown kid",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoiZ3ctcmV0aXJlZCJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDAzMCwianRpIjoicmVxX3ZlY3RvcjpraWQiLCJodG0iOiJHRVQiLCJodHAiOiIvdjEvY3JtL2NvbnRhY3RzIiwic3ViIjoiZGV2fGhhc2FyaW5kYSIsInN1Yl90eXBlIjoidXNlciIsIm9yZyI6Im9yZy0xIiwicHJvamVjdCI6InByb2otMSIsImVudiI6InByb2R1Y3Rpb24iLCJjcmVkIjoiY3JlZC0xIiwiY3JlZF90eXBlIjoib2F1dGhfYXBwIiwiY2xpZW50X2lkIjoid3NjX3Bvc19kZXNrdG9wXzcxYzIiLCJzY29wZXMiOlsiY3JtLmNvbnRhY3RzLnJlYWQiXSwiYXBpIjoiY3JtLnYxIiwicm91dGUiOiJyb3V0ZS0xIiwicmVnaW9uIjoic2luZ2Fwb3JlIiwibm9kZSI6InNnLWd3LTAzIn0.KCtOmiCrumZGlAPp2hyxltFHDCqR3nMPC2l6oSSOL7BDjCAmA0z-ZIx4VQ9U_li4I6yQNTaYSiSvZPwVMF6ZCg",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "unknown_kid"
+    },
+    {
+      "name": "bad signature",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDAzMCwianRpIjoicmVxX3ZlY3RvcjpiYWQtc2lnbmF0dXJlIiwiaHRtIjoiR0VUIiwiaHRwIjoiL3YxL2NybS9jb250YWN0cyIsInN1YiI6ImRldnxoYXNhcmluZGEiLCJzdWJfdHlwZSI6InVzZXIiLCJvcmciOiJvcmctMSIsInByb2plY3QiOiJwcm9qLTEiLCJlbnYiOiJwcm9kdWN0aW9uIiwiY3JlZCI6ImNyZWQtMSIsImNyZWRfdHlwZSI6Im9hdXRoX2FwcCIsImNsaWVudF9pZCI6IndzY19wb3NfZGVza3RvcF83MWMyIiwic2NvcGVzIjpbImNybS5jb250YWN0cy5yZWFkIl0sImFwaSI6ImNybS52MSIsInJvdXRlIjoicm91dGUtMSIsInJlZ2lvbiI6InNpbmdhcG9yZSIsIm5vZGUiOiJzZy1ndy0wMyJ9.Zqr1cbD1LoY1EH55N0g9c08_XQDo9RcT0eqpC3ZhXWmPtqWPxI5NLrYAAcv4ugw9Z8mwOT40qVrSwGc7LDrixQ",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "signature"
+    },
+    {
+      "name": "wrong iss",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2V2aWwuZXhhbXBsZS5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDAzMCwianRpIjoicmVxX3ZlY3Rvcjppc3MiLCJodG0iOiJHRVQiLCJodHAiOiIvdjEvY3JtL2NvbnRhY3RzIiwic3ViIjoiZGV2fGhhc2FyaW5kYSIsInN1Yl90eXBlIjoidXNlciIsIm9yZyI6Im9yZy0xIiwicHJvamVjdCI6InByb2otMSIsImVudiI6InByb2R1Y3Rpb24iLCJjcmVkIjoiY3JlZC0xIiwiY3JlZF90eXBlIjoib2F1dGhfYXBwIiwiY2xpZW50X2lkIjoid3NjX3Bvc19kZXNrdG9wXzcxYzIiLCJzY29wZXMiOlsiY3JtLmNvbnRhY3RzLnJlYWQiXSwiYXBpIjoiY3JtLnYxIiwicm91dGUiOiJyb3V0ZS0xIiwicmVnaW9uIjoic2luZ2Fwb3JlIiwibm9kZSI6InNnLWd3LTAzIn0.NvUBcvDn1wI4Si0R4eeDF7lHqyAIRcXeEIRT_1LZvcQswuqyW_wRDI4esd1MnzgIaphmopkxpYyMj_X5tlsMTg",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "iss"
+    },
+    {
+      "name": "wrong aud",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtaW90IiwiaWF0IjoxNzk1MDAwMDAwLCJleHAiOjE3OTUwMDAwMzAsImp0aSI6InJlcV92ZWN0b3I6YXVkIiwiaHRtIjoiR0VUIiwiaHRwIjoiL3YxL2NybS9jb250YWN0cyIsInN1YiI6ImRldnxoYXNhcmluZGEiLCJzdWJfdHlwZSI6InVzZXIiLCJvcmciOiJvcmctMSIsInByb2plY3QiOiJwcm9qLTEiLCJlbnYiOiJwcm9kdWN0aW9uIiwiY3JlZCI6ImNyZWQtMSIsImNyZWRfdHlwZSI6Im9hdXRoX2FwcCIsImNsaWVudF9pZCI6IndzY19wb3NfZGVza3RvcF83MWMyIiwic2NvcGVzIjpbImNybS5jb250YWN0cy5yZWFkIl0sImFwaSI6ImNybS52MSIsInJvdXRlIjoicm91dGUtMSIsInJlZ2lvbiI6InNpbmdhcG9yZSIsIm5vZGUiOiJzZy1ndy0wMyJ9.jKusiHfRJpgz1kqs8BikncxEnmlhCzJmnUYNYTfg_y2S_CCWxd-p7pAWOG1gA06eDUtI9f_QW1c_dsUUesIk1A",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "aud"
+    },
+    {
+      "name": "expired (exp 70 s ago, beyond the 30 s leeway)",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTQ5OTk5MTAsImV4cCI6MTc5NDk5OTk0MCwianRpIjoicmVxX3ZlY3RvcjpleHBpcmVkIiwiaHRtIjoiR0VUIiwiaHRwIjoiL3YxL2NybS9jb250YWN0cyIsInN1YiI6ImRldnxoYXNhcmluZGEiLCJzdWJfdHlwZSI6InVzZXIiLCJvcmciOiJvcmctMSIsInByb2plY3QiOiJwcm9qLTEiLCJlbnYiOiJwcm9kdWN0aW9uIiwiY3JlZCI6ImNyZWQtMSIsImNyZWRfdHlwZSI6Im9hdXRoX2FwcCIsImNsaWVudF9pZCI6IndzY19wb3NfZGVza3RvcF83MWMyIiwic2NvcGVzIjpbImNybS5jb250YWN0cy5yZWFkIl0sImFwaSI6ImNybS52MSIsInJvdXRlIjoicm91dGUtMSIsInJlZ2lvbiI6InNpbmdhcG9yZSIsIm5vZGUiOiJzZy1ndy0wMyJ9.RxM38p04YE30lUaU5m_fZSFyHxzsC2jVmYej2q0lv8HEtZqDeXtwvEBin8JQoJje821ibQhPYalFEUaG6qTfrw",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "expired"
+    },
+    {
+      "name": "expired 20 s ago, inside the leeway",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTQ5OTk5NjAsImV4cCI6MTc5NDk5OTk5MCwianRpIjoicmVxX3ZlY3RvcjpsZWV3YXkiLCJodG0iOiJHRVQiLCJodHAiOiIvdjEvY3JtL2NvbnRhY3RzIiwic3ViIjoiZGV2fGhhc2FyaW5kYSIsInN1Yl90eXBlIjoidXNlciIsIm9yZyI6Im9yZy0xIiwicHJvamVjdCI6InByb2otMSIsImVudiI6InByb2R1Y3Rpb24iLCJjcmVkIjoiY3JlZC0xIiwiY3JlZF90eXBlIjoib2F1dGhfYXBwIiwiY2xpZW50X2lkIjoid3NjX3Bvc19kZXNrdG9wXzcxYzIiLCJzY29wZXMiOlsiY3JtLmNvbnRhY3RzLnJlYWQiXSwiYXBpIjoiY3JtLnYxIiwicm91dGUiOiJyb3V0ZS0xIiwicmVnaW9uIjoic2luZ2Fwb3JlIiwibm9kZSI6InNnLWd3LTAzIn0.6aCUCERGI8Txc89Ua3wJZO1bAvJqsRKpLv-C64ji-XPcoEhe_ONXJqNPSmbzdCuARPom8uvY_fOOKVfD-oGJPQ",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "accept",
+      "claims": {
+        "iss": "https://api.worksuitecloud.com",
+        "aud": "worksuite-cloud",
+        "iat": 1794999960,
+        "exp": 1794999990,
+        "jti": "req_vector:leeway",
+        "htm": "GET",
+        "htp": "/v1/crm/contacts",
+        "sub": "dev|hasarinda",
+        "sub_type": "user",
+        "org": "org-1",
+        "project": "proj-1",
+        "env": "production",
+        "cred": "cred-1",
+        "cred_type": "oauth_app",
+        "client_id": "wsc_pos_desktop_71c2",
+        "scopes": [
+          "crm.contacts.read"
+        ],
+        "api": "crm.v1",
+        "route": "route-1",
+        "region": "singapore",
+        "node": "sg-gw-03"
+      }
+    },
+    {
+      "name": "lifetime 61 s",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDA2MSwianRpIjoicmVxX3ZlY3RvcjpsaWZldGltZSIsImh0bSI6IkdFVCIsImh0cCI6Ii92MS9jcm0vY29udGFjdHMiLCJzdWIiOiJkZXZ8aGFzYXJpbmRhIiwic3ViX3R5cGUiOiJ1c2VyIiwib3JnIjoib3JnLTEiLCJwcm9qZWN0IjoicHJvai0xIiwiZW52IjoicHJvZHVjdGlvbiIsImNyZWQiOiJjcmVkLTEiLCJjcmVkX3R5cGUiOiJvYXV0aF9hcHAiLCJjbGllbnRfaWQiOiJ3c2NfcG9zX2Rlc2t0b3BfNzFjMiIsInNjb3BlcyI6WyJjcm0uY29udGFjdHMucmVhZCJdLCJhcGkiOiJjcm0udjEiLCJyb3V0ZSI6InJvdXRlLTEiLCJyZWdpb24iOiJzaW5nYXBvcmUiLCJub2RlIjoic2ctZ3ctMDMifQ.YM34tuCFO8KtkT4BX2_U-LnnI72Y0aj11WMP5Fr-NVSBr9Pa256os4VYiQOOENppHhXcDvt13aEHEruld_r1qA",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "lifetime"
+    },
+    {
+      "name": "lifetime exactly 60 s",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDA2MCwianRpIjoicmVxX3ZlY3RvcjpsaWZldGltZS02MCIsImh0bSI6IkdFVCIsImh0cCI6Ii92MS9jcm0vY29udGFjdHMiLCJzdWIiOiJkZXZ8aGFzYXJpbmRhIiwic3ViX3R5cGUiOiJ1c2VyIiwib3JnIjoib3JnLTEiLCJwcm9qZWN0IjoicHJvai0xIiwiZW52IjoicHJvZHVjdGlvbiIsImNyZWQiOiJjcmVkLTEiLCJjcmVkX3R5cGUiOiJvYXV0aF9hcHAiLCJjbGllbnRfaWQiOiJ3c2NfcG9zX2Rlc2t0b3BfNzFjMiIsInNjb3BlcyI6WyJjcm0uY29udGFjdHMucmVhZCJdLCJhcGkiOiJjcm0udjEiLCJyb3V0ZSI6InJvdXRlLTEiLCJyZWdpb24iOiJzaW5nYXBvcmUiLCJub2RlIjoic2ctZ3ctMDMifQ.k8Sqf1FWAZ3X6eUW6uRX8ufhFUxx34fW7Nj4Pkd9c73CjliUI_VHVRNqz5r1rF-Diax4dOfnIhr_Omo6AprAJQ",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "accept",
+      "claims": {
+        "iss": "https://api.worksuitecloud.com",
+        "aud": "worksuite-cloud",
+        "iat": 1795000000,
+        "exp": 1795000060,
+        "jti": "req_vector:lifetime-60",
+        "htm": "GET",
+        "htp": "/v1/crm/contacts",
+        "sub": "dev|hasarinda",
+        "sub_type": "user",
+        "org": "org-1",
+        "project": "proj-1",
+        "env": "production",
+        "cred": "cred-1",
+        "cred_type": "oauth_app",
+        "client_id": "wsc_pos_desktop_71c2",
+        "scopes": [
+          "crm.contacts.read"
+        ],
+        "api": "crm.v1",
+        "route": "route-1",
+        "region": "singapore",
+        "node": "sg-gw-03"
+      }
+    },
+    {
+      "name": "iat 31 s in the future",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwNDEsImV4cCI6MTc5NTAwMDA3MSwianRpIjoicmVxX3ZlY3RvcjpmdXR1cmUiLCJodG0iOiJHRVQiLCJodHAiOiIvdjEvY3JtL2NvbnRhY3RzIiwic3ViIjoiZGV2fGhhc2FyaW5kYSIsInN1Yl90eXBlIjoidXNlciIsIm9yZyI6Im9yZy0xIiwicHJvamVjdCI6InByb2otMSIsImVudiI6InByb2R1Y3Rpb24iLCJjcmVkIjoiY3JlZC0xIiwiY3JlZF90eXBlIjoib2F1dGhfYXBwIiwiY2xpZW50X2lkIjoid3NjX3Bvc19kZXNrdG9wXzcxYzIiLCJzY29wZXMiOlsiY3JtLmNvbnRhY3RzLnJlYWQiXSwiYXBpIjoiY3JtLnYxIiwicm91dGUiOiJyb3V0ZS0xIiwicmVnaW9uIjoic2luZ2Fwb3JlIiwibm9kZSI6InNnLWd3LTAzIn0.GyExhEYvScINqOdt1w0Uz3w61dxV_Vhzq-Q5JCqKaouSweEC6Uu5eOPyrTmn6_3k04sruqZhbDT0_cWLjzbsTA",
+      "method": "GET",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "iat_future"
+    },
+    {
+      "name": "htm mismatch (token for GET, request POST)",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDAzMCwianRpIjoicmVxX3ZlY3RvcjpodG0iLCJodG0iOiJHRVQiLCJodHAiOiIvdjEvY3JtL2NvbnRhY3RzIiwic3ViIjoiZGV2fGhhc2FyaW5kYSIsInN1Yl90eXBlIjoidXNlciIsIm9yZyI6Im9yZy0xIiwicHJvamVjdCI6InByb2otMSIsImVudiI6InByb2R1Y3Rpb24iLCJjcmVkIjoiY3JlZC0xIiwiY3JlZF90eXBlIjoib2F1dGhfYXBwIiwiY2xpZW50X2lkIjoid3NjX3Bvc19kZXNrdG9wXzcxYzIiLCJzY29wZXMiOlsiY3JtLmNvbnRhY3RzLnJlYWQiXSwiYXBpIjoiY3JtLnYxIiwicm91dGUiOiJyb3V0ZS0xIiwicmVnaW9uIjoic2luZ2Fwb3JlIiwibm9kZSI6InNnLWd3LTAzIn0.BP1kDNJshNfIbErsnhhZd8iBTecSx_LTyKvIxNjHxRctbQYL0VAQnouuBfn2Ki9dNrKfLYLKlPwU32hscQZOAA",
+      "method": "POST",
+      "path": "/v1/crm/contacts",
+      "expect": "reject",
+      "reason": "htm"
+    },
+    {
+      "name": "htp mismatch (token for /v1/crm/contacts)",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IndzYXBpLWdhdGV3YXkrand0Iiwia2lkIjoidGVzdC12ZWN0b3ItMSJ9.eyJpc3MiOiJodHRwczovL2FwaS53b3Jrc3VpdGVjbG91ZC5jb20iLCJhdWQiOiJ3b3Jrc3VpdGUtY2xvdWQiLCJpYXQiOjE3OTUwMDAwMDAsImV4cCI6MTc5NTAwMDAzMCwianRpIjoicmVxX3ZlY3RvcjpodHAiLCJodG0iOiJHRVQiLCJodHAiOiIvdjEvY3JtL2NvbnRhY3RzIiwic3ViIjoiZGV2fGhhc2FyaW5kYSIsInN1Yl90eXBlIjoidXNlciIsIm9yZyI6Im9yZy0xIiwicHJvamVjdCI6InByb2otMSIsImVudiI6InByb2R1Y3Rpb24iLCJjcmVkIjoiY3JlZC0xIiwiY3JlZF90eXBlIjoib2F1dGhfYXBwIiwiY2xpZW50X2lkIjoid3NjX3Bvc19kZXNrdG9wXzcxYzIiLCJzY29wZXMiOlsiY3JtLmNvbnRhY3RzLnJlYWQiXSwiYXBpIjoiY3JtLnYxIiwicm91dGUiOiJyb3V0ZS0xIiwicmVnaW9uIjoic2luZ2Fwb3JlIiwibm9kZSI6InNnLWd3LTAzIn0.WnIT6WhuBZVZcaz3SU95m5-SuUgjum_qCX8isOi1t37aq7FrkklUsUzx90oZOSjRldctBvxyALj2H3oB1tuxqg",
+      "method": "GET",
+      "path": "/v1/crm/contacts/42",
+      "expect": "reject",
+      "reason": "htp"
+    }
+  ]
+}

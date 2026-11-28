@@ -38,4 +38,13 @@ class Services extends BaseService
         }
         return new \App\Services\WscOidcService();
     }
+
+    /** The WorkSuite API Gateway assertion receiver (docs/api-gateway.md). Tests swap it with Services::injectMock('gatewayReceiver', ...). */
+    public static function gatewayReceiver(bool $getShared = true): \App\Libraries\Gateway\GatewayReceiver
+    {
+        if ($getShared) {
+            return static::getSharedInstance('gatewayReceiver');
+        }
+        return new \App\Libraries\Gateway\GatewayReceiver(config(\Config\ApiGateway::class));
+    }
 }

@@ -3,6 +3,14 @@
 All notable changes to WorkSuite AI Studio (formerly OllamaHub) are documented here. Each release is
 also published as a post on the public blog.
 
+## [1.41.0] — 2026-11-29 — Ready for the WorkSuite API Gateway (off by default)
+Nothing changes when this release is deployed: the gateway switch is off, and direct key/secret and access-token calls work as before with it on or off.
+- **The public AI API can sit behind `api.worksuitecloud.com`** (`APIM_GATEWAY_ENABLED`, default `false`). Turned on, a call carrying the gateway's signed assertion (`Authorization: WS-API-Gateway …`) is verified against the gateway's published keys: trusted gateway address (`APIM_GATEWAY_TRUSTED_CIDRS`, empty trusts nothing), ES256 signature, issuer, audience `ai-studio`, a 30–60 s lifetime with 30 s clock skew, the exact method and path, and a one-time request id. Turned off, that scheme is refused with `GATEWAY_DISABLED`. See docs/api-gateway.md.
+- **A gateway caller uses an existing API key.** A console credential maps to the key bound to it (`gateway_credential_id`, in an allowed console organization, `APIM_GATEWAY_ORGS`); a OneAuth user maps only to their own key for that app, when they are already linked. The key's models, quotas and rate limit apply, narrowed to the gateway scopes (`aistudio.models.read`, `.chat`, `.embeddings`, `.audio`, `.translate`, `.predict`; anything else is refused). File downloads, the dashboard and admin stay off the gateway.
+- **Token use is reported to the gateway** in `X-WS-AI-Tokens-In`, `X-WS-AI-Tokens-Out`, `X-WS-AI-Model` and `X-WS-AI-App`, to gateway callers only. Streamed answers are not reported yet (PHP-FPM cannot send trailers); they still count against the key.
+- **Audit**: every gateway call, reads included, is recorded with the gateway's request id, subject, credential, client, project, environment and node.
+- Database: migration `2026-11-29-000041_AddApiGatewayAssertion` (`api_keys.gateway_credential_id`; table `gateway_seen_jti`).
+
 ## [1.39.1] — 2026-11-23 — API Keys and API Logs load again
 - **Fixed: API Keys, API Logs and the dashboard's recent requests failed with "Request failed (404)".** The request helper treated any path starting with `/api` as already prefixed, so `/apikeys` and `/apilogs` went to the site root instead of `/api/apikeys` and `/api/apilogs`. Only `/api` and `/api/…` count as prefixed now.
 - **Fixed: a table's empty message** ("No training jobs yet." and others) sat flush against the card edge as bare text; a text message now shows as the standard empty state.
