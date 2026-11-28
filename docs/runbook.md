@@ -180,6 +180,28 @@ Do these once on the current production server.
 - **Server URLs:** node and provider URLs may be loopback or private (normal for Ollama nodes) but not
   link-local or cloud metadata addresses (e.g. `169.254.169.254`).
 
+## WorkSuite Cloud sign-in (staff SSO, Phase B)
+
+Client `staff-aistudio`. Settings live in `/var/www/ollamahub/.env` (read on every request; reloading PHP-FPM
+is harmless). Deploying a release changes nothing until one of these lines changes.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `WSC_OIDC_ISSUER` | unchanged (`https://account.worksuitecloud.com/oauth`) | The move switch. `https://auth.worksuitecloud.com` after the move. Endpoints come from `<issuer>/.well-known/openid-configuration`; a sign-in finishes under the issuer it started with. |
+| `WSC_OIDC_ACCEPTED_ISSUERS` | both WorkSuite issuers | Issuers accepted on provisioning events (`POST /api/auth/wsc/provision`, always signed by the account issuer) and back-channel logout tokens. |
+| `WSC_SSO_POLICY` | `oneauth_optional` | `local`: no button, no auto sign-in, start/callback refuse. `oneauth_optional`: today. `oneauth_preferred`: the button leads, password behind "Use a password instead" (`?local=1` shows it). `oneauth_required`: the server refuses password and passkey sign-in (403) for accounts linked to WorkSuite Cloud. Unknown values mean `oneauth_optional` (logged). |
+| `WSC_SSO_BREAKGLASS` | empty | Emails that keep password sign-in under `oneauth_required`. Local accounts never linked to WorkSuite Cloud (no `wsc_sub`) keep it too. |
+
+AI Studio has no `APP_LOCAL_2FA`: a WorkSuite Cloud sign-in never asks for AI Studio's own authenticator code.
+
+**Back-channel logout:** `POST https://aistudio.worksuitecloud.com/api/auth/wsc/backchannel-logout` (form field
+`logout_token`). It ends the AI Studio sessions made by that WorkSuite Cloud sign-in (`sid`), or with no `sid`
+every WorkSuite Cloud session of that admin. Password and passkey sessions are never touched. Inert until the
+URI is registered in OneAuth (`npm run sso:phase-b -- register --client staff-aistudio --uri <url>`).
+
+**Move:** back up `.env` to `.env.bak-pre-auth-<yyyymmdd>`, set `WSC_OIDC_ISSUER=https://auth.worksuitecloud.com`,
+reload PHP-FPM, sign in once. **Rollback:** restore the line from the backup (and reload).
+
 ## Health checks
 
 - `GET /api/ping`: public liveness.

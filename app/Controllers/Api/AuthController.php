@@ -5,6 +5,7 @@ namespace App\Controllers\Api;
 use App\Models\UserModel;
 use App\Services\JwtService;
 use App\Services\TotpService;
+use App\Services\WscAccountSync;
 use App\Services\WebAuthnService;
 use RuntimeException;
 
@@ -47,6 +48,7 @@ class AuthController extends BaseApiController
         if (! $user || ! password_verify((string) $in['password'], $user['password_hash'])) {
             return $this->failure('Invalid email or password.', 401);
         }
+        if ($r = $this->localSignInRefused($user)) return $r;
 
         $jwt = new JwtService();
         if (! empty($user['totp_enabled_at'])) {
@@ -82,6 +84,7 @@ class AuthController extends BaseApiController
         if (! (new TotpService())->check($user, (string) ($in['code'] ?? ''))) {
             return $this->failure('That code is not valid. Try again.', 422, ['code' => 'Invalid code.']);
         }
+        if ($r = $this->localSignInRefused($user)) return $r;
         return $this->session((int) $user['id'], 'Welcome back!');
     }
 
@@ -113,9 +116,11 @@ class AuthController extends BaseApiController
             return $this->failure('Your sign-in expired. Please start again.', 401);
         }
         if ($r = $this->throttle((int) $payload['sub'])) return $r;
-        if (! (new UserModel())->findActive((int) $payload['sub'])) {
+        $user = (new UserModel())->findActive((int) $payload['sub']);
+        if (! $user) {
             return $this->failure('Account is no longer active.', 401);
         }
+        if ($r = $this->localSignInRefused($user)) return $r;
 
         $totp = new TotpService();
         $step = $totp->verify((string) $setup['secret'], (string) ($in['code'] ?? ''));
@@ -165,6 +170,7 @@ class AuthController extends BaseApiController
         if (! $user) {
             return $this->failure('Account is no longer active.', 401);
         }
+        if ($r = $this->localSignInRefused($user)) return $r;
         $handle = WebAuthnService::b64uDecode((string) ($cred['response']['userHandle'] ?? ''));
         if ($handle !== '' && $handle !== (string) $user['id']) {
             return $this->failure('This passkey is not registered with AI Studio.', 401);
@@ -193,6 +199,10 @@ class AuthController extends BaseApiController
         if (! $payload || ($payload['type'] ?? '') !== 'refresh') {
             return $this->failure('Invalid or expired refresh token.', 401);
         }
+        // A WorkSuite Cloud session that was signed out there (back-channel logout).
+        if ((new WscAccountSync())->sessionEnded($payload)) {
+            return $this->failure('Your session has ended. Please sign in again.', 401);
+        }
 
         $full = (new UserModel())->withRoleAndPermissions((int) $payload['sub']);
         if (! $full || ($full['status'] ?? '') !== 'active') {
@@ -211,7 +221,7 @@ class AuthController extends BaseApiController
             'access_token' => $jwt->generateAccessToken([
                 'id' => $full['id'], 'email' => $full['email'], 'name' => $full['name'],
                 'role' => $full['role'] ?? 'viewer', 'token_version' => $full['token_version'] ?? 0,
-            ]),
+            ], JwtService::sessionClaims($payload)),
             'token_type' => 'Bearer',
             'expires_in' => $jwt->accessTtl(),
         ], 'Token refreshed.');
@@ -234,6 +244,16 @@ class AuthController extends BaseApiController
         (new UserModel())->revokeTokens($this->userId());
         $this->refreshCookie('', -1);
         return $this->ok(null, 'Signed out.');
+    }
+
+    /**
+     * WSC_SSO_POLICY=oneauth_required: the server refuses local sign-in (password, its 2FA step, passkey)
+     * for accounts linked to WorkSuite Cloud, except the break-glass ones (WSC_SSO_BREAKGLASS).
+     */
+    private function localSignInRefused(?array $user)
+    {
+        if (! $user || ! service('wscOidc')->refusesLocalSignIn($user)) return null;
+        return $this->failure('Sign in with WorkSuite Cloud. Password sign-in is turned off for this account.', 403);
     }
 
     /** At most $perMinute attempts per minute for one bucket/subject (IP, email…). */

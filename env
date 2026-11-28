@@ -72,7 +72,21 @@
 # SIGN IN WITH WORKSUITE CLOUD (staff SSO; button hidden unless all four are set)
 #--------------------------------------------------------------------
 
-# WSC_OIDC_ISSUER = https://account.worksuitecloud.com
-# WSC_OIDC_CLIENT_ID =
+# The issuer is the move switch (SSO Phase B): https://account.worksuitecloud.com/oauth today,
+# https://auth.worksuitecloud.com after the move. Every endpoint comes from its discovery document.
+# WSC_OIDC_ISSUER = https://account.worksuitecloud.com/oauth
+# WSC_OIDC_CLIENT_ID = staff-aistudio
 # WSC_OIDC_CLIENT_SECRET =
 # WSC_OIDC_REDIRECT_URI = https://aistudio.worksuitecloud.com/api/auth/wsc/callback
+
+# Issuers accepted on provisioning events and back-channel logout tokens (comma list). Unset: both
+# WorkSuite issuers when WSC_OIDC_ISSUER is one of them, else only WSC_OIDC_ISSUER.
+# WSC_OIDC_ACCEPTED_ISSUERS = https://account.worksuitecloud.com/oauth,https://auth.worksuitecloud.com
+
+# local | oneauth_optional (default: button, auto sign-in and password) | oneauth_preferred (button
+# leads, password behind "Use a password instead") | oneauth_required (the server refuses password and
+# passkey sign-in for accounts linked to WorkSuite Cloud). oneauth_required needs the owner's written OK.
+# WSC_SSO_POLICY = oneauth_optional
+# Emails that keep password sign-in under oneauth_required (comma list). Local accounts never linked to
+# WorkSuite Cloud always keep it.
+# WSC_SSO_BREAKGLASS =

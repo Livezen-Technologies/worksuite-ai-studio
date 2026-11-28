@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { clearSignedOut, shouldAutoSignIn } from '../lib/wscAuto';
+import { clearSignedOut, leadsWithWsc, shouldAutoSignIn } from '../lib/wscAuto';
 import { Link as RouterLink, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { GradientBackground } from '../site/ui';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/20/solid';
@@ -33,6 +33,9 @@ export default function Login() {
   const { user, signIn, signInWithPasskey, completeSession, restoreSession } = useAuth();
   const [params, setParams] = useSearchParams();
   const [wscEnabled, setWscEnabled] = useState(false);
+  // WSC_SSO_POLICY oneauth_preferred / oneauth_required: the WorkSuite Cloud button leads and the password
+  // form sits behind "Use a password instead" (?local=1 shows it straight away).
+  const [wscFirst, setWscFirst] = useState(false);
   const wscHandled = useRef(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -61,15 +64,16 @@ export default function Login() {
         .catch((e) => { setError(e instanceof Error ? e.message : 'Sign-in failed.'); setParams({}, { replace: true }); })
         .finally(() => setBusy(null));
     }
-    get<{ enabled: boolean }>('/auth/wsc/config')
+    get<{ enabled: boolean; policy?: string }>('/auth/wsc/config')
       .then((d) => {
         setWscEnabled(Boolean(d.enabled));
+        setWscFirst(leadsWithWsc({ enabled: Boolean(d.enabled), policy: d.policy, params }));
         if (shouldAutoSignIn({ enabled: Boolean(d.enabled), signedIn: Boolean(user), params })) {
           setBusy('wsc');
           window.location.assign(wscStartUrl(from, true));
         }
       })
-      .catch(() => setWscEnabled(false));
+      .catch(() => { setWscEnabled(false); setWscFirst(false); });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (user) return <Navigate to={from} replace />;
@@ -144,7 +148,15 @@ export default function Login() {
           <h1 className="mt-8 text-base/6 font-medium text-slate-900 dark:text-white">{heading}</h1>
           <p className="mt-2 text-sm/6 text-slate-500 dark:text-slate-400">{sub}</p>
 
-          {step.kind === 'password' && (
+          {step.kind === 'password' && wscFirst && (
+            <div className="mt-8 space-y-5">
+              {error && <Alert tone="danger">{error}</Alert>}
+              <Button variant="primary" size="lg" loading={busy === 'wsc'} disabled={busy !== null} onClick={() => { setBusy('wsc'); clearSignedOut(); window.location.assign(wscStartUrl(from)); }} className="w-full">Sign in with WorkSuite Cloud</Button>
+              <button type="button" onClick={() => { setWscFirst(false); setError(null); }} className="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400">Use a password instead</button>
+            </div>
+          )}
+
+          {step.kind === 'password' && !wscFirst && (
             <>
               <form onSubmit={submitPassword} className="mt-8 space-y-5" noValidate>
                 {error && <Alert tone="danger">{error}</Alert>}

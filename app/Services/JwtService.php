@@ -40,11 +40,12 @@ class JwtService
     }
 
     /**
-     * Access token. $user must contain id, email, name, role (role slug).
+     * Access token. $user must contain id, email, name, role (role slug). $session: claims carried over from
+     * the refresh token (`wsc`, `wsc_sid` for a WorkSuite Cloud sign-in), so a back-channel logout ends it too.
      */
-    public function generateAccessToken(array $user): string
+    public function generateAccessToken(array $user, array $session = []): string
     {
-        return $this->encode([
+        return $this->encode(self::sessionClaims($session) + [
             'sub'   => (int) $user['id'],
             'email' => $user['email'] ?? '',
             'name'  => $user['name'] ?? '',
@@ -56,10 +57,13 @@ class JwtService
         ]);
     }
 
-    /** $tokenVersion: users.token_version at issue; bumping it revokes every token issued before. */
-    public function generateRefreshToken(int $userId, int $tokenVersion = 0): string
+    /**
+     * $tokenVersion: users.token_version at issue; bumping it revokes every token issued before.
+     * $session: `wsc` => 1 and `wsc_sid` (the id_token's sid) for a WorkSuite Cloud sign-in.
+     */
+    public function generateRefreshToken(int $userId, int $tokenVersion = 0, array $session = []): string
     {
-        return $this->encode([
+        return $this->encode(self::sessionClaims($session) + [
             'sub'  => $userId,
             'tv'   => $tokenVersion,
             'type' => 'refresh',
@@ -86,6 +90,13 @@ class JwtService
     {
         $payload = $token !== '' ? $this->decode($token) : null;
         return $payload && ($payload['type'] ?? '') === $purpose ? $payload : null;
+    }
+
+    /** The session-origin claims of a token payload (only `wsc` and `wsc_sid`). */
+    public static function sessionClaims(array $payload): array
+    {
+        if (empty($payload['wsc'])) return [];
+        return ['wsc' => 1, 'wsc_sid' => mb_substr((string) ($payload['wsc_sid'] ?? ''), 0, 191)];
     }
 
     public function accessTtl(): int

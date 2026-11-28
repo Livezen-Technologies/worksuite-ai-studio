@@ -109,6 +109,48 @@ class WscAccountSync
         }
     }
 
+    /**
+     * Back-channel logout: end the OneAuth-made sessions of $sid, or with no sid every OneAuth-made session
+     * of the user linked to $sub. Local-only users and password/passkey sessions are never touched.
+     * Kept for the refresh-token lifetime. Returns how many rows were recorded (0 when nothing matched).
+     */
+    public function endSessions(string $sid, string $sub, int $keepFor): int
+    {
+        $now = date('Y-m-d H:i:s');
+        $row = ['ended_at' => $now, 'expires_at' => date('Y-m-d H:i:s', time() + $keepFor)];
+        $t = $this->db->table('wsc_ended_sessions');
+        $t->where('expires_at <', $now)->delete();
+        if ($sid !== '') {
+            $this->db->table('wsc_ended_sessions')->insert($row + ['sid' => $sid, 'user_id' => null]);
+            return 1;
+        }
+        $user = $sub !== '' ? $this->db->table('users')->select('id')->where('wsc_sub', $sub)->get()->getRow('id') : null;
+        if (! $user) return 0;
+        $this->db->table('wsc_ended_sessions')->insert($row + ['sid' => null, 'user_id' => (int) $user]);
+        return 1;
+    }
+
+    /**
+     * Whether a token payload belongs to a OneAuth session that a back-channel logout ended. Only tokens
+     * marked `wsc` (made by "Sign in with WorkSuite Cloud") can match.
+     */
+    public function sessionEnded(array $payload): bool
+    {
+        if (empty($payload['wsc'])) return false;
+        $sid = (string) ($payload['wsc_sid'] ?? '');
+        try {
+            $q = $this->db->table('wsc_ended_sessions')->groupStart()
+                ->groupStart()->where('sid', null)->where('user_id', (int) ($payload['sub'] ?? 0))
+                    ->where('ended_at >=', date('Y-m-d H:i:s', (int) ($payload['iat'] ?? 0)))->groupEnd();
+            if ($sid !== '') $q->orWhere('sid', $sid);
+            return $q->groupEnd()->countAllResults() > 0;
+        } catch (\Throwable $e) {
+            // Table missing (migration not run yet): logout from WorkSuite Cloud can't apply; say so.
+            log_message('error', 'Back-channel logout check failed: {msg}', ['msg' => $e->getMessage()]);
+            return false;
+        }
+    }
+
     private function emailTaken(string $email, int $exceptId): bool
     {
         $col = 'LOWER(' . $this->db->protectIdentifiers('email') . ') =';
